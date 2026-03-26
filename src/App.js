@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import Papa from "papaparse";
 
-const DEFAULT_SCRIPT_URL = process.env.REACT_APP_GOOGLE_SCRIPT_URL || "https://script.google.com/macros/s/AKfycbwa0l2iyvlxvUXDceXSah_hEb6fShKKs9o4okjM438EwTLg70Ckeyz8zVe3rZDBr4caKQ/exec";
+const DEFAULT_SCRIPT_URL = process.env.REACT_APP_GOOGLE_SCRIPT_URL || "https://script.google.com/macros/s/AKfycbyNUZsGQWzmBKOkppy-3U-nwY0yuazgQTuufy5wtvmESfpGcLy1PUjPOeC9Haj5O50FLQ/exec";
 
 const normalizeKey = (key) => String(key || "").replace(/\uFEFF/g, "").trim();
 
@@ -17,8 +17,8 @@ const normalizeProductCode = (value) => {
   if (value == null) return "";
 
   let text = String(value).replace(/\uFEFF/g, "").trim();
-
   const tMatch = text.match(/^=T\("(.+)"\)$/i);
+
   if (tMatch) {
     text = tMatch[1];
   }
@@ -141,18 +141,42 @@ const fileToBase64 = (file) =>
     }
 
     const reader = new FileReader();
+
     reader.onload = () => {
       const result = String(reader.result || "");
       const base64 = result.includes(",") ? result.split(",")[1] : result;
       resolve({
         fileName: file.name,
         mimeType: file.type || "application/octet-stream",
-        base64,
+        imageBase64: base64,
       });
     };
+
     reader.onerror = () => reject(new Error("사진 읽기 실패"));
     reader.readAsDataURL(file);
   });
+
+const getRecordType = (record) => {
+  const returnQty = parseQty(record.회송수량);
+  const exchangeQty = parseQty(record.교환수량);
+
+  if (returnQty > 0 && exchangeQty > 0) return "회송 / 교환";
+  if (returnQty > 0) return "회송";
+  if (exchangeQty > 0) return "교환";
+  return "기타";
+};
+
+const getRecordQtyText = (record) => {
+  const returnQty = parseQty(record.회송수량);
+  const exchangeQty = parseQty(record.교환수량);
+
+  if (returnQty > 0 && exchangeQty > 0) {
+    return `회송 ${returnQty} / 교환 ${exchangeQty}`;
+  }
+  if (returnQty > 0) return `${returnQty}`;
+  if (exchangeQty > 0) return `${exchangeQty}`;
+  return "0";
+};
 
 function App() {
   const [scriptUrl, setScriptUrl] = useState(DEFAULT_SCRIPT_URL);
@@ -171,6 +195,10 @@ function App() {
   const [excludedProductCodes, setExcludedProductCodes] = useState(new Set());
   const [excludedPairKeys, setExcludedPairKeys] = useState(new Set());
   const [eventMap, setEventMap] = useState({});
+
+  const [showRecords, setShowRecords] = useState(false);
+  const [recordLoading, setRecordLoading] = useState(false);
+  const [records, setRecords] = useState([]);
 
   const loadBootstrap = async () => {
     if (!scriptUrl.trim()) {
@@ -245,6 +273,36 @@ function App() {
       setError(err.message || "초기 데이터 불러오기 실패");
     } finally {
       setBootLoading(false);
+    }
+  };
+
+  const loadRecords = async () => {
+    if (!scriptUrl.trim()) {
+      setError("Apps Script 웹앱 URL이 필요합니다.");
+      return;
+    }
+
+    try {
+      setRecordLoading(true);
+      setError("");
+
+      const response = await fetch(`${scriptUrl.trim()}?action=getRecords`);
+      const result = await response.json();
+
+      if (!response.ok || result.ok === false) {
+        throw new Error(result.message || "기록 불러오기 실패");
+      }
+
+      const nextRecords = Array.isArray(result.records) ? result.records : [];
+      nextRecords.sort((a, b) =>
+        String(b.작성일시 || "").localeCompare(String(a.작성일시 || ""), "ko")
+      );
+
+      setRecords(nextRecords);
+    } catch (err) {
+      setError(err.message || "기록 불러오기 실패");
+    } finally {
+      setRecordLoading(false);
     }
   };
 
@@ -439,7 +497,7 @@ function App() {
       setError("");
       setMessage("");
 
-      const photo = await fileToBase64(photoFile);
+      const photoPayload = await fileToBase64(photoFile);
 
       const response = await fetch(scriptUrl.trim(), {
         method: "POST",
@@ -459,7 +517,7 @@ function App() {
             회송수량: returnQty,
             교환수량: exchangeQty,
             비고: memo,
-            photo,
+            사진: photoPayload,
           },
         }),
       });
@@ -468,6 +526,8 @@ function App() {
       if (!response.ok || result.ok === false) {
         throw new Error(result.message || "기록 저장 실패");
       }
+
+      const savedRecord = result.record || null;
 
       setDrafts((prev) => ({
         ...prev,
@@ -479,9 +539,19 @@ function App() {
           photoName: "",
         },
       }));
+
+      if (savedRecord) {
+        setRecords((prev) =>
+          [savedRecord, ...prev].sort((a, b) =>
+            String(b.작성일시 || "").localeCompare(String(a.작성일시 || ""), "ko")
+          )
+        );
+      }
+
       setMessage("기록이 저장되었습니다.");
     } catch (err) {
-      setError(err.message || "기록 저장 실패");
+      const msg = err.message || "기록 저장 실패";
+      setError(msg.includes("사진") ? msg : msg);
     } finally {
       setSavingKey("");
     }
@@ -530,7 +600,22 @@ function App() {
         </div>
       )}
 
-      <div style={styles.countText}>총 {productCards.length}건</div>
+      <div style={styles.countRow}>
+        <div style={styles.countText}>총 {productCards.length}건</div>
+        <button
+          type="button"
+          onClick={async () => {
+            const nextShow = !showRecords;
+            setShowRecords(nextShow);
+            if (nextShow) {
+              await loadRecords();
+            }
+          }}
+          style={styles.historyButton}
+        >
+          {showRecords ? "내역 닫기" : "내역 보기"}
+        </button>
+      </div>
 
       <div style={styles.list}>
         {productCards.length === 0 ? (
@@ -683,6 +768,52 @@ function App() {
           })
         )}
       </div>
+
+      {showRecords && (
+        <div style={styles.historySection}>
+          <div style={styles.historyTitleRow}>
+            <h2 style={styles.historyTitle}>저장 내역</h2>
+            {recordLoading ? <span style={styles.metaText}>불러오는 중...</span> : null}
+          </div>
+
+          {records.length === 0 ? (
+            <div style={styles.emptyBox}>저장된 내역이 없습니다.</div>
+          ) : (
+            <div style={styles.list}>
+              {records.map((record, index) => (
+                <div key={`${record.작성일시 || "time"}-${record.상품코드 || "code"}-${index}`} style={styles.historyCard}>
+                  <div style={styles.cardTopRow}>
+                    <div style={styles.cardTitle}>{record.상품명 || "상품명 없음"}</div>
+                    <span style={styles.typeBadge}>{getRecordType(record)}</span>
+                  </div>
+                  <div style={styles.cardMeta}>코드 {record.상품코드 || "-"}</div>
+                  <div style={styles.cardMeta}>센터 {record.센터명 || "-"}</div>
+                  <div style={styles.cardMeta}>협력사 {record.협력사명 || "-"}</div>
+                  <div style={styles.qtyRow}>
+                    <span style={styles.qtyChip}>처리수량 {getRecordQtyText(record)}</span>
+                    <span style={styles.qtyChip}>{record.작성일시 || "-"}</span>
+                  </div>
+                  <div style={styles.historyMemo}>{record.비고 || "-"}</div>
+
+                  {record.사진URL ? (
+                    <div style={styles.photoWrap}>
+                      <img src={record.사진URL} alt="첨부사진" style={styles.photoPreview} />
+                      <a
+                        href={record.사진URL}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={styles.photoLink}
+                      >
+                        사진 열기
+                      </a>
+                    </div>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -777,11 +908,27 @@ const styles = {
     border: "1px solid #fecaca",
     fontSize: 14,
   },
+  countRow: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 10,
+    marginBottom: 10,
+    paddingLeft: 4,
+  },
   countText: {
     fontSize: 13,
     color: "#6b7280",
-    marginBottom: 10,
-    paddingLeft: 4,
+  },
+  historyButton: {
+    border: "1px solid #d1d5db",
+    background: "#fff",
+    borderRadius: 999,
+    padding: "8px 12px",
+    fontSize: 13,
+    fontWeight: 700,
+    cursor: "pointer",
+    color: "#374151",
   },
   list: {
     display: "flex",
@@ -793,6 +940,12 @@ const styles = {
     borderRadius: 18,
     border: "1px solid #e5e7eb",
     overflow: "hidden",
+  },
+  historyCard: {
+    background: "#fff",
+    borderRadius: 18,
+    border: "1px solid #e5e7eb",
+    padding: 14,
   },
   cardButton: {
     width: "100%",
@@ -816,6 +969,16 @@ const styles = {
   eventBadge: {
     display: "inline-block",
     background: "#dc2626",
+    color: "#fff",
+    borderRadius: 999,
+    padding: "4px 10px",
+    fontSize: 12,
+    fontWeight: 700,
+    flexShrink: 0,
+  },
+  typeBadge: {
+    display: "inline-block",
+    background: "#111827",
     color: "#fff",
     borderRadius: 999,
     padding: "4px 10px",
@@ -873,6 +1036,46 @@ const styles = {
     background: "#fff",
     color: "#6b7280",
     textAlign: "center",
+  },
+  historySection: {
+    marginTop: 18,
+  },
+  historyTitleRow: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 12,
+  },
+  historyTitle: {
+    margin: 0,
+    fontSize: 18,
+    fontWeight: 800,
+  },
+  historyMemo: {
+    marginTop: 10,
+    fontSize: 14,
+    color: "#374151",
+    lineHeight: 1.5,
+    whiteSpace: "pre-wrap",
+  },
+  photoWrap: {
+    marginTop: 12,
+  },
+  photoPreview: {
+    width: "100%",
+    maxHeight: 220,
+    objectFit: "cover",
+    borderRadius: 14,
+    border: "1px solid #e5e7eb",
+    background: "#fff",
+  },
+  photoLink: {
+    display: "inline-block",
+    marginTop: 8,
+    fontSize: 13,
+    color: "#2563eb",
+    textDecoration: "none",
+    fontWeight: 700,
   },
 };
 
