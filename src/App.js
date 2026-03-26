@@ -23,6 +23,8 @@ function App() {
   const [memoInputs, setMemoInputs] = useState({});
   const [showAllReturnHistory, setShowAllReturnHistory] = useState(false);
   const [deletedReturnKeys, setDeletedReturnKeys] = useState(new Set());
+  const [returnHistory, setReturnHistory] = useState({});
+  const [csvFileSignature, setCsvFileSignature] = useState("");
 
   const [excludeText, setExcludeText] = useState("");
   const [eventEdits, setEventEdits] = useState({});
@@ -76,23 +78,45 @@ function App() {
       setSelectedProductCode(parsed.selectedProductCode || "");
       setSelectedCenter(parsed.selectedCenter || "");
 
-      setReturnInputs(parsed.returnInputs && typeof parsed.returnInputs === "object" ? parsed.returnInputs : {});
-      setMemoInputs(parsed.memoInputs && typeof parsed.memoInputs === "object" ? parsed.memoInputs : {});
+      setReturnInputs(
+        parsed.returnInputs && typeof parsed.returnInputs === "object"
+          ? parsed.returnInputs
+          : {}
+      );
+      setMemoInputs(
+        parsed.memoInputs && typeof parsed.memoInputs === "object" ? parsed.memoInputs : {}
+      );
       setShowAllReturnHistory(Boolean(parsed.showAllReturnHistory));
-      setDeletedReturnKeys(new Set(Array.isArray(parsed.deletedReturnKeys) ? parsed.deletedReturnKeys : []));
+      setDeletedReturnKeys(
+        new Set(Array.isArray(parsed.deletedReturnKeys) ? parsed.deletedReturnKeys : [])
+      );
+      setReturnHistory(
+        parsed.returnHistory && typeof parsed.returnHistory === "object"
+          ? parsed.returnHistory
+          : {}
+      );
+      setCsvFileSignature(parsed.csvFileSignature || "");
 
       setExcludeText(parsed.excludeText || "");
-      setEventEdits(parsed.eventEdits && typeof parsed.eventEdits === "object" ? parsed.eventEdits : {});
+      setEventEdits(
+        parsed.eventEdits && typeof parsed.eventEdits === "object" ? parsed.eventEdits : {}
+      );
 
       setExcludeFileName(parsed.excludeFileName || "");
       setEventFileName(parsed.eventFileName || "");
       setPreorderFileName(parsed.preorderFileName || "");
 
       setExcludeCodeSet(new Set(Array.isArray(parsed.excludeCodeSet) ? parsed.excludeCodeSet : []));
-      setExcludePartnerSet(new Set(Array.isArray(parsed.excludePartnerSet) ? parsed.excludePartnerSet : []));
+      setExcludePartnerSet(
+        new Set(Array.isArray(parsed.excludePartnerSet) ? parsed.excludePartnerSet : [])
+      );
       setEventCodeSet(new Set(Array.isArray(parsed.eventCodeSet) ? parsed.eventCodeSet : []));
-      setPreorderMap(parsed.preorderMap && typeof parsed.preorderMap === "object" ? parsed.preorderMap : {});
-      setUnmatchedPreorderRows(Array.isArray(parsed.unmatchedPreorderRows) ? parsed.unmatchedPreorderRows : []);
+      setPreorderMap(
+        parsed.preorderMap && typeof parsed.preorderMap === "object" ? parsed.preorderMap : {}
+      );
+      setUnmatchedPreorderRows(
+        Array.isArray(parsed.unmatchedPreorderRows) ? parsed.unmatchedPreorderRows : []
+      );
     } catch (err) {
       console.error("저장 데이터 복원 실패", err);
     } finally {
@@ -117,6 +141,8 @@ function App() {
         memoInputs,
         showAllReturnHistory,
         deletedReturnKeys: serializeSet(deletedReturnKeys),
+        returnHistory,
+        csvFileSignature,
 
         excludeText,
         eventEdits,
@@ -147,6 +173,8 @@ function App() {
     memoInputs,
     showAllReturnHistory,
     deletedReturnKeys,
+    returnHistory,
+    csvFileSignature,
     excludeText,
     eventEdits,
     excludeFileName,
@@ -622,11 +650,80 @@ function App() {
     setShowAllReturnHistory(false);
   }, [selectedProductCode, fileName]);
 
+  const clearReturnDataOnly = () => {
+    setReturnInputs({});
+    setMemoInputs({});
+    setShowAllReturnHistory(false);
+    setDeletedReturnKeys(new Set());
+    setReturnHistory({});
+  };
+
+  const getCurrentReturnSnapshot = (
+    productCode,
+    center,
+    partner,
+    qtyValue,
+    memoValue,
+    existingTime = ""
+  ) => {
+    const product = productMap[productCode];
+    const centerInfo = product?.centers?.[center];
+    const partnerInfo = centerInfo?.partners?.[partner];
+
+    return {
+      key: `${productCode}||${center}||${partner}`,
+      상품명: product?.productName || "",
+      상품코드: productCode,
+      센터: center,
+      협력사: partner,
+      입고수량: partnerInfo?.qty || 0,
+      사전예약수량: centerInfo?.preorderQty || 0,
+      회송수량: parseQty(qtyValue),
+      비고: memoValue || "",
+      작성시간: existingTime || new Date().toLocaleString("ko-KR"),
+    };
+  };
+
+  const upsertReturnHistory = (productCode, center, partner, qtyValue, memoValue) => {
+    const key = `${productCode}||${center}||${partner}`;
+    const qty = parseQty(qtyValue);
+    const memo = memoValue || "";
+
+    setReturnHistory((prev) => {
+      if (qty <= 0 && !memo) {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      }
+
+      const existing = prev[key];
+      return {
+        ...prev,
+        [key]: getCurrentReturnSnapshot(
+          productCode,
+          center,
+          partner,
+          qty,
+          memo,
+          existing?.작성시간 || ""
+        ),
+      };
+    });
+  };
+
   const handleCsvUpload = async (event) => {
     const file = event.target.files?.[0];
     if (!file) return;
 
     try {
+      const nextCsvSignature = `${file.name}__${file.size}__${file.lastModified}`;
+      const isDifferentCsv = csvFileSignature !== nextCsvSignature;
+
+      if (isDifferentCsv) {
+        clearReturnDataOnly();
+      }
+
+      setCsvFileSignature(nextCsvSignature);
       setFileName(file.name);
       setError("");
       setShowAllReturnHistory(false);
@@ -796,6 +893,8 @@ function App() {
     setMemoInputs({});
     setShowAllReturnHistory(false);
     setDeletedReturnKeys(new Set());
+    setReturnHistory({});
+    setCsvFileSignature("");
 
     setExcludeText("");
     setEventEdits({});
@@ -881,37 +980,11 @@ function App() {
   }, [supplierSummary, eventEdits]);
 
   const returnRows = useMemo(() => {
-    const result = [];
-
-    Object.entries(returnInputs).forEach(([key, value]) => {
-      if (deletedReturnKeys.has(key)) return;
-
-      const qty = parseQty(value);
-      if (qty <= 0) return;
-
-      const [productCode, center, partner] = key.split("||");
-      const product = productMap[productCode];
-      const centerInfo = product?.centers?.[center];
-      const partnerInfo = centerInfo?.partners?.[partner];
-
-      if (!product || !centerInfo || !partnerInfo) return;
-
-      result.push({
-        key,
-        상품명: product.productName || "",
-        상품코드: productCode,
-        센터: center,
-        협력사: partner,
-        입고수량: partnerInfo.qty || 0,
-        사전예약수량: centerInfo.preorderQty || 0,
-        회송수량: qty,
-        비고: memoInputs[key] || "",
-        작성시간: new Date().toLocaleString("ko-KR"),
-      });
-    });
-
-    return result;
-  }, [returnInputs, memoInputs, productMap, deletedReturnKeys]);
+    return Object.values(returnHistory)
+      .filter((row) => !deletedReturnKeys.has(row.key))
+      .filter((row) => parseQty(row.회송수량) > 0)
+      .sort((a, b) => String(b.작성시간).localeCompare(String(a.작성시간), "ko"));
+  }, [returnHistory, deletedReturnKeys]);
 
   const totalReturnQty = useMemo(() => {
     return returnRows.reduce((sum, row) => sum + parseQty(row.회송수량), 0);
@@ -956,7 +1029,9 @@ function App() {
 
     XLSX.utils.book_append_sheet(
       workbook,
-      XLSX.utils.json_to_sheet(processedRows.length > 0 ? processedRows : [{ 안내: "가공 데이터 없음" }]),
+      XLSX.utils.json_to_sheet(
+        processedRows.length > 0 ? processedRows : [{ 안내: "가공 데이터 없음" }]
+      ),
       "가공데이터"
     );
 
@@ -1014,10 +1089,15 @@ function App() {
       return next;
     });
 
-    setReturnInputs((prev) => ({
-      ...prev,
-      [key]: value,
-    }));
+    setReturnInputs((prev) => {
+      const next = {
+        ...prev,
+        [key]: value,
+      };
+      const nextMemo = memoInputs[key] || "";
+      upsertReturnHistory(productCode, center, partner, value, nextMemo);
+      return next;
+    });
   };
 
   const setReturnMemo = (productCode, center, partner, value) => {
@@ -1029,10 +1109,15 @@ function App() {
       return next;
     });
 
-    setMemoInputs((prev) => ({
-      ...prev,
-      [key]: value,
-    }));
+    setMemoInputs((prev) => {
+      const next = {
+        ...prev,
+        [key]: value,
+      };
+      const nextQty = returnInputs[key] || 0;
+      upsertReturnHistory(productCode, center, partner, nextQty, value);
+      return next;
+    });
   };
 
   const resetReturnInput = (productCode, center, partner) => {
@@ -1055,6 +1140,12 @@ function App() {
       delete next[key];
       return next;
     });
+
+    setReturnHistory((prev) => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
   };
 
   const deleteReturnItem = (key) => {
@@ -1073,6 +1164,12 @@ function App() {
     setDeletedReturnKeys((prev) => {
       const next = new Set(prev);
       next.add(key);
+      return next;
+    });
+
+    setReturnHistory((prev) => {
+      const next = { ...prev };
+      delete next[key];
       return next;
     });
   };
