@@ -1,508 +1,403 @@
-import React, { useEffect, useMemo, useState, useDeferredValue } from "react";
+import React, { useEffect, useMemo, useRef, useState, useDeferredValue } from "react";
 import Papa from "papaparse";
 import * as XLSX from "xlsx";
 
-function App() {
-  const STORAGE_KEY = "inspection-app-storage-v2";
+const DEFAULT_SCRIPT_URL = process.env.REACT_APP_GOOGLE_SCRIPT_URL || "https://script.google.com/macros/s/AKfycbyQTuVHGMwshoNru4MhngK3W3ZPjSkR7e2kBtBTugJL2FDSxFaQODKKsaHRqc6ngLhT/exec";
 
-  const loadSavedData = () => {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return {};
-      const parsed = JSON.parse(raw);
-      return parsed && typeof parsed === "object" ? parsed : {};
-    } catch (err) {
-      console.error("저장 데이터 불러오기 실패", err);
-      return {};
-    }
+const normalizeKey = (key) => String(key || "").replace(/\uFEFF/g, "").trim();
+
+const normalizeText = (value) =>
+  String(value ?? "")
+    .replace(/\uFEFF/g, "")
+    .normalize("NFKC")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+
+const cleanCode = (value) => {
+  if (value == null) return "";
+  let text = String(value).replace(/\uFEFF/g, "").trim();
+  const tMatch = text.match(/^=T\("(.+)"\)$/i);
+  if (tMatch) text = tMatch[1];
+  return text.replace(/^"+|"+$/g, "").trim();
+};
+
+const digitsOnly = (value) => String(value || "").replace(/\D/g, "");
+
+const parseQty = (value) => {
+  const num = Number(String(value ?? "").replace(/,/g, "").trim());
+  return Number.isNaN(num) ? 0 : num;
+};
+
+const getValue = (row, candidates) => {
+  for (const key of candidates) {
+    if (row[key] !== undefined && row[key] !== null && row[key] !== "") return row[key];
+  }
+  return "";
+};
+
+const makePairKey = (productCode, center) => `${productCode}||${center}`;
+
+const serializeSet = (setObj) => Array.from(setObj || []);
+
+const readFileAsArrayBuffer = (file) =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => resolve(e.target?.result);
+    reader.onerror = () => reject(new Error("파일 읽기 실패"));
+    reader.readAsArrayBuffer(file);
+  });
+
+const decodeCsvFile = async (file) => {
+  const buffer = await file.arrayBuffer();
+
+  const tryDecode = (encoding) => {
+    const decoder = new TextDecoder(encoding);
+    return decoder.decode(buffer);
   };
 
-  const saved = loadSavedData();
+  const isBrokenText = (text) => (text.match(/�/g) || []).length > 5;
 
-  const [rows, setRows] = useState(Array.isArray(saved.rows) ? saved.rows : []);
-  const [query, setQuery] = useState(saved.query || "");
-  const [fileName, setFileName] = useState(saved.fileName || "");
+  let text = tryDecode("utf-8");
+  if (isBrokenText(text)) text = tryDecode("euc-kr");
+
+  return { text };
+};
+
+const parseWorkbookRows = async (file) => {
+  const buffer = await readFileAsArrayBuffer(file);
+  const workbook = XLSX.read(buffer, { type: "array" });
+  const firstSheetName = workbook.SheetNames[0];
+  const worksheet = workbook.Sheets[firstSheetName];
+  const json = XLSX.utils.sheet_to_json(worksheet, {
+    defval: "",
+    raw: false,
+  });
+
+  return json.map((row) => {
+    const normalizedRow = {};
+    Object.keys(row || {}).forEach((key) => {
+      normalizedRow[normalizeKey(key)] = row[key];
+    });
+    return normalizedRow;
+  });
+};
+
+const buildNormalizedRows = (parsedRows) =>
+  parsedRows.map((rawRow, index) => {
+    const row = {};
+
+    Object.keys(rawRow || {}).forEach((key) => {
+      row[normalizeKey(key)] = rawRow[key];
+    });
+
+    const productCodeRaw = getValue(row, ["상품코드", "상품 코드", "바코드", "코드"]);
+    const productNameRaw = getValue(row, ["상품명", "상품 명", "품목명", "품명"]);
+    const partnerRaw = getValue(row, ["거래처명(구매조건명)", "거래처명", "협력사"]);
+    const centerRaw = getValue(row, ["센터명", "센터"]);
+    const qtyRaw = getValue(row, ["총 발주수량", "발주수량", "수량"]);
+    const eventRaw = getValue(row, ["행사여부", "행사 여부", "행사", "프로모션"]);
+
+    const productCode = cleanCode(productCodeRaw);
+    const productName = String(productNameRaw || "").trim();
+    const partner = String(partnerRaw || "").trim();
+    const center = String(centerRaw || "").trim();
+    const qty = parseQty(qtyRaw);
+    const eventValue = String(eventRaw || "").trim() ? "행사" : "";
+
+    return {
+      ...row,
+      __id: `${productCode || "empty"}-${center || "nocenter"}-${partner || "nopartner"}-${index}`,
+      __index: index,
+      __productCode: productCode,
+      __productCodeDigits: digitsOnly(productCode),
+      __productName: productName,
+      __partner: partner,
+      __center: center,
+      __qty: qty,
+      __event: eventValue,
+      __productNameNormalized: normalizeText(productName),
+      __partnerNormalized: normalizeText(partner),
+      __centerNormalized: normalizeText(center),
+    };
+  });
+
+const buildProductMap = (normalizedRows) => {
+  const map = {};
+
+  normalizedRows.forEach((row) => {
+    const productCode = row.__productCode;
+    const productName = row.__productName;
+    const partner = row.__partner || "협력사없음";
+    const center = row.__center || "센터없음";
+    const qty = row.__qty || 0;
+
+    if (!productCode) return;
+
+    if (!map[productCode]) {
+      map[productCode] = {
+        productCode,
+        productName,
+        totalQty: 0,
+        totalRowCount: 0,
+        centers: {},
+        partnerSet: new Set(),
+      };
+    }
+
+    map[productCode].totalQty += qty;
+    map[productCode].totalRowCount += 1;
+    map[productCode].partnerSet.add(partner);
+
+    if (!map[productCode].centers[center]) {
+      map[productCode].centers[center] = {
+        center,
+        qty: 0,
+        rowCount: 0,
+        partners: {},
+        rows: [],
+      };
+    }
+
+    map[productCode].centers[center].qty += qty;
+    map[productCode].centers[center].rowCount += 1;
+    map[productCode].centers[center].rows.push(row);
+
+    if (!map[productCode].centers[center].partners[partner]) {
+      map[productCode].centers[center].partners[partner] = {
+        partner,
+        qty: 0,
+        rows: [],
+      };
+    }
+
+    map[productCode].centers[center].partners[partner].qty += qty;
+    map[productCode].centers[center].partners[partner].rows.push(row);
+  });
+
+  Object.values(map).forEach((product) => {
+    product.partnerKeywords = Array.from(product.partnerSet || []).sort((a, b) =>
+      a.localeCompare(b, "ko")
+    );
+  });
+
+  return map;
+};
+
+const buildSupplierSummary = (normalizedRows) => {
+  const summary = {};
+
+  normalizedRows.forEach((row) => {
+    const partner = row.__partner || "협력사없음";
+    const productCode = row.__productCode || "상품코드없음";
+    const productName = row.__productName || "상품명없음";
+    const qty = row.__qty || 0;
+    const eventValue = row.__event || "";
+
+    if (!summary[partner]) {
+      summary[partner] = {
+        partner,
+        totalQty: 0,
+        totalRows: 0,
+        productMap: {},
+      };
+    }
+
+    summary[partner].totalQty += qty;
+    summary[partner].totalRows += 1;
+
+    const productKey = `${productCode}__${productName}`;
+    if (!summary[partner].productMap[productKey]) {
+      summary[partner].productMap[productKey] = {
+        productCode,
+        productName,
+        totalQty: 0,
+        totalRows: 0,
+        event: eventValue,
+      };
+    }
+
+    summary[partner].productMap[productKey].totalQty += qty;
+    summary[partner].productMap[productKey].totalRows += 1;
+
+    if (!summary[partner].productMap[productKey].event && eventValue) {
+      summary[partner].productMap[productKey].event = eventValue;
+    }
+  });
+
+  return summary;
+};
+
+const centerAliasOverrides = {
+  고양: "고양1일배센터",
+  고양1: "고양1일배센터",
+  고양2: "고양2일배센터",
+  신오산: "신오산1저온센터",
+  신오산1: "신오산1저온센터",
+  신오산2: "신오산2저온센터",
+  광주: "광주1저온센터",
+  광주1: "광주1저온센터",
+  광주2: "광주2저온센터",
+  포천: "포천1저온센터",
+  포천1: "포천1저온센터",
+  포천2: "포천2저온센터",
+  김포: "김포1저온센터",
+  김포1: "김포1저온센터",
+  김포2: "김포2일배센터",
+  송파: "송파일배센터",
+  송파1: "송파일배센터",
+  송파2: "송파2일배센터",
+  김해: "김해일배센터",
+  김해1: "김해일배센터",
+  김해2: "김해2일배센터",
+  청주: "청주일배센터",
+  진주: "진주일배센터",
+  해인: "해인벤더",
+  발안: "발안일배센터",
+  원주: "원주일배센터",
+  아신: "아신A벤더",
+  아신a: "아신A벤더",
+  아신A: "아신A벤더",
+  도화: "인천일배센터",
+  도화1: "인천일배센터",
+  인천: "인천일배센터",
+};
+
+const extractCenterTokens = (text) => {
+  const source = String(text || "").trim();
+  if (!source) return [];
+
+  const compact = source.replace(/\s+/g, "");
+  const tokens = new Set([source, compact]);
+
+  const stripped = compact
+    .replace(/센터/g, "")
+    .replace(/저온/g, "")
+    .replace(/상온/g, "")
+    .replace(/일배/g, "")
+    .replace(/벤더/g, "")
+    .replace(/물류/g, "")
+    .replace(/배송/g, "")
+    .replace(/출하/g, "")
+    .replace(/입고/g, "");
+
+  if (stripped) tokens.add(stripped);
+
+  const baseMatch = stripped.match(/^(.+?)(\d+)$/);
+  if (baseMatch) {
+    tokens.add(baseMatch[1]);
+    tokens.add(`${baseMatch[1]}${baseMatch[2]}`);
+  }
+
+  return Array.from(tokens).filter(Boolean);
+};
+
+const resolveCenterName = (deliveryName, availableCenterNames) => {
+  const raw = String(deliveryName || "").trim();
+  if (!raw) return "";
+
+  const normalizedMap = {};
+  availableCenterNames.forEach((center) => {
+    const centerTokens = extractCenterTokens(center);
+    centerTokens.forEach((token) => {
+      normalizedMap[normalizeText(token)] = center;
+    });
+    normalizedMap[normalizeText(center)] = center;
+  });
+
+  const rawTokens = extractCenterTokens(raw);
+
+  for (const token of rawTokens) {
+    const aliasTarget =
+      centerAliasOverrides[token] || centerAliasOverrides[normalizeText(token)] || "";
+    if (aliasTarget && availableCenterNames.includes(aliasTarget)) return aliasTarget;
+  }
+
+  for (const token of rawTokens) {
+    const found = normalizedMap[normalizeText(token)];
+    if (found) return found;
+  }
+
+  for (const center of availableCenterNames) {
+    const centerNorm = normalizeText(center);
+    const rawNorm = normalizeText(raw);
+    if (centerNorm.includes(rawNorm) || rawNorm.includes(centerNorm)) return center;
+  }
+
+  return "";
+};
+
+const hashString = (text) => {
+  let hash = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    hash = (hash * 31 + text.charCodeAt(i)) >>> 0;
+  }
+  return String(hash);
+};
+
+const computeRowsSignature = (rows) =>
+  hashString(
+    JSON.stringify(
+      (rows || []).map((row) => ({
+        상품코드: row.__productCode,
+        상품명: row.__productName,
+        센터: row.__center,
+        협력사: row.__partner,
+        수량: row.__qty,
+      }))
+    )
+  );
+
+function App() {
+  const [rows, setRows] = useState([]);
+  const [query, setQuery] = useState("");
+  const [fileName, setFileName] = useState("");
   const [error, setError] = useState("");
 
-  const [activeTab, setActiveTab] = useState(saved.activeTab || "search");
-
+  const [activeTab, setActiveTab] = useState("search");
   const [isMobileView, setIsMobileView] = useState(
     typeof window !== "undefined" ? window.innerWidth <= 768 : false
   );
 
   const [productMap, setProductMap] = useState({});
   const [supplierSummary, setSupplierSummary] = useState({});
-  const [selectedProductCode, setSelectedProductCode] = useState(
-    saved.selectedProductCode || ""
-  );
-  const [selectedCenter, setSelectedCenter] = useState(saved.selectedCenter || "");
+  const [selectedProductCode, setSelectedProductCode] = useState("");
+  const [selectedCenter, setSelectedCenter] = useState("");
 
-  const [returnInputs, setReturnInputs] = useState(
-    saved.returnInputs && typeof saved.returnInputs === "object" ? saved.returnInputs : {}
-  );
-  const [memoInputs, setMemoInputs] = useState(
-    saved.memoInputs && typeof saved.memoInputs === "object" ? saved.memoInputs : {}
-  );
-  const [showAllReturnHistory, setShowAllReturnHistory] = useState(
-    Boolean(saved.showAllReturnHistory)
-  );
-  const [deletedReturnKeys, setDeletedReturnKeys] = useState(
-    new Set(Array.isArray(saved.deletedReturnKeys) ? saved.deletedReturnKeys : [])
-  );
-  const [returnHistory, setReturnHistory] = useState(
-    saved.returnHistory && typeof saved.returnHistory === "object" ? saved.returnHistory : {}
-  );
-  const [csvFileSignature, setCsvFileSignature] = useState(saved.csvFileSignature || "");
+  const [returnInputs, setReturnInputs] = useState({});
+  const [memoInputs, setMemoInputs] = useState({});
+  const [showAllReturnHistory, setShowAllReturnHistory] = useState(false);
+  const [returnHistory, setReturnHistory] = useState({});
 
-  const [excludeText, setExcludeText] = useState(saved.excludeText || "");
-  const [eventEdits, setEventEdits] = useState(
-    saved.eventEdits && typeof saved.eventEdits === "object" ? saved.eventEdits : {}
-  );
+  const [excludeText, setExcludeText] = useState("");
+  const [excludeFileName, setExcludeFileName] = useState("");
+  const [eventFileName, setEventFileName] = useState("");
+  const [preorderFileName, setPreorderFileName] = useState("");
 
-  const [excludeFileName, setExcludeFileName] = useState(saved.excludeFileName || "");
-  const [eventFileName, setEventFileName] = useState(saved.eventFileName || "");
-  const [preorderFileName, setPreorderFileName] = useState(saved.preorderFileName || "");
+  const [excludeCodeSet, setExcludeCodeSet] = useState(new Set());
+  const [excludePartnerSet, setExcludePartnerSet] = useState(new Set());
+  const [eventCodeSet, setEventCodeSet] = useState(new Set());
+  const [preorderMap, setPreorderMap] = useState({});
+  const [unmatchedPreorderRows, setUnmatchedPreorderRows] = useState([]);
 
-  const [excludeCodeSet, setExcludeCodeSet] = useState(
-    new Set(Array.isArray(saved.excludeCodeSet) ? saved.excludeCodeSet : [])
-  );
-  const [excludePartnerSet, setExcludePartnerSet] = useState(
-    new Set(Array.isArray(saved.excludePartnerSet) ? saved.excludePartnerSet : [])
-  );
-  const [eventCodeSet, setEventCodeSet] = useState(
-    new Set(Array.isArray(saved.eventCodeSet) ? saved.eventCodeSet : [])
-  );
-  const [preorderMap, setPreorderMap] = useState(
-    saved.preorderMap && typeof saved.preorderMap === "object" ? saved.preorderMap : {}
-  );
-  const [unmatchedPreorderRows, setUnmatchedPreorderRows] = useState(
-    Array.isArray(saved.unmatchedPreorderRows) ? saved.unmatchedPreorderRows : []
-  );
+  const [scriptUrl, setScriptUrl] = useState(DEFAULT_SCRIPT_URL);
+  const [isBootLoading, setIsBootLoading] = useState(true);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncMessage, setSyncMessage] = useState("");
+  const [csvSignature, setCsvSignature] = useState("");
 
   const deferredQuery = useDeferredValue(query);
-
-  const serializeSet = (setObj) => Array.from(setObj || []);
+  const hasLoadedRemoteRef = useRef(false);
+  const saveTimerRef = useRef(null);
 
   useEffect(() => {
     const handleResize = () => {
-      if (typeof window !== "undefined") {
-        setIsMobileView(window.innerWidth <= 768);
-      }
+      if (typeof window !== "undefined") setIsMobileView(window.innerWidth <= 768);
     };
-
     handleResize();
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
   }, []);
-
-  useEffect(() => {
-    try {
-      const payload = {
-        rows,
-        query,
-        fileName,
-        activeTab,
-
-        selectedProductCode,
-        selectedCenter,
-
-        returnInputs,
-        memoInputs,
-        showAllReturnHistory,
-        deletedReturnKeys: serializeSet(deletedReturnKeys),
-        returnHistory,
-        csvFileSignature,
-
-        excludeText,
-        eventEdits,
-
-        excludeFileName,
-        eventFileName,
-        preorderFileName,
-
-        excludeCodeSet: serializeSet(excludeCodeSet),
-        excludePartnerSet: serializeSet(excludePartnerSet),
-        eventCodeSet: serializeSet(eventCodeSet),
-        preorderMap,
-        unmatchedPreorderRows,
-      };
-
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
-    } catch (err) {
-      console.error("저장 실패", err);
-    }
-  }, [
-    rows,
-    query,
-    fileName,
-    activeTab,
-    selectedProductCode,
-    selectedCenter,
-    returnInputs,
-    memoInputs,
-    showAllReturnHistory,
-    deletedReturnKeys,
-    returnHistory,
-    csvFileSignature,
-    excludeText,
-    eventEdits,
-    excludeFileName,
-    eventFileName,
-    preorderFileName,
-    excludeCodeSet,
-    excludePartnerSet,
-    eventCodeSet,
-    preorderMap,
-    unmatchedPreorderRows,
-  ]);
-
-  const normalizeKey = (key) => String(key || "").replace(/\uFEFF/g, "").trim();
-
-  const normalizeText = (value) => {
-    return String(value ?? "")
-      .replace(/\uFEFF/g, "")
-      .normalize("NFKC")
-      .replace(/\s+/g, " ")
-      .trim()
-      .toLowerCase();
-  };
-
-  const cleanCode = (value) => {
-    if (value == null) return "";
-
-    let text = String(value).replace(/\uFEFF/g, "").trim();
-    const tMatch = text.match(/^=T\("(.+)"\)$/i);
-
-    if (tMatch) {
-      text = tMatch[1];
-    }
-
-    text = text.replace(/^"+|"+$/g, "").trim();
-    return text;
-  };
-
-  const digitsOnly = (value) => String(value || "").replace(/\D/g, "");
-
-  const parseQty = (value) => {
-    const num = Number(String(value ?? "").replace(/,/g, "").trim());
-    return Number.isNaN(num) ? 0 : num;
-  };
-
-  const getValue = (row, candidates) => {
-    for (const key of candidates) {
-      if (row[key] !== undefined && row[key] !== null && row[key] !== "") {
-        return row[key];
-      }
-    }
-    return "";
-  };
-
-  const makePairKey = (productCode, center) => `${productCode}||${center}`;
-
-  const readFileAsArrayBuffer = (file) =>
-    new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = (e) => resolve(e.target?.result);
-      reader.onerror = () => reject(new Error("파일 읽기 실패"));
-      reader.readAsArrayBuffer(file);
-    });
-
-  const decodeCsvFile = async (file) => {
-    const buffer = await file.arrayBuffer();
-
-    const tryDecode = (encoding) => {
-      const decoder = new TextDecoder(encoding);
-      return decoder.decode(buffer);
-    };
-
-    const isBrokenText = (text) => {
-      const brokenCharCount = (text.match(/�/g) || []).length;
-      return brokenCharCount > 5;
-    };
-
-    let text = tryDecode("utf-8");
-
-    if (isBrokenText(text)) {
-      text = tryDecode("euc-kr");
-    }
-
-    return { text };
-  };
-
-  const parseWorkbookRows = async (file) => {
-    const buffer = await readFileAsArrayBuffer(file);
-    const workbook = XLSX.read(buffer, { type: "array" });
-    const firstSheetName = workbook.SheetNames[0];
-    const worksheet = workbook.Sheets[firstSheetName];
-    const json = XLSX.utils.sheet_to_json(worksheet, {
-      defval: "",
-      raw: false,
-    });
-
-    return {
-      sheetName: firstSheetName,
-      rows: json.map((row) => {
-        const normalizedRow = {};
-        Object.keys(row || {}).forEach((key) => {
-          normalizedRow[normalizeKey(key)] = row[key];
-        });
-        return normalizedRow;
-      }),
-    };
-  };
-
-  const buildNormalizedRows = (parsedRows) => {
-    return parsedRows.map((rawRow, index) => {
-      const row = {};
-
-      Object.keys(rawRow || {}).forEach((key) => {
-        row[normalizeKey(key)] = rawRow[key];
-      });
-
-      const productCodeRaw = getValue(row, ["상품코드", "상품 코드", "바코드", "코드"]);
-      const productNameRaw = getValue(row, ["상품명", "상품 명", "품목명", "품명"]);
-      const partnerRaw = getValue(row, ["거래처명(구매조건명)", "거래처명", "협력사"]);
-      const centerRaw = getValue(row, ["센터명", "센터"]);
-      const qtyRaw = getValue(row, ["총 발주수량", "발주수량", "수량"]);
-      const eventRaw = getValue(row, ["행사여부", "행사 여부", "행사", "프로모션"]);
-
-      const productCode = cleanCode(productCodeRaw);
-      const productCodeDigits = digitsOnly(productCode);
-      const productName = String(productNameRaw || "").trim();
-      const partner = String(partnerRaw || "").trim();
-      const center = String(centerRaw || "").trim();
-      const qty = parseQty(qtyRaw);
-      const eventValue = String(eventRaw || "").trim() ? "행사" : "";
-
-      return {
-        ...row,
-        __id: `${productCode || "empty"}-${center || "nocenter"}-${partner || "nopartner"}-${index}`,
-        __index: index,
-        __productCode: productCode,
-        __productCodeDigits: productCodeDigits,
-        __productName: productName,
-        __partner: partner,
-        __center: center,
-        __qty: qty,
-        __event: eventValue,
-        __productNameNormalized: normalizeText(productName),
-        __partnerNormalized: normalizeText(partner),
-        __centerNormalized: normalizeText(center),
-      };
-    });
-  };
-
-  const buildProductMap = (normalizedRows) => {
-    const map = {};
-
-    normalizedRows.forEach((row) => {
-      const productCode = row.__productCode;
-      const productName = row.__productName;
-      const partner = row.__partner || "협력사없음";
-      const center = row.__center || "센터없음";
-      const qty = row.__qty || 0;
-
-      if (!productCode) return;
-
-      if (!map[productCode]) {
-        map[productCode] = {
-          productCode,
-          productName,
-          totalQty: 0,
-          totalRowCount: 0,
-          centers: {},
-          partnerSet: new Set(),
-        };
-      }
-
-      map[productCode].totalQty += qty;
-      map[productCode].totalRowCount += 1;
-      map[productCode].partnerSet.add(partner);
-
-      if (!map[productCode].centers[center]) {
-        map[productCode].centers[center] = {
-          center,
-          qty: 0,
-          rowCount: 0,
-          partners: {},
-          rows: [],
-        };
-      }
-
-      map[productCode].centers[center].qty += qty;
-      map[productCode].centers[center].rowCount += 1;
-      map[productCode].centers[center].rows.push(row);
-
-      if (!map[productCode].centers[center].partners[partner]) {
-        map[productCode].centers[center].partners[partner] = {
-          partner,
-          qty: 0,
-          rows: [],
-        };
-      }
-
-      map[productCode].centers[center].partners[partner].qty += qty;
-      map[productCode].centers[center].partners[partner].rows.push(row);
-    });
-
-    Object.values(map).forEach((product) => {
-      product.partnerKeywords = Array.from(product.partnerSet || []).sort((a, b) =>
-        a.localeCompare(b, "ko")
-      );
-    });
-
-    return map;
-  };
-
-  const buildSupplierSummary = (normalizedRows) => {
-    const summary = {};
-
-    normalizedRows.forEach((row) => {
-      const partner = row.__partner || "협력사없음";
-      const productCode = row.__productCode || "상품코드없음";
-      const productName = row.__productName || "상품명없음";
-      const qty = row.__qty || 0;
-      const eventValue = row.__event || "";
-
-      if (!summary[partner]) {
-        summary[partner] = {
-          partner,
-          totalQty: 0,
-          totalRows: 0,
-          productMap: {},
-        };
-      }
-
-      summary[partner].totalQty += qty;
-      summary[partner].totalRows += 1;
-
-      const productKey = `${productCode}__${productName}`;
-
-      if (!summary[partner].productMap[productKey]) {
-        summary[partner].productMap[productKey] = {
-          productCode,
-          productName,
-          totalQty: 0,
-          totalRows: 0,
-          event: eventValue,
-        };
-      }
-
-      summary[partner].productMap[productKey].totalQty += qty;
-      summary[partner].productMap[productKey].totalRows += 1;
-
-      if (!summary[partner].productMap[productKey].event && eventValue) {
-        summary[partner].productMap[productKey].event = eventValue;
-      }
-    });
-
-    return summary;
-  };
-
-  const centerAliasOverrides = {
-    고양: "고양1일배센터",
-    고양1: "고양1일배센터",
-    고양2: "고양2일배센터",
-    신오산: "신오산1저온센터",
-    신오산1: "신오산1저온센터",
-    신오산2: "신오산2저온센터",
-    광주: "광주1저온센터",
-    광주1: "광주1저온센터",
-    광주2: "광주2저온센터",
-    포천: "포천1저온센터",
-    포천1: "포천1저온센터",
-    포천2: "포천2저온센터",
-    김포: "김포1저온센터",
-    김포1: "김포1저온센터",
-    김포2: "김포2일배센터",
-    송파: "송파일배센터",
-    송파1: "송파일배센터",
-    송파2: "송파2일배센터",
-    김해: "김해일배센터",
-    김해1: "김해일배센터",
-    김해2: "김해2일배센터",
-    청주: "청주일배센터",
-    진주: "진주일배센터",
-    해인: "해인벤더",
-    발안: "발안일배센터",
-    원주: "원주일배센터",
-    아신: "아신A벤더",
-    아신a: "아신A벤더",
-    아신A: "아신A벤더",
-    도화: "인천일배센터",
-    도화1: "인천일배센터",
-    인천: "인천일배센터",
-  };
-
-  const extractCenterTokens = (text) => {
-    const source = String(text || "").trim();
-    if (!source) return [];
-
-    const compact = source.replace(/\s+/g, "");
-    const tokens = new Set([source, compact]);
-
-    const stripped = compact
-      .replace(/센터/g, "")
-      .replace(/저온/g, "")
-      .replace(/상온/g, "")
-      .replace(/일배/g, "")
-      .replace(/벤더/g, "")
-      .replace(/물류/g, "")
-      .replace(/배송/g, "")
-      .replace(/출하/g, "")
-      .replace(/입고/g, "");
-
-    if (stripped) {
-      tokens.add(stripped);
-    }
-
-    const baseMatch = stripped.match(/^(.+?)(\d+)$/);
-    if (baseMatch) {
-      tokens.add(baseMatch[1]);
-      tokens.add(`${baseMatch[1]}${baseMatch[2]}`);
-    }
-
-    return Array.from(tokens).filter(Boolean);
-  };
-
-  const resolveCenterName = (deliveryName, availableCenterNames) => {
-    const raw = String(deliveryName || "").trim();
-    if (!raw) return "";
-
-    const normalizedMap = {};
-    availableCenterNames.forEach((center) => {
-      const centerTokens = extractCenterTokens(center);
-      centerTokens.forEach((token) => {
-        normalizedMap[normalizeText(token)] = center;
-      });
-      normalizedMap[normalizeText(center)] = center;
-    });
-
-    const rawTokens = extractCenterTokens(raw);
-
-    for (const token of rawTokens) {
-      const aliasTarget =
-        centerAliasOverrides[token] || centerAliasOverrides[normalizeText(token)] || "";
-      if (aliasTarget && availableCenterNames.includes(aliasTarget)) {
-        return aliasTarget;
-      }
-    }
-
-    for (const token of rawTokens) {
-      const found = normalizedMap[normalizeText(token)];
-      if (found) return found;
-    }
-
-    for (const center of availableCenterNames) {
-      const centerNorm = normalizeText(center);
-      const rawNorm = normalizeText(raw);
-      if (centerNorm.includes(rawNorm) || rawNorm.includes(centerNorm)) {
-        return center;
-      }
-    }
-
-    return "";
-  };
 
   const applyExclusionsAndDecorations = (baseProductMap, baseSupplierSummary) => {
     const nextProductMap = {};
@@ -524,9 +419,7 @@ function App() {
         const qty = partnerValues.reduce((sum, item) => sum + (item.qty || 0), 0);
         const rowCount = partnerValues.reduce((sum, item) => sum + (item.rows?.length || 0), 0);
 
-        if (partnerValues.length === 0 && !preorderMap[makePairKey(productCode, centerName)]) {
-          return;
-        }
+        if (partnerValues.length === 0 && !preorderMap[makePairKey(productCode, centerName)]) return;
 
         nextCenters[centerName] = {
           ...centerInfo,
@@ -538,29 +431,23 @@ function App() {
       });
 
       const centerValues = Object.values(nextCenters);
-      const totalQty = centerValues.reduce((sum, item) => sum + (item.qty || 0), 0);
-      const preorderQty = centerValues.reduce((sum, item) => sum + (item.preorderQty || 0), 0);
-      const totalRowCount = centerValues.reduce((sum, item) => sum + (item.rowCount || 0), 0);
-
       if (centerValues.length === 0) return;
 
       nextProductMap[productCode] = {
         ...product,
         centers: nextCenters,
-        totalQty,
-        preorderQty,
-        totalRowCount,
+        totalQty: centerValues.reduce((sum, item) => sum + (item.qty || 0), 0),
+        preorderQty: centerValues.reduce((sum, item) => sum + (item.preorderQty || 0), 0),
+        totalRowCount: centerValues.reduce((sum, item) => sum + (item.rowCount || 0), 0),
         event: eventCodeSet.has(productCode) ? "행사" : "",
       };
     });
 
     const nextSupplierSummary = {};
-
     Object.entries(baseSupplierSummary).forEach(([partnerName, supplier]) => {
       if (excludePartnerSet.has(partnerName)) return;
 
       const nextProductSummary = {};
-
       Object.entries(supplier.productMap || {}).forEach(([productKey, product]) => {
         if (excludeCodeSet.has(product.productCode)) return;
         nextProductSummary[productKey] = {
@@ -580,15 +467,12 @@ function App() {
       };
     });
 
-    return {
-      nextProductMap,
-      nextSupplierSummary,
-    };
+    return { nextProductMap, nextSupplierSummary };
   };
 
-  const rebuildData = (normalizedRows) => {
-    const baseProductMap = buildProductMap(normalizedRows);
-    const baseSupplierSummary = buildSupplierSummary(normalizedRows);
+  useEffect(() => {
+    const baseProductMap = buildProductMap(rows);
+    const baseSupplierSummary = buildSupplierSummary(rows);
     const { nextProductMap, nextSupplierSummary } = applyExclusionsAndDecorations(
       baseProductMap,
       baseSupplierSummary
@@ -607,21 +491,275 @@ function App() {
       : [];
     const keepCenter = selectedCenter && centers.includes(selectedCenter);
     setSelectedCenter(keepCenter ? selectedCenter : centers[0] || "");
+  }, [rows, excludeCodeSet, excludePartnerSet, eventCodeSet, preorderMap]);
+
+  const returnRows = useMemo(() => {
+    return Object.values(returnHistory)
+      .filter((row) => parseQty(row.회송수량) > 0)
+      .sort((a, b) => String(b.작성시간).localeCompare(String(a.작성시간), "ko"));
+  }, [returnHistory]);
+
+  const totalReturnQty = useMemo(
+    () => returnRows.reduce((sum, row) => sum + parseQty(row.회송수량), 0),
+    [returnRows]
+  );
+
+  const filteredProducts = useMemo(() => {
+    const keyword = deferredQuery.trim();
+    const products = Object.values(productMap);
+
+    if (!keyword) return products.sort((a, b) => (b.totalQty || 0) - (a.totalQty || 0));
+
+    const keywordNormalized = normalizeText(keyword);
+    const keywordDigits = digitsOnly(keyword);
+
+    return products
+      .map((product) => {
+        const code = String(product.productCode || "");
+        const name = String(product.productName || "");
+        const partnerText = Array.isArray(product.partnerKeywords)
+          ? product.partnerKeywords.join(" ")
+          : "";
+        const centerText = Object.keys(product.centers || {}).join(" ");
+
+        let score = 0;
+        if (normalizeText(name).includes(keywordNormalized)) score += 100;
+        if (normalizeText(partnerText).includes(keywordNormalized)) score += 90;
+        if (normalizeText(centerText).includes(keywordNormalized)) score += 70;
+        if (code.includes(keyword)) score += 110;
+        if (keywordDigits && digitsOnly(code).includes(keywordDigits)) score += 120;
+
+        return { product, score };
+      })
+      .filter((item) => item.score > 0)
+      .sort((a, b) => b.score - a.score || (b.product.totalQty || 0) - (a.product.totalQty || 0))
+      .map((item) => item.product);
+  }, [productMap, deferredQuery]);
+
+  const supplierList = useMemo(() => {
+    return Object.values(supplierSummary)
+      .map((supplier) => ({
+        ...supplier,
+        products: Object.values(supplier.productMap || {}).sort(
+          (a, b) => (b.totalQty || 0) - (a.totalQty || 0)
+        ),
+      }))
+      .sort((a, b) => (b.totalQty || 0) - (a.totalQty || 0));
+  }, [supplierSummary]);
+
+  const processedRows = useMemo(() => {
+    const result = [];
+
+    Object.values(productMap).forEach((product) => {
+      Object.values(product.centers || {}).forEach((centerInfo) => {
+        const partners = Object.values(centerInfo.partners || {});
+        if (partners.length === 0) {
+          result.push({
+            상품코드: product.productCode,
+            상품명: product.productName,
+            센터: centerInfo.center,
+            협력사: "",
+            입고수량: centerInfo.qty || 0,
+            사전예약수량: centerInfo.preorderQty || 0,
+            합산수량: (centerInfo.qty || 0) + (centerInfo.preorderQty || 0),
+            행사: eventCodeSet.has(product.productCode) ? "행사" : "",
+          });
+        }
+
+        partners.forEach((partner) => {
+          result.push({
+            상품코드: product.productCode,
+            상품명: product.productName,
+            센터: centerInfo.center,
+            협력사: partner.partner,
+            입고수량: partner.qty || 0,
+            사전예약수량: centerInfo.preorderQty || 0,
+            합산수량: (partner.qty || 0) + (centerInfo.preorderQty || 0),
+            행사: eventCodeSet.has(product.productCode) ? "행사" : "",
+          });
+        });
+      });
+    });
+
+    return result;
+  }, [productMap, eventCodeSet]);
+
+  const buildPayload = () => ({
+    meta: {
+      active_tab: activeTab,
+      query,
+      selected_product_code: selectedProductCode,
+      selected_center: selectedCenter,
+      csv_file_name: fileName,
+      exclude_file_name: excludeFileName,
+      event_file_name: eventFileName,
+      preorder_file_name: preorderFileName,
+      csv_signature: csvSignature,
+      saved_at: new Date().toISOString(),
+    },
+    csv_data: rows,
+    exclude_codes: serializeSet(excludeCodeSet).map((code) => ({ 상품코드: code })),
+    exclude_partners: serializeSet(excludePartnerSet).map((partner) => ({ 협력사: partner })),
+    event_codes: serializeSet(eventCodeSet).map((code) => ({ 상품코드: code })),
+    preorder_data: Object.entries(preorderMap).map(([key, qty]) => {
+      const [상품코드, 센터] = key.split("||");
+      return { 상품코드, 센터, 수량: qty };
+    }),
+    return_history: Object.values(returnHistory),
+    unmatched_preorder: unmatchedPreorderRows,
+  });
+
+  const loadRemote = async () => {
+    if (!scriptUrl.trim()) {
+      setError("REACT_APP_GOOGLE_SCRIPT_URL 또는 화면의 Apps Script URL이 필요합니다.");
+      setIsBootLoading(false);
+      return;
+    }
+
+    try {
+      setIsBootLoading(true);
+      setError("");
+      const response = await fetch(`${scriptUrl.trim()}?action=load`);
+      const result = await response.json();
+
+      if (!response.ok || result.ok === false) {
+        throw new Error(result.message || "불러오기 실패");
+      }
+
+      const data = result.data || {};
+      const remoteMeta = data.meta || {};
+      const remoteRows = Array.isArray(data.csv_data) ? data.csv_data : [];
+      const remoteReturnRows = Array.isArray(data.return_history) ? data.return_history : [];
+      const remotePreorderRows = Array.isArray(data.preorder_data) ? data.preorder_data : [];
+      const remoteExcludeCodes = Array.isArray(data.exclude_codes) ? data.exclude_codes : [];
+      const remoteExcludePartners = Array.isArray(data.exclude_partners) ? data.exclude_partners : [];
+      const remoteEventCodes = Array.isArray(data.event_codes) ? data.event_codes : [];
+      const remoteUnmatched = Array.isArray(data.unmatched_preorder) ? data.unmatched_preorder : [];
+
+      setRows(remoteRows);
+      setFileName(remoteMeta.csv_file_name || "");
+      setExcludeFileName(remoteMeta.exclude_file_name || "");
+      setEventFileName(remoteMeta.event_file_name || "");
+      setPreorderFileName(remoteMeta.preorder_file_name || "");
+      setQuery(remoteMeta.query || "");
+      setActiveTab(remoteMeta.active_tab || "search");
+      setSelectedProductCode(remoteMeta.selected_product_code || "");
+      setSelectedCenter(remoteMeta.selected_center || "");
+      setCsvSignature(remoteMeta.csv_signature || "");
+
+      const excludeCodes = new Set(
+        remoteExcludeCodes.map((row) => cleanCode(row.상품코드 || row.code || "")).filter(Boolean)
+      );
+      const excludePartners = new Set(
+        remoteExcludePartners
+          .map((row) => String(row.협력사 || row.partner || "").trim())
+          .filter(Boolean)
+      );
+      const eventCodes = new Set(
+        remoteEventCodes.map((row) => cleanCode(row.상품코드 || row.code || "")).filter(Boolean)
+      );
+
+      const nextPreorderMap = {};
+      remotePreorderRows.forEach((row) => {
+        const productCode = cleanCode(row.상품코드 || row.product_code || "");
+        const center = String(row.센터 || row.center || "").trim();
+        const qty = parseQty(row.수량 || row.qty || 0);
+        if (productCode && center) nextPreorderMap[makePairKey(productCode, center)] = qty;
+      });
+
+      const nextReturnHistory = {};
+      remoteReturnRows.forEach((row) => {
+        if (row.key) nextReturnHistory[row.key] = row;
+      });
+
+      setExcludeCodeSet(excludeCodes);
+      setExcludePartnerSet(excludePartners);
+      setEventCodeSet(eventCodes);
+      setPreorderMap(nextPreorderMap);
+      setReturnHistory(nextReturnHistory);
+      setUnmatchedPreorderRows(remoteUnmatched);
+      setExcludeText(
+        [`코드제외 ${excludeCodes.size}건`, `협력사제외 ${excludePartners.size}건`].join(" / ")
+      );
+      setSyncMessage(remoteMeta.saved_at ? `불러오기 완료 (${remoteMeta.saved_at})` : "불러오기 완료");
+    } catch (err) {
+      setError(err.message || "Google Sheets 불러오기 실패");
+    } finally {
+      hasLoadedRemoteRef.current = true;
+      setIsBootLoading(false);
+    }
+  };
+
+  const saveRemote = async () => {
+    if (!scriptUrl.trim()) return;
+    try {
+      setIsSyncing(true);
+      setError("");
+      setSyncMessage("Google Sheets 저장 중...");
+
+      const response = await fetch(scriptUrl.trim(), {
+        method: "POST",
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
+        body: JSON.stringify({
+          action: "save",
+          payload: buildPayload(),
+        }),
+      });
+
+      const result = await response.json();
+      if (!response.ok || result.ok === false) {
+        throw new Error(result.message || "저장 실패");
+      }
+
+      setSyncMessage(`Google Sheets 저장 완료 (${new Date().toLocaleString("ko-KR")})`);
+    } catch (err) {
+      setError(err.message || "Google Sheets 저장 실패");
+      setSyncMessage("저장 실패");
+    } finally {
+      setIsSyncing(false);
+    }
   };
 
   useEffect(() => {
-    rebuildData(rows);
-  }, [rows, excludeCodeSet, excludePartnerSet, eventCodeSet, preorderMap]);
+    loadRemote();
+  }, [scriptUrl]);
 
   useEffect(() => {
-    setShowAllReturnHistory(false);
-  }, [selectedProductCode, fileName]);
+    if (!hasLoadedRemoteRef.current) return;
+    if (!scriptUrl.trim()) return;
+
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => {
+      saveRemote();
+    }, 1200);
+
+    return () => {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    };
+  }, [
+    rows,
+    query,
+    activeTab,
+    selectedProductCode,
+    selectedCenter,
+    excludeCodeSet,
+    excludePartnerSet,
+    eventCodeSet,
+    preorderMap,
+    returnHistory,
+    unmatchedPreorderRows,
+    fileName,
+    excludeFileName,
+    eventFileName,
+    preorderFileName,
+    csvSignature,
+    scriptUrl,
+  ]);
 
   const clearReturnDataOnly = () => {
     setReturnInputs({});
     setMemoInputs({});
     setShowAllReturnHistory(false);
-    setDeletedReturnKeys(new Set());
     setReturnHistory({});
   };
 
@@ -683,18 +821,7 @@ function App() {
     if (!file) return;
 
     try {
-      const nextSignature = `${file.name}__${file.size}__${file.lastModified}`;
-      const isDifferentCsv = nextSignature !== csvFileSignature;
-
-      if (isDifferentCsv) {
-        clearReturnDataOnly();
-      }
-
-      setCsvFileSignature(nextSignature);
-      setFileName(file.name);
       setError("");
-      setShowAllReturnHistory(false);
-
       const { text } = await decodeCsvFile(file);
 
       Papa.parse(text, {
@@ -702,11 +829,16 @@ function App() {
         skipEmptyLines: true,
         complete: (result) => {
           const normalizedRows = buildNormalizedRows(result.data || []);
+          const nextSignature = computeRowsSignature(normalizedRows);
+          const isCsvChanged = csvSignature && csvSignature !== nextSignature;
+
+          if (isCsvChanged) clearReturnDataOnly();
+
           setRows(normalizedRows);
+          setFileName(file.name);
+          setCsvSignature(nextSignature);
         },
-        error: () => {
-          setError("CSV 파싱 중 오류 발생");
-        },
+        error: () => setError("CSV 파싱 중 오류 발생"),
       });
     } catch {
       setError("CSV 읽기 실패");
@@ -720,28 +852,16 @@ function App() {
     if (!file) return;
 
     try {
+      setError("");
       const workbook = XLSX.read(await readFileAsArrayBuffer(file), { type: "array" });
       const codeSheet = workbook.Sheets["코드제외"];
       const partnerSheet = workbook.Sheets["협력사제외"];
 
       const codeRows = codeSheet
-        ? XLSX.utils.sheet_to_json(codeSheet, { defval: "", raw: false }).map((row) => {
-            const normalizedRow = {};
-            Object.keys(row || {}).forEach((key) => {
-              normalizedRow[normalizeKey(key)] = row[key];
-            });
-            return normalizedRow;
-          })
+        ? XLSX.utils.sheet_to_json(codeSheet, { defval: "", raw: false })
         : [];
-
       const partnerRows = partnerSheet
-        ? XLSX.utils.sheet_to_json(partnerSheet, { defval: "", raw: false }).map((row) => {
-            const normalizedRow = {};
-            Object.keys(row || {}).forEach((key) => {
-              normalizedRow[normalizeKey(key)] = row[key];
-            });
-            return normalizedRow;
-          })
+        ? XLSX.utils.sheet_to_json(partnerSheet, { defval: "", raw: false })
         : [];
 
       const nextExcludeCodeSet = new Set(
@@ -766,7 +886,6 @@ function App() {
           " / "
         )
       );
-      setError("");
     } catch {
       setError("제외목록 업로드 실패");
     } finally {
@@ -779,16 +898,15 @@ function App() {
     if (!file) return;
 
     try {
-      const { rows: eventRows } = await parseWorkbookRows(file);
+      setError("");
+      const eventRows = await parseWorkbookRows(file);
       const nextEventCodeSet = new Set(
         eventRows
           .map((row) => cleanCode(getValue(row, ["상품코드", "상품 코드", "코드", "바코드"])))
           .filter(Boolean)
       );
-
       setEventFileName(file.name);
       setEventCodeSet(nextEventCodeSet);
-      setError("");
     } catch {
       setError("행사표 업로드 실패");
     } finally {
@@ -801,7 +919,8 @@ function App() {
     if (!file) return;
 
     try {
-      const { rows: preorderRows } = await parseWorkbookRows(file);
+      setError("");
+      const preorderRows = await parseWorkbookRows(file);
       const currentProductMap = buildProductMap(rows);
       const nextPreorderMap = {};
       const nextUnmatchedRows = [];
@@ -819,11 +938,7 @@ function App() {
         const matchedCenter = resolveCenterName(deliveryName, availableCenters);
 
         if (!matchedCenter) {
-          nextUnmatchedRows.push({
-            상품코드: productCode,
-            배송처명: deliveryName,
-            수량: qty,
-          });
+          nextUnmatchedRows.push({ 상품코드: productCode, 배송처명: deliveryName, 수량: qty });
           return;
         }
 
@@ -834,7 +949,6 @@ function App() {
       setPreorderFileName(file.name);
       setPreorderMap(nextPreorderMap);
       setUnmatchedPreorderRows(nextUnmatchedRows);
-      setError("");
     } catch {
       setError("사전예약 업로드 실패");
     } finally {
@@ -842,273 +956,30 @@ function App() {
     }
   };
 
-  const clearSavedData = () => {
-    localStorage.removeItem(STORAGE_KEY);
-
-    setRows([]);
-    setQuery("");
-    setFileName("");
-    setError("");
-    setActiveTab("search");
-
-    setProductMap({});
-    setSupplierSummary({});
-    setSelectedProductCode("");
-    setSelectedCenter("");
-
-    setReturnInputs({});
-    setMemoInputs({});
-    setShowAllReturnHistory(false);
-    setDeletedReturnKeys(new Set());
-    setReturnHistory({});
-    setCsvFileSignature("");
-
-    setExcludeText("");
-    setEventEdits({});
-
-    setExcludeFileName("");
-    setEventFileName("");
-    setPreorderFileName("");
-
-    setExcludeCodeSet(new Set());
-    setExcludePartnerSet(new Set());
-    setEventCodeSet(new Set());
-    setPreorderMap({});
-    setUnmatchedPreorderRows([]);
-  };
-
-  const filteredProducts = useMemo(() => {
-    const keyword = deferredQuery.trim();
-    const products = Object.values(productMap);
-
-    if (!keyword) {
-      return products.sort((a, b) => (b.totalQty || 0) - (a.totalQty || 0));
-    }
-
-    const keywordNormalized = normalizeText(keyword);
-    const keywordDigits = digitsOnly(keyword);
-
-    return products
-      .map((product) => {
-        const code = String(product.productCode || "");
-        const name = String(product.productName || "");
-        const partnerText = Array.isArray(product.partnerKeywords)
-          ? product.partnerKeywords.join(" ")
-          : "";
-        const centerText = Object.keys(product.centers || {}).join(" ");
-        let score = 0;
-
-        if (normalizeText(name).includes(keywordNormalized)) score += 100;
-        if (normalizeText(partnerText).includes(keywordNormalized)) score += 90;
-        if (normalizeText(centerText).includes(keywordNormalized)) score += 70;
-        if (code.includes(keyword)) score += 110;
-        if (keywordDigits && digitsOnly(code).includes(keywordDigits)) score += 120;
-
-        return {
-          product,
-          score,
-        };
-      })
-      .filter((item) => item.score > 0)
-      .sort(
-        (a, b) => b.score - a.score || (b.product.totalQty || 0) - (a.product.totalQty || 0)
-      )
-      .map((item) => item.product);
-  }, [productMap, deferredQuery]);
-
-  const selectedProduct = useMemo(() => {
-    return selectedProductCode ? productMap[selectedProductCode] || null : null;
-  }, [productMap, selectedProductCode]);
-
-  const supplierList = useMemo(() => {
-    return Object.values(supplierSummary)
-      .map((supplier) => {
-        const products = Object.values(supplier.productMap || {})
-          .map((product) => {
-            const key = `${supplier.partner}||${product.productCode}`;
-            return {
-              ...product,
-              event: eventEdits[key] ?? product.event ?? "",
-            };
-          })
-          .sort((a, b) => (b.totalQty || 0) - (a.totalQty || 0));
-
-        return {
-          ...supplier,
-          products,
-        };
-      })
-      .sort((a, b) => (b.totalQty || 0) - (a.totalQty || 0));
-  }, [supplierSummary, eventEdits]);
-
-  const returnRows = useMemo(() => {
-    return Object.values(returnHistory)
-      .filter((row) => !deletedReturnKeys.has(row.key))
-      .filter((row) => parseQty(row.회송수량) > 0)
-      .sort((a, b) => String(b.작성시간).localeCompare(String(a.작성시간), "ko"));
-  }, [returnHistory, deletedReturnKeys]);
-
-  const totalReturnQty = useMemo(() => {
-    return returnRows.reduce((sum, row) => sum + parseQty(row.회송수량), 0);
-  }, [returnRows]);
-
-  const exportProcessedExcel = () => {
-    const processedRows = [];
-
-    Object.values(productMap).forEach((product) => {
-      Object.values(product.centers || {}).forEach((centerInfo) => {
-        const partners = Object.values(centerInfo.partners || {});
-
-        if (partners.length === 0) {
-          processedRows.push({
-            상품코드: product.productCode,
-            상품명: product.productName,
-            센터: centerInfo.center,
-            협력사: "",
-            입고수량: centerInfo.qty || 0,
-            사전예약수량: centerInfo.preorderQty || 0,
-            합산수량: (centerInfo.qty || 0) + (centerInfo.preorderQty || 0),
-            행사: eventCodeSet.has(product.productCode) ? "행사" : "",
-          });
-        }
-
-        partners.forEach((partner) => {
-          processedRows.push({
-            상품코드: product.productCode,
-            상품명: product.productName,
-            센터: centerInfo.center,
-            협력사: partner.partner,
-            입고수량: partner.qty || 0,
-            사전예약수량: centerInfo.preorderQty || 0,
-            합산수량: (partner.qty || 0) + (centerInfo.preorderQty || 0),
-            행사: eventCodeSet.has(product.productCode) ? "행사" : "",
-          });
-        });
-      });
-    });
-
-    const workbook = XLSX.utils.book_new();
-
-    XLSX.utils.book_append_sheet(
-      workbook,
-      XLSX.utils.json_to_sheet(
-        processedRows.length > 0 ? processedRows : [{ 안내: "가공 데이터 없음" }]
-      ),
-      "가공데이터"
-    );
-
-    XLSX.utils.book_append_sheet(
-      workbook,
-      XLSX.utils.json_to_sheet(returnRows.length > 0 ? returnRows : [{ 안내: "회송 입력 데이터 없음" }]),
-      "회송내역"
-    );
-
-    XLSX.utils.book_append_sheet(
-      workbook,
-      XLSX.utils.json_to_sheet(
-        unmatchedPreorderRows.length > 0 ? unmatchedPreorderRows : [{ 안내: "사전예약 미매칭 없음" }]
-      ),
-      "사전예약미매칭"
-    );
-
-    const supplierExportRows = [];
-    supplierList.forEach((supplier) => {
-      supplier.products.forEach((product) => {
-        supplierExportRows.push({
-          협력사: supplier.partner,
-          상품코드: product.productCode,
-          상품명: product.productName,
-          수량: product.totalQty || 0,
-          행사: product.event || "",
-        });
-      });
-    });
-
-    XLSX.utils.book_append_sheet(
-      workbook,
-      XLSX.utils.json_to_sheet(
-        supplierExportRows.length > 0 ? supplierExportRows : [{ 안내: "협력사 집계 없음" }]
-      ),
-      "협력사집계"
-    );
-
-    XLSX.writeFile(workbook, `가공데이터_${Date.now()}.xlsx`);
-  };
-
-  const handleSelectProduct = (productCode) => {
-    const product = productMap[productCode];
-    const firstCenter = Object.keys(product?.centers || {})[0] || "";
-    setSelectedProductCode(productCode);
-    setSelectedCenter(firstCenter);
-  };
-
   const setReturnQty = (productCode, center, partner, value) => {
     const key = `${productCode}||${center}||${partner}`;
-
-    setDeletedReturnKeys((prev) => {
-      const next = new Set(prev);
-      next.delete(key);
-      return next;
-    });
-
-    setReturnInputs((prev) => ({
-      ...prev,
-      [key]: value,
-    }));
-
-    upsertReturnHistory(
-      productCode,
-      center,
-      partner,
-      value,
-      memoInputs[key] || ""
-    );
+    setReturnInputs((prev) => ({ ...prev, [key]: value }));
+    upsertReturnHistory(productCode, center, partner, value, memoInputs[key] || "");
   };
 
   const setReturnMemo = (productCode, center, partner, value) => {
     const key = `${productCode}||${center}||${partner}`;
-
-    setDeletedReturnKeys((prev) => {
-      const next = new Set(prev);
-      next.delete(key);
-      return next;
-    });
-
-    setMemoInputs((prev) => ({
-      ...prev,
-      [key]: value,
-    }));
-
-    upsertReturnHistory(
-      productCode,
-      center,
-      partner,
-      returnInputs[key] || 0,
-      value
-    );
+    setMemoInputs((prev) => ({ ...prev, [key]: value }));
+    upsertReturnHistory(productCode, center, partner, returnInputs[key] || 0, value);
   };
 
   const resetReturnInput = (productCode, center, partner) => {
     const key = `${productCode}||${center}||${partner}`;
-
-    setDeletedReturnKeys((prev) => {
-      const next = new Set(prev);
-      next.delete(key);
-      return next;
-    });
-
     setReturnInputs((prev) => {
       const next = { ...prev };
       delete next[key];
       return next;
     });
-
     setMemoInputs((prev) => {
       const next = { ...prev };
       delete next[key];
       return next;
     });
-
     setReturnHistory((prev) => {
       const next = { ...prev };
       delete next[key];
@@ -1122,19 +993,11 @@ function App() {
       delete next[key];
       return next;
     });
-
     setMemoInputs((prev) => {
       const next = { ...prev };
       delete next[key];
       return next;
     });
-
-    setDeletedReturnKeys((prev) => {
-      const next = new Set(prev);
-      next.add(key);
-      return next;
-    });
-
     setReturnHistory((prev) => {
       const next = { ...prev };
       delete next[key];
@@ -1142,29 +1005,53 @@ function App() {
     });
   };
 
-  const renderReturnHistoryItem = (row, idx) => {
-    return (
-      <div key={`${row.key}-${idx}`} style={styles.returnHistoryItem}>
-        <button type="button" onClick={() => deleteReturnItem(row.key)} style={styles.deleteBtn}>
-          ×
-        </button>
-        <p><strong>상품명:</strong> {row.상품명}</p>
-        <p><strong>상품코드:</strong> {row.상품코드}</p>
-        <p><strong>센터:</strong> {row.센터}</p>
-        <p><strong>협력사:</strong> {row.협력사}</p>
-        <p><strong>입고수량:</strong> {row.입고수량}</p>
-        <p><strong>사전예약수량:</strong> {row.사전예약수량}</p>
-        <p><strong>회송수량:</strong> {row.회송수량}</p>
-        <p><strong>비고:</strong> {row.비고 || "-"}</p>
-        <p><strong>작성시간:</strong> {row.작성시간}</p>
-      </div>
+  const exportProcessedExcel = () => {
+    const workbook = XLSX.utils.book_new();
+
+    XLSX.utils.book_append_sheet(
+      workbook,
+      XLSX.utils.json_to_sheet(processedRows.length ? processedRows : [{ 안내: "가공 데이터 없음" }]),
+      "가공데이터"
     );
+
+    XLSX.utils.book_append_sheet(
+      workbook,
+      XLSX.utils.json_to_sheet(returnRows.length ? returnRows : [{ 안내: "회송 입력 데이터 없음" }]),
+      "회송내역"
+    );
+
+    XLSX.utils.book_append_sheet(
+      workbook,
+      XLSX.utils.json_to_sheet(
+        unmatchedPreorderRows.length ? unmatchedPreorderRows : [{ 안내: "사전예약 미매칭 없음" }]
+      ),
+      "사전예약미매칭"
+    );
+
+    XLSX.writeFile(workbook, `가공데이터_${Date.now()}.xlsx`);
   };
 
+  const selectedProduct = selectedProductCode ? productMap[selectedProductCode] || null : null;
+
+  const renderReturnHistoryItem = (row, idx) => (
+    <div key={`${row.key}-${idx}`} style={styles.returnHistoryItem}>
+      <button type="button" onClick={() => deleteReturnItem(row.key)} style={styles.deleteBtn}>
+        ×
+      </button>
+      <p><strong>상품명:</strong> {row.상품명}</p>
+      <p><strong>상품코드:</strong> {row.상품코드}</p>
+      <p><strong>센터:</strong> {row.센터}</p>
+      <p><strong>협력사:</strong> {row.협력사}</p>
+      <p><strong>입고수량:</strong> {row.입고수량}</p>
+      <p><strong>사전예약수량:</strong> {row.사전예약수량}</p>
+      <p><strong>회송수량:</strong> {row.회송수량}</p>
+      <p><strong>비고:</strong> {row.비고 || "-"}</p>
+      <p><strong>작성시간:</strong> {row.작성시간}</p>
+    </div>
+  );
+
   const renderProductDetail = (product) => {
-    if (!product) {
-      return <div style={styles.emptyBox}>상품을 선택해줘</div>;
-    }
+    if (!product) return <div style={styles.emptyBox}>상품을 선택해줘</div>;
 
     const centerNames = Object.keys(product.centers || {});
     const currentCenter =
@@ -1195,9 +1082,7 @@ function App() {
             style={styles.select}
           >
             {centerNames.map((centerName) => (
-              <option key={centerName} value={centerName}>
-                {centerName}
-              </option>
+              <option key={centerName} value={centerName}>{centerName}</option>
             ))}
           </select>
         </div>
@@ -1208,7 +1093,6 @@ function App() {
             <p><strong>센터 입고수량:</strong> {currentCenterInfo.qty || 0}</p>
             <p><strong>사전예약수량:</strong> {currentCenterInfo.preorderQty || 0}</p>
             <p><strong>합산수량:</strong> {(currentCenterInfo.qty || 0) + (currentCenterInfo.preorderQty || 0)}</p>
-            <p><strong>센터 내 행 수:</strong> {currentCenterInfo.rowCount || 0}</p>
 
             <div style={{ marginTop: 16 }}>
               <p style={styles.subTitle}><strong>센터 내 협력사 목록</strong></p>
@@ -1222,7 +1106,6 @@ function App() {
                   <div key={`${partnerItem.partner}-${idx}`} style={styles.partnerItem}>
                     <p><strong>협력사:</strong> {partnerItem.partner}</p>
                     <p><strong>입고수량:</strong> {partnerItem.qty}</p>
-                    <p><strong>행 수:</strong> {partnerItem.rows.length}</p>
 
                     <div style={styles.returnInputRow}>
                       <input
@@ -1240,7 +1123,6 @@ function App() {
                         placeholder="회송수량"
                         style={styles.smallInput}
                       />
-
                       <input
                         type="text"
                         value={memoInputs[inputKey] || ""}
@@ -1255,15 +1137,10 @@ function App() {
                         placeholder="불량사유 / 비고"
                         style={styles.memoInput}
                       />
-
                       <button
                         type="button"
                         onClick={() =>
-                          resetReturnInput(
-                            product.productCode,
-                            currentCenterInfo.center,
-                            partnerItem.partner
-                          )
+                          resetReturnInput(product.productCode, currentCenterInfo.center, partnerItem.partner)
                         }
                         style={styles.subButton}
                       >
@@ -1279,7 +1156,6 @@ function App() {
 
         <div style={{ marginTop: 20 }}>
           <p style={styles.subTitle}><strong>회송 입력 내역</strong></p>
-
           {productReturnRows.length === 0 ? (
             <p>입력된 회송 내역 없음</p>
           ) : (
@@ -1287,7 +1163,6 @@ function App() {
               {(showAllReturnHistory ? productReturnRows : productReturnRows.slice(0, 5)).map(
                 (row, idx) => renderReturnHistoryItem(row, idx)
               )}
-
               {productReturnRows.length > 5 && (
                 <button
                   type="button"
@@ -1322,9 +1197,26 @@ function App() {
       <div style={styles.header}>
         <h1 style={styles.title}>검품 / 회송 가공 앱</h1>
         <p style={styles.desc}>
-          CSV 업로드 후 상품 검색, 센터별 수량 확인, 회송입력, 협력사 집계, 엑셀 내보내기
+          Google Sheets + Apps Script를 백엔드처럼 사용해서 업로드된 파싱 데이터와 회송내역을 영구 저장합니다.
         </p>
       </div>
+
+      <div style={styles.uploadCard}>
+        <label style={styles.label}>Apps Script 웹앱 URL</label>
+        <input
+          type="text"
+          value={scriptUrl}
+          onChange={(e) => setScriptUrl(e.target.value)}
+          placeholder="https://script.google.com/macros/s/배포URL/exec"
+          style={styles.searchInput}
+        />
+        <div style={styles.helper}>
+          브라우저 보안 때문에 로컬 파일 자체는 다시 읽을 수 없어서, 업로드 시 파싱된 데이터 전체를 시트에 저장하는 구조입니다.
+        </div>
+        <div style={styles.helper}>{syncMessage || "대기 중"}</div>
+      </div>
+
+      <div style={{ height: 12 }} />
 
       <div style={styles.uploadSection}>
         <div style={styles.uploadCard}>
@@ -1335,41 +1227,30 @@ function App() {
 
         <div style={styles.uploadCard}>
           <label style={styles.label}>제외목록 엑셀</label>
-          <input
-            type="file"
-            accept=".xlsx,.xls"
-            onChange={handleExcludeFileUpload}
-            style={styles.fileInput}
-          />
+          <input type="file" accept=".xlsx,.xls" onChange={handleExcludeFileUpload} style={styles.fileInput} />
           <div style={styles.fileName}>{excludeFileName || "선택된 파일 없음"}</div>
           <div style={styles.helper}>{excludeText || "코드제외 / 협력사제외 시트 사용"}</div>
         </div>
 
         <div style={styles.uploadCard}>
           <label style={styles.label}>행사표 엑셀</label>
-          <input
-            type="file"
-            accept=".xlsx,.xls"
-            onChange={handleEventFileUpload}
-            style={styles.fileInput}
-          />
+          <input type="file" accept=".xlsx,.xls" onChange={handleEventFileUpload} style={styles.fileInput} />
           <div style={styles.fileName}>{eventFileName || "선택된 파일 없음"}</div>
         </div>
 
         <div style={styles.uploadCard}>
           <label style={styles.label}>사전예약 엑셀</label>
-          <input
-            type="file"
-            accept=".xlsx,.xls"
-            onChange={handlePreorderFileUpload}
-            style={styles.fileInput}
-          />
+          <input type="file" accept=".xlsx,.xls" onChange={handlePreorderFileUpload} style={styles.fileInput} />
           <div style={styles.fileName}>{preorderFileName || "선택된 파일 없음"}</div>
           <div style={styles.helper}>미매칭 {unmatchedPreorderRows.length}건</div>
         </div>
       </div>
 
-      {error && <div style={styles.errorBox}>{error}</div>}
+      {(error || isBootLoading || isSyncing) && (
+        <div style={styles.errorBox}>
+          {error || (isBootLoading ? "Google Sheets에서 불러오는 중..." : "저장 중...")}
+        </div>
+      )}
 
       <div style={styles.topActions}>
         <div style={styles.tabRow}>
@@ -1379,8 +1260,8 @@ function App() {
         </div>
 
         <div style={styles.actionButtons}>
-          <button type="button" onClick={clearSavedData} style={styles.subButton}>
-            저장초기화
+          <button type="button" onClick={saveRemote} style={styles.subButton}>
+            지금 저장
           </button>
           <button type="button" onClick={exportProcessedExcel} style={styles.exportBtn}>
             엑셀 내보내기
@@ -1405,28 +1286,28 @@ function App() {
               {filteredProducts.length === 0 ? (
                 <div style={styles.emptyBox}>검색 결과 없음</div>
               ) : (
-                filteredProducts.map((product) => {
-                  const isSelected = selectedProductCode === product.productCode;
-                  return (
-                    <button
-                      key={product.productCode}
-                      type="button"
-                      onClick={() => handleSelectProduct(product.productCode)}
-                      style={{
-                        ...styles.productItem,
-                        ...(isSelected ? styles.productItemActive : {}),
-                      }}
-                    >
-                      <div style={styles.productItemTop}>
-                        <strong>{product.productName || "상품명 없음"}</strong>
-                      </div>
-                      <div>코드: {product.productCode}</div>
-                      <div>입고: {product.totalQty || 0}</div>
-                      <div>사전예약: {product.preorderQty || 0}</div>
-                      <div>센터수: {Object.keys(product.centers || {}).length}</div>
-                    </button>
-                  );
-                })
+                filteredProducts.map((product) => (
+                  <button
+                    key={product.productCode}
+                    type="button"
+                    onClick={() => {
+                      setSelectedProductCode(product.productCode);
+                      setSelectedCenter(Object.keys(product.centers || {})[0] || "");
+                    }}
+                    style={{
+                      ...styles.productItem,
+                      ...(selectedProductCode === product.productCode ? styles.productItemActive : {}),
+                    }}
+                  >
+                    <div style={styles.productItemTop}>
+                      <strong>{product.productName || "상품명 없음"}</strong>
+                    </div>
+                    <div>코드: {product.productCode}</div>
+                    <div>입고: {product.totalQty || 0}</div>
+                    <div>사전예약: {product.preorderQty || 0}</div>
+                    <div>센터수: {Object.keys(product.centers || {}).length}</div>
+                  </button>
+                ))
               )}
             </div>
           </div>
@@ -1446,9 +1327,7 @@ function App() {
               <div key={supplier.partner} style={styles.supplierCard}>
                 <div style={styles.supplierHeader}>
                   <strong>{supplier.partner}</strong>
-                  <span>
-                    총 수량 {supplier.totalQty || 0}, 품목수 {supplier.products.length}
-                  </span>
+                  <span>총 수량 {supplier.totalQty || 0}, 품목수 {supplier.products.length}</span>
                 </div>
 
                 <div style={styles.tableWrap}>
@@ -1534,18 +1413,9 @@ const styles = {
     fontFamily: "Arial, sans-serif",
     boxSizing: "border-box",
   },
-  header: {
-    marginBottom: 20,
-  },
-  title: {
-    margin: 0,
-    fontSize: 28,
-    fontWeight: 800,
-  },
-  desc: {
-    marginTop: 8,
-    color: "#6b7280",
-  },
+  header: { marginBottom: 20 },
+  title: { margin: 0, fontSize: 28, fontWeight: 800 },
+  desc: { marginTop: 8, color: "#6b7280" },
   uploadSection: {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
@@ -1558,26 +1428,10 @@ const styles = {
     borderRadius: 12,
     padding: 14,
   },
-  label: {
-    display: "block",
-    fontSize: 13,
-    fontWeight: 700,
-    marginBottom: 8,
-  },
-  fileInput: {
-    width: "100%",
-  },
-  fileName: {
-    marginTop: 8,
-    fontSize: 12,
-    color: "#374151",
-    wordBreak: "break-all",
-  },
-  helper: {
-    marginTop: 6,
-    fontSize: 12,
-    color: "#6b7280",
-  },
+  label: { display: "block", fontSize: 13, fontWeight: 700, marginBottom: 8 },
+  fileInput: { width: "100%" },
+  fileName: { marginTop: 8, fontSize: 12, color: "#374151", wordBreak: "break-all" },
+  helper: { marginTop: 6, fontSize: 12, color: "#6b7280", wordBreak: "break-all" },
   errorBox: {
     marginBottom: 16,
     padding: 12,
@@ -1594,16 +1448,8 @@ const styles = {
     marginBottom: 16,
     flexWrap: "wrap",
   },
-  actionButtons: {
-    display: "flex",
-    gap: 8,
-    flexWrap: "wrap",
-  },
-  tabRow: {
-    display: "flex",
-    gap: 8,
-    flexWrap: "wrap",
-  },
+  actionButtons: { display: "flex", gap: 8, flexWrap: "wrap" },
+  tabRow: { display: "flex", gap: 8, flexWrap: "wrap" },
   tabBtn: {
     border: "1px solid #d1d5db",
     background: "#fff",
@@ -1613,11 +1459,7 @@ const styles = {
     cursor: "pointer",
     fontWeight: 700,
   },
-  tabBtnActive: {
-    background: "#111827",
-    color: "#fff",
-    borderColor: "#111827",
-  },
+  tabBtnActive: { background: "#111827", color: "#fff", borderColor: "#111827" },
   exportBtn: {
     border: "none",
     background: "#2563eb",
@@ -1654,11 +1496,7 @@ const styles = {
     marginBottom: 10,
     boxSizing: "border-box",
   },
-  listInfo: {
-    fontSize: 13,
-    color: "#6b7280",
-    marginBottom: 10,
-  },
+  listInfo: { fontSize: 13, color: "#6b7280", marginBottom: 10 },
   productList: {
     display: "flex",
     flexDirection: "column",
@@ -1674,18 +1512,9 @@ const styles = {
     padding: 12,
     cursor: "pointer",
   },
-  productItemActive: {
-    border: "1px solid #2563eb",
-    background: "#eff6ff",
-  },
-  productItemTop: {
-    marginBottom: 6,
-  },
-  detailBox: {
-    display: "flex",
-    flexDirection: "column",
-    gap: 6,
-  },
+  productItemActive: { border: "1px solid #2563eb", background: "#eff6ff" },
+  productItemTop: { marginBottom: 6 },
+  detailBox: { display: "flex", flexDirection: "column", gap: 6 },
   centerBox: {
     marginTop: 12,
     padding: 12,
@@ -1693,10 +1522,7 @@ const styles = {
     borderRadius: 12,
     border: "1px solid #e5e7eb",
   },
-  subTitle: {
-    margin: "4px 0 10px",
-    fontSize: 15,
-  },
+  subTitle: { margin: "4px 0 10px", fontSize: 15 },
   partnerItem: {
     border: "1px solid #e5e7eb",
     borderRadius: 10,
@@ -1704,12 +1530,7 @@ const styles = {
     marginBottom: 10,
     background: "#fff",
   },
-  returnInputRow: {
-    display: "grid",
-    gridTemplateColumns: "120px 1fr 90px",
-    gap: 8,
-    marginTop: 10,
-  },
+  returnInputRow: { display: "grid", gridTemplateColumns: "120px 1fr 90px", gap: 8, marginTop: 10 },
   smallInput: {
     padding: 10,
     borderRadius: 8,
@@ -1738,10 +1559,7 @@ const styles = {
     borderRadius: 14,
     padding: 16,
   },
-  sectionTitle: {
-    marginTop: 0,
-    marginBottom: 12,
-  },
+  sectionTitle: { marginTop: 0, marginBottom: 12 },
   supplierCard: {
     border: "1px solid #e5e7eb",
     borderRadius: 12,
@@ -1756,14 +1574,8 @@ const styles = {
     flexWrap: "wrap",
     marginBottom: 10,
   },
-  tableWrap: {
-    overflowX: "auto",
-  },
-  table: {
-    width: "100%",
-    borderCollapse: "collapse",
-    background: "#fff",
-  },
+  tableWrap: { overflowX: "auto" },
+  table: { width: "100%", borderCollapse: "collapse", background: "#fff" },
   th: {
     textAlign: "left",
     padding: 10,
@@ -1777,10 +1589,7 @@ const styles = {
     fontSize: 13,
     verticalAlign: "top",
   },
-  returnSummary: {
-    marginBottom: 12,
-    fontWeight: 700,
-  },
+  returnSummary: { marginBottom: 12, fontWeight: 700 },
   returnGrid: {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
