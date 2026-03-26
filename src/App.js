@@ -42,6 +42,7 @@ function App() {
   const hasLoadedStorageRef = useRef(false);
 
   const serializeSet = (setObj) => Array.from(setObj || []);
+
   useEffect(() => {
     const handleResize = () => {
       if (typeof window !== "undefined") {
@@ -53,36 +54,73 @@ function App() {
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
   }, []);
+
   useEffect(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
+
       if (!saved) {
         hasLoadedStorageRef.current = true;
         return;
       }
-  
+
       const parsed = JSON.parse(saved);
-  
+
       setRows(Array.isArray(parsed.rows) ? parsed.rows : []);
+      setQuery(parsed.query || "");
       setFileName(parsed.fileName || "");
-  
-      // 나머지 복원 코드...
-      
-    } catch {
-      console.error("저장 데이터 복원 실패");
+      setError("");
+
+      setActiveTab(parsed.activeTab || "search");
+
+      setSelectedProductCode(parsed.selectedProductCode || "");
+      setSelectedCenter(parsed.selectedCenter || "");
+
+      setReturnInputs(parsed.returnInputs && typeof parsed.returnInputs === "object" ? parsed.returnInputs : {});
+      setMemoInputs(parsed.memoInputs && typeof parsed.memoInputs === "object" ? parsed.memoInputs : {});
+      setShowAllReturnHistory(Boolean(parsed.showAllReturnHistory));
+      setDeletedReturnKeys(new Set(Array.isArray(parsed.deletedReturnKeys) ? parsed.deletedReturnKeys : []));
+
+      setExcludeText(parsed.excludeText || "");
+      setEventEdits(parsed.eventEdits && typeof parsed.eventEdits === "object" ? parsed.eventEdits : {});
+
+      setExcludeFileName(parsed.excludeFileName || "");
+      setEventFileName(parsed.eventFileName || "");
+      setPreorderFileName(parsed.preorderFileName || "");
+
+      setExcludeCodeSet(new Set(Array.isArray(parsed.excludeCodeSet) ? parsed.excludeCodeSet : []));
+      setExcludePartnerSet(new Set(Array.isArray(parsed.excludePartnerSet) ? parsed.excludePartnerSet : []));
+      setEventCodeSet(new Set(Array.isArray(parsed.eventCodeSet) ? parsed.eventCodeSet : []));
+      setPreorderMap(parsed.preorderMap && typeof parsed.preorderMap === "object" ? parsed.preorderMap : {});
+      setUnmatchedPreorderRows(Array.isArray(parsed.unmatchedPreorderRows) ? parsed.unmatchedPreorderRows : []);
+    } catch (err) {
+      console.error("저장 데이터 복원 실패", err);
     } finally {
       hasLoadedStorageRef.current = true;
     }
   }, []);
+
   useEffect(() => {
     if (!hasLoadedStorageRef.current) return;
 
     try {
       const payload = {
         rows,
+        query,
         fileName,
+        activeTab,
+
+        selectedProductCode,
+        selectedCenter,
+
+        returnInputs,
+        memoInputs,
+        showAllReturnHistory,
+        deletedReturnKeys: serializeSet(deletedReturnKeys),
 
         excludeText,
+        eventEdits,
+
         excludeFileName,
         eventFileName,
         preorderFileName,
@@ -90,20 +128,8 @@ function App() {
         excludeCodeSet: serializeSet(excludeCodeSet),
         excludePartnerSet: serializeSet(excludePartnerSet),
         eventCodeSet: serializeSet(eventCodeSet),
-
         preorderMap,
         unmatchedPreorderRows,
-
-        returnInputs,
-        memoInputs,
-        deletedReturnKeys: serializeSet(deletedReturnKeys),
-
-        query,
-        activeTab,
-        selectedProductCode,
-        selectedCenter,
-        showAllReturnHistory,
-        eventEdits,
       };
 
       localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
@@ -112,8 +138,17 @@ function App() {
     }
   }, [
     rows,
+    query,
     fileName,
+    activeTab,
+    selectedProductCode,
+    selectedCenter,
+    returnInputs,
+    memoInputs,
+    showAllReturnHistory,
+    deletedReturnKeys,
     excludeText,
+    eventEdits,
     excludeFileName,
     eventFileName,
     preorderFileName,
@@ -122,16 +157,8 @@ function App() {
     eventCodeSet,
     preorderMap,
     unmatchedPreorderRows,
-    returnInputs,
-    memoInputs,
-    deletedReturnKeys,
-    query,
-    activeTab,
-    selectedProductCode,
-    selectedCenter,
-    showAllReturnHistory,
-    eventEdits,
   ]);
+
   const normalizeKey = (key) => String(key || "").replace(/\uFEFF/g, "").trim();
 
   const normalizeText = (value) => {
@@ -193,7 +220,7 @@ function App() {
     };
 
     const isBrokenText = (text) => {
-      const brokenCharCount = (text.match(/ /g) || []).length;
+      const brokenCharCount = (text.match(/�/g) || []).length;
       return brokenCharCount > 5;
     };
 
@@ -528,7 +555,7 @@ function App() {
         totalQty,
         preorderQty,
         totalRowCount,
-        event: eventCodeSet.has(productCode) ? "행사" : product.__event || "",
+        event: eventCodeSet.has(productCode) ? "행사" : "",
       };
     });
 
@@ -619,6 +646,8 @@ function App() {
       });
     } catch {
       setError("CSV 읽기 실패");
+    } finally {
+      event.target.value = "";
     }
   };
 
@@ -673,8 +702,11 @@ function App() {
           " / "
         )
       );
+      setError("");
     } catch {
       setError("제외목록 업로드 실패");
+    } finally {
+      event.target.value = "";
     }
   };
 
@@ -692,8 +724,11 @@ function App() {
 
       setEventFileName(file.name);
       setEventCodeSet(nextEventCodeSet);
+      setError("");
     } catch {
       setError("행사표 업로드 실패");
+    } finally {
+      event.target.value = "";
     }
   };
 
@@ -735,9 +770,45 @@ function App() {
       setPreorderFileName(file.name);
       setPreorderMap(nextPreorderMap);
       setUnmatchedPreorderRows(nextUnmatchedRows);
+      setError("");
     } catch {
       setError("사전예약 업로드 실패");
+    } finally {
+      event.target.value = "";
     }
+  };
+
+  const clearSavedData = () => {
+    localStorage.removeItem(STORAGE_KEY);
+
+    setRows([]);
+    setQuery("");
+    setFileName("");
+    setError("");
+    setActiveTab("search");
+
+    setProductMap({});
+    setSupplierSummary({});
+    setSelectedProductCode("");
+    setSelectedCenter("");
+
+    setReturnInputs({});
+    setMemoInputs({});
+    setShowAllReturnHistory(false);
+    setDeletedReturnKeys(new Set());
+
+    setExcludeText("");
+    setEventEdits({});
+
+    setExcludeFileName("");
+    setEventFileName("");
+    setPreorderFileName("");
+
+    setExcludeCodeSet(new Set());
+    setExcludePartnerSet(new Set());
+    setEventCodeSet(new Set());
+    setPreorderMap({});
+    setUnmatchedPreorderRows([]);
   };
 
   const filteredProducts = useMemo(() => {
@@ -787,10 +858,6 @@ function App() {
     if (!selectedProduct || !selectedCenter) return null;
     return selectedProduct.centers[selectedCenter] || null;
   }, [selectedProduct, selectedCenter]);
-
-  const selectedCenterPartners = useMemo(() => {
-    return Object.values(selectedCenterInfo?.partners || {}).sort((a, b) => (b.qty || 0) - (a.qty || 0));
-  }, [selectedCenterInfo]);
 
   const supplierList = useMemo(() => {
     return Object.values(supplierSummary)
@@ -1231,9 +1298,14 @@ function App() {
           {tabButton("return", "회송내역")}
         </div>
 
-        <button type="button" onClick={exportProcessedExcel} style={styles.exportBtn}>
-          엑셀 내보내기
-        </button>
+        <div style={styles.actionButtons}>
+          <button type="button" onClick={clearSavedData} style={styles.subButton}>
+            저장초기화
+          </button>
+          <button type="button" onClick={exportProcessedExcel} style={styles.exportBtn}>
+            엑셀 내보내기
+          </button>
+        </div>
       </div>
 
       {activeTab === "search" && (
@@ -1444,6 +1516,11 @@ const styles = {
     alignItems: "center",
     gap: 12,
     marginBottom: 16,
+    flexWrap: "wrap",
+  },
+  actionButtons: {
+    display: "flex",
+    gap: 8,
     flexWrap: "wrap",
   },
   tabRow: {
