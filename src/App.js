@@ -375,36 +375,75 @@ function App() {
   const handleUploadCsv = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
+  
     setError("");
     setInfo("");
-
+  
     try {
-      const text = await file.text();
-
-      Papa.parse(text, {
-        header: true,
-        skipEmptyLines: true,
-        complete: (result) => {
-          if (result.errors?.length) {
-            setError("CSV 파싱 중 일부 오류가 있었다");
-          }
-
-          setRawRows(Array.isArray(result.data) ? result.data : []);
-          setFileName(file.name);
-          setProcessQty("");
-          setMemo("");
-          setReason(processType === "return" ? "검품 회송" : "업체 교환");
-          setInfo("CSV 업로드 완료");
-        },
-        error: () => {
-          setError("CSV 읽기 실패");
-        },
-      });
-    } catch {
+      const buffer = await file.arrayBuffer();
+  
+      const tryParse = (text) =>
+        new Promise((resolve, reject) => {
+          Papa.parse(text, {
+            header: true,
+            skipEmptyLines: true,
+            complete: (result) => resolve(result),
+            error: (err) => reject(err),
+          });
+        });
+  
+      let result;
+      let usedEncoding = "utf-8";
+  
+      try {
+        const utf8Text = new TextDecoder("utf-8").decode(buffer);
+        result = await tryParse(utf8Text);
+      } catch {
+        result = null;
+      }
+  
+      const utf8Rows = Array.isArray(result?.data) ? result.data : [];
+      const utf8HasUsefulData =
+        utf8Rows.length > 0 &&
+        Object.keys(utf8Rows[0] || {}).some((key) =>
+          String(key).includes("상품") ||
+          String(key).includes("센터") ||
+          String(key).includes("거래처") ||
+          String(key).includes("주문")
+        );
+  
+      if (!utf8HasUsefulData) {
+        const cp949Text = new TextDecoder("euc-kr").decode(buffer);
+        result = await tryParse(cp949Text);
+        usedEncoding = "euc-kr";
+      }
+  
+      if (result?.errors?.length) {
+        console.log("PapaParse errors:", result.errors);
+      }
+  
+      const parsedRows = Array.isArray(result?.data) ? result.data : [];
+      console.log("usedEncoding:", usedEncoding);
+      console.log("parsedRows sample:", parsedRows.slice(0, 5));
+      console.log("headers:", parsedRows[0] ? Object.keys(parsedRows[0]) : []);
+  
+      setRawRows(parsedRows);
+      setFileName(file.name);
+      setProcessQty("");
+      setMemo("");
+      setReason(processType === "return" ? "검품 회송" : "업체 교환");
+  
+      if (!parsedRows.length) {
+        setError("CSV를 읽었지만 데이터가 비어 있다. 헤더행 또는 인코딩을 확인해라");
+        return;
+      }
+  
+      setInfo(`CSV 업로드 완료, ${parsedRows.length}행 읽음, 인코딩 ${usedEncoding}`);
+    } catch (err) {
+      console.error(err);
       setError("CSV 업로드 실패");
     }
-
+  
     e.target.value = "";
   };
 
