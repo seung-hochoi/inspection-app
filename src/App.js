@@ -1,7 +1,7 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import Papa from "papaparse";
 
-const DEFAULT_SCRIPT_URL = process.env.REACT_APP_GOOGLE_SCRIPT_URL || "https://script.google.com/macros/s/AKfycbwm1L9o1Q3n7bvN1J_jgNlniGVaJt4RitknZ-9fabZnSv_IxsC217cmFkXTgJg6OGPVyg/exec";
+const DEFAULT_SCRIPT_URL = process.env.REACT_APP_GOOGLE_SCRIPT_URL || "https://script.google.com/macros/s/AKfycbyx9KO8yqJAJDYMMrPE13mwOWRkz249HvoEYQtChbBIgvgAbcyeaOsy08cnSHeZiKWfWQ/exec";
 
 const normalizeKey = (key) => String(key || "").replace(/\uFEFF/g, "").trim();
 
@@ -15,13 +15,17 @@ const normalizeText = (value) =>
 
 const cleanCode = (value) => {
   if (value == null) return "";
+
   let text = String(value).replace(/\uFEFF/g, "").trim();
   const tMatch = text.match(/^=T\("(.+)"\)$/i);
-  if (tMatch) text = tMatch[1];
-  return text.replace(/^"+|"+$/g, "").trim();
-};
 
-const digitsOnly = (value) => String(value || "").replace(/\D/g, "");
+  if (tMatch) {
+    text = tMatch[1];
+  }
+
+  text = text.replace(/^"+|"+$/g, "").trim();
+  return text;
+};
 
 const parseQty = (value) => {
   const num = Number(String(value ?? "").replace(/,/g, "").trim());
@@ -37,28 +41,6 @@ const getValue = (row, candidates) => {
   return "";
 };
 
-const makePairKey = (productCode, center) => `${productCode}||${center}`;
-
-const fileToBase64 = (file) =>
-  new Promise((resolve, reject) => {
-    if (!file) {
-      resolve(null);
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = String(reader.result || "");
-      const base64 = result.includes(",") ? result.split(",")[1] : result;
-      resolve({
-        fileName: file.name,
-        mimeType: file.type || "application/octet-stream",
-        base64,
-      });
-    };
-    reader.onerror = () => reject(new Error("사진 읽기 실패"));
-    reader.readAsDataURL(file);
-  });
-
 const decodeCsvFile = async (file) => {
   const buffer = await file.arrayBuffer();
 
@@ -70,13 +52,17 @@ const decodeCsvFile = async (file) => {
   const isBrokenText = (text) => (text.match(/�/g) || []).length > 5;
 
   let text = tryDecode("utf-8");
-  if (isBrokenText(text)) text = tryDecode("euc-kr");
+  if (isBrokenText(text)) {
+    text = tryDecode("euc-kr");
+  }
+
   return { text };
 };
 
 const buildNormalizedRows = (parsedRows) =>
   parsedRows.map((rawRow, index) => {
     const row = {};
+
     Object.keys(rawRow || {}).forEach((key) => {
       row[normalizeKey(key)] = rawRow[key];
     });
@@ -93,14 +79,13 @@ const buildNormalizedRows = (parsedRows) =>
 
     return {
       ...row,
-      __index: index,
       __id: `${productCode || "empty"}-${center || "nocenter"}-${partner || "nopartner"}-${index}`,
+      __index: index,
       __productCode: productCode,
       __productName: productName,
       __partner: partner,
       __center: center,
       __qty: qty,
-      __productCodeDigits: digitsOnly(productCode),
       __productNameNormalized: normalizeText(productName),
       __partnerNormalized: normalizeText(partner),
       __centerNormalized: normalizeText(center),
@@ -128,19 +113,39 @@ const computeJobKey = (rows) =>
     )
   )}`;
 
+const isActiveFlag = (value) => {
+  const text = normalizeText(value);
+  return ["y", "yes", "사용", "사용중", "활성", "active", "1", "true"].includes(text);
+};
+
+const fileToBase64 = (file) =>
+  new Promise((resolve, reject) => {
+    if (!file) {
+      resolve(null);
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = String(reader.result || "");
+      const base64 = result.includes(",") ? result.split(",")[1] : result;
+      resolve({
+        fileName: file.name,
+        mimeType: file.type || "application/octet-stream",
+        base64,
+      });
+    };
+    reader.onerror = () => reject(new Error("사진 읽기 실패"));
+    reader.readAsDataURL(file);
+  });
+
 function App() {
   const [scriptUrl, setScriptUrl] = useState(DEFAULT_SCRIPT_URL);
-
   const [rows, setRows] = useState([]);
   const [currentJob, setCurrentJob] = useState(null);
   const [search, setSearch] = useState("");
-  const [expandedKey, setExpandedKey] = useState("");
-
-  const [excludeCodeSet, setExcludeCodeSet] = useState(new Set());
-  const [excludePartnerSet, setExcludePartnerSet] = useState(new Set());
-  const [eventCodeSet, setEventCodeSet] = useState(new Set());
-  const [preorderMap, setPreorderMap] = useState({});
-
+  const [expandedProductCode, setExpandedProductCode] = useState("");
+  const [selectedCenterByProduct, setSelectedCenterByProduct] = useState({});
   const [drafts, setDrafts] = useState({});
   const [bootLoading, setBootLoading] = useState(true);
   const [uploadingCsv, setUploadingCsv] = useState(false);
@@ -148,7 +153,9 @@ function App() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
-  const didBootRef = useRef(false);
+  const [excludedProductCodes, setExcludedProductCodes] = useState(new Set());
+  const [excludedPairKeys, setExcludedPairKeys] = useState(new Set());
+  const [eventMap, setEventMap] = useState({});
 
   const loadBootstrap = async () => {
     if (!scriptUrl.trim()) {
@@ -171,47 +178,55 @@ function App() {
       const config = data.config || {};
       const job = data.current_job || null;
 
-      const excludeCodes = new Set(
-        (config.exclude_codes || [])
-          .map((row) => cleanCode(row.상품코드 || row.product_code || row.code || ""))
-          .filter(Boolean)
-      );
+      const nextExcludedProductCodes = new Set();
+      const nextExcludedPairKeys = new Set();
 
-      const excludePartners = new Set(
-        (config.exclude_partners || [])
-          .map((row) => String(row.협력사 || row.partner || "").trim())
-          .filter(Boolean)
-      );
+      (config.exclude_rows || []).forEach((row) => {
+        const useYn = getValue(row, ["사용여부"]);
+        if (!isActiveFlag(useYn)) return;
 
-      const eventCodes = new Set(
-        (config.event_codes || [])
-          .map((row) => cleanCode(row.상품코드 || row.product_code || row.code || ""))
-          .filter(Boolean)
-      );
+        const productCode = cleanCode(getValue(row, ["상품코드", "상품 코드", "코드", "바코드"]));
+        const partner = String(getValue(row, ["협력사"]) || "").trim();
 
-      const nextPreorderMap = {};
-      (config.preorder_data || []).forEach((row) => {
-        const productCode = cleanCode(row.상품코드 || row.product_code || "");
-        const center = String(row.센터명 || row.센터 || row.center || "").trim();
-        const qty = parseQty(row.사전예약수량 || row.수량 || row.qty || 0);
-        if (productCode && center) {
-          const key = makePairKey(productCode, center);
-          nextPreorderMap[key] = (nextPreorderMap[key] || 0) + qty;
+        if (!productCode) return;
+
+        if (partner) {
+          nextExcludedPairKeys.add(`${productCode}||${partner}`);
+        } else {
+          nextExcludedProductCodes.add(productCode);
         }
       });
 
-      setExcludeCodeSet(excludeCodes);
-      setExcludePartnerSet(excludePartners);
-      setEventCodeSet(eventCodes);
-      setPreorderMap(nextPreorderMap);
+      const nextEventMap = {};
+      (config.event_rows || []).forEach((row) => {
+        const useYn = getValue(row, ["사용여부"]);
+        if (!isActiveFlag(useYn)) return;
+
+        const productCode = cleanCode(getValue(row, ["상품코드", "상품 코드", "코드", "바코드"]));
+        const eventName = String(getValue(row, ["행사명"]) || "").trim();
+        const startDate = String(getValue(row, ["시작일"]) || "").trim();
+        const endDate = String(getValue(row, ["종료일"]) || "").trim();
+
+        if (!productCode) return;
+
+        nextEventMap[productCode] = {
+          행사여부: "행사",
+          행사명: eventName,
+          시작일: startDate,
+          종료일: endDate,
+        };
+      });
+
+      setExcludedProductCodes(nextExcludedProductCodes);
+      setExcludedPairKeys(nextExcludedPairKeys);
+      setEventMap(nextEventMap);
       setCurrentJob(job);
       setRows(Array.isArray(job?.rows) ? job.rows : []);
-      setMessage(job ? "최근 작업을 불러왔습니다." : "시작할 CSV를 업로드해주세요.");
+      setMessage(job ? "최근 작업을 불러왔습니다." : "CSV를 업로드해주세요.");
     } catch (err) {
       setError(err.message || "초기 데이터 불러오기 실패");
     } finally {
       setBootLoading(false);
-      didBootRef.current = true;
     }
   };
 
@@ -219,51 +234,83 @@ function App() {
     loadBootstrap();
   }, [scriptUrl]);
 
-  const visibleItems = useMemo(() => {
+  const filteredRows = useMemo(() => {
+    return rows.filter((row) => {
+      if (!row.__productCode) return false;
+      if (excludedProductCodes.has(row.__productCode)) return false;
+      if (excludedPairKeys.has(`${row.__productCode}||${row.__partner}`)) return false;
+      return true;
+    });
+  }, [rows, excludedProductCodes, excludedPairKeys]);
+
+  const productCards = useMemo(() => {
     const keyword = normalizeText(search);
-    const base = rows
-      .filter((row) => row.__productCode)
-      .filter((row) => !excludeCodeSet.has(row.__productCode))
-      .filter((row) => !excludePartnerSet.has(row.__partner))
-      .map((row) => {
-        const preorderQty = preorderMap[makePairKey(row.__productCode, row.__center)] || 0;
-        const isEvent = eventCodeSet.has(row.__productCode);
+
+    const grouped = {};
+
+    filteredRows.forEach((row) => {
+      const productCode = row.__productCode;
+      const productName = row.__productName || "상품명 없음";
+      const partner = row.__partner || "협력사없음";
+      const center = row.__center || "센터없음";
+      const qty = row.__qty || 0;
+
+      if (!grouped[productCode]) {
+        grouped[productCode] = {
+          productCode,
+          productName,
+          totalQty: 0,
+          partners: new Set(),
+          centers: {},
+          eventInfo: eventMap[productCode] || null,
+        };
+      }
+
+      grouped[productCode].totalQty += qty;
+      grouped[productCode].partners.add(partner);
+
+      if (!grouped[productCode].centers[center]) {
+        grouped[productCode].centers[center] = {
+          center,
+          totalQty: 0,
+          rows: [],
+        };
+      }
+
+      grouped[productCode].centers[center].totalQty += qty;
+      grouped[productCode].centers[center].rows.push(row);
+    });
+
+    const cards = Object.values(grouped)
+      .map((product) => {
+        const centerList = Object.values(product.centers).sort(
+          (a, b) => (b.totalQty || 0) - (a.totalQty || 0)
+        );
 
         return {
-          key: `${row.__productCode}||${row.__center}||${row.__partner}`,
-          productCode: row.__productCode,
-          productName: row.__productName,
-          center: row.__center,
-          partner: row.__partner,
-          orderQty: row.__qty || 0,
-          preorderQty,
-          eventLabel: isEvent ? "행사" : "",
-          raw: row,
+          ...product,
+          centerList,
+          partnerText: Array.from(product.partners).join(", "),
         };
-      });
+      })
+      .filter((product) => {
+        if (!keyword) return true;
 
-    if (!keyword) {
-      return base.sort((a, b) => {
         return (
-          (b.orderQty || 0) - (a.orderQty || 0) ||
+          normalizeText(product.productName).includes(keyword) ||
+          normalizeText(product.partnerText).includes(keyword) ||
+          String(product.productCode || "").includes(search.trim())
+        );
+      })
+      .sort((a, b) => {
+        return (
+          (b.totalQty || 0) - (a.totalQty || 0) ||
           a.productName.localeCompare(b.productName, "ko")
         );
       });
-    }
 
-    return base
-      .map((item) => {
-        let score = 0;
-        if (normalizeText(item.productName).includes(keyword)) score += 100;
-        if (normalizeText(item.center).includes(keyword)) score += 80;
-        if (normalizeText(item.partner).includes(keyword)) score += 70;
-        if (item.productCode.includes(search.trim())) score += 120;
-        return { item, score };
-      })
-      .filter((entry) => entry.score > 0)
-      .sort((a, b) => b.score - a.score || (b.item.orderQty || 0) - (a.item.orderQty || 0))
-      .map((entry) => entry.item);
-  }, [rows, search, excludeCodeSet, excludePartnerSet, eventCodeSet, preorderMap]);
+    return cards;
+  }, [filteredRows, search, eventMap]);
 
   const updateDraft = (key, field, value) => {
     setDrafts((prev) => ({
@@ -306,7 +353,8 @@ function App() {
     setCurrentJob(nextJob);
     setRows(normalizedRows);
     setDrafts({});
-    setExpandedKey("");
+    setExpandedProductCode("");
+    setSelectedCenterByProduct({});
     setMessage("새 CSV 작업이 저장되었습니다.");
   };
 
@@ -345,8 +393,15 @@ function App() {
     }
   };
 
-  const saveRecord = async (item) => {
-    const draft = drafts[item.key] || {};
+  const saveRecord = async (product, centerName) => {
+    const centerInfo = product.centerList.find((item) => item.center === centerName);
+    if (!centerInfo) {
+      setError("센터를 선택해줘.");
+      return;
+    }
+
+    const draftKey = `${product.productCode}||${centerName}`;
+    const draft = drafts[draftKey] || {};
     const returnQty = parseQty(draft.returnQty);
     const exchangeQty = parseQty(draft.exchangeQty);
     const memo = String(draft.memo || "").trim();
@@ -362,8 +417,12 @@ function App() {
       return;
     }
 
+    const partnerNames = Array.from(
+      new Set(centerInfo.rows.map((row) => row.__partner).filter(Boolean))
+    ).join(", ");
+
     try {
-      setSavingKey(item.key);
+      setSavingKey(draftKey);
       setError("");
       setMessage("");
 
@@ -377,13 +436,13 @@ function App() {
           payload: {
             작성일시: new Date().toISOString(),
             작업기준일또는CSV식별값: currentJob.job_key,
-            상품명: item.productName,
-            상품코드: item.productCode,
-            센터명: item.center,
-            협력사명: item.partner,
-            수주수량: item.orderQty,
-            사전예약수량: item.preorderQty,
-            행사여부: item.eventLabel,
+            상품명: product.productName,
+            상품코드: product.productCode,
+            센터명: centerName,
+            협력사명: partnerNames,
+            수주수량: centerInfo.totalQty || 0,
+            행사여부: product.eventInfo?.행사여부 || "",
+            행사명: product.eventInfo?.행사명 || "",
             회송수량: returnQty,
             교환수량: exchangeQty,
             비고: memo,
@@ -399,7 +458,7 @@ function App() {
 
       setDrafts((prev) => ({
         ...prev,
-        [item.key]: {
+        [draftKey]: {
           returnQty: "",
           exchangeQty: "",
           memo: "",
@@ -418,10 +477,8 @@ function App() {
   return (
     <div style={styles.app}>
       <div style={styles.headerCard}>
-        <h1 style={styles.title}>검품 현장 입력</h1>
-        <p style={styles.subtitle}>
-          CSV만 업로드하면 제외목록, 행사표, 사전예약은 Google Sheets에서 자동 반영됩니다.
-        </p>
+        <h1 style={styles.title}>GS신선강화지원팀</h1>
+        <p style={styles.subtitle}>승호</p>
       </div>
 
       <div style={styles.panel}>
@@ -437,19 +494,15 @@ function App() {
       <div style={styles.panel}>
         <label style={styles.label}>CSV 업로드</label>
         <input type="file" accept=".csv" onChange={handleCsvUpload} style={styles.fileInput} />
-        <div style={styles.metaText}>
-          현재 작업: {currentJob?.source_file_name || "없음"}
-        </div>
-        <div style={styles.metaText}>
-          작업 식별값: {currentJob?.job_key || "-"}
-        </div>
+        <div style={styles.metaText}>현재 작업: {currentJob?.source_file_name || "없음"}</div>
+        <div style={styles.metaText}>작업 식별값: {currentJob?.job_key || "-"}</div>
       </div>
 
       <div style={styles.panel}>
         <input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="상품명 / 상품코드 / 센터 / 협력사 검색"
+          placeholder="상품명 / 상품코드 / 협력사 검색"
           style={styles.input}
         />
       </div>
@@ -464,38 +517,87 @@ function App() {
         </div>
       )}
 
-      <div style={styles.countText}>총 {visibleItems.length}건</div>
+      <div style={styles.countText}>총 {productCards.length}건</div>
 
       <div style={styles.list}>
-        {visibleItems.length === 0 ? (
+        {productCards.length === 0 ? (
           <div style={styles.emptyBox}>표시할 상품이 없습니다.</div>
         ) : (
-          visibleItems.map((item) => {
-            const isOpen = expandedKey === item.key;
-            const draft = drafts[item.key] || {};
+          productCards.map((product) => {
+            const isOpen = expandedProductCode === product.productCode;
+            const selectedCenter =
+              selectedCenterByProduct[product.productCode] || product.centerList[0]?.center || "";
+            const selectedCenterInfo =
+              product.centerList.find((item) => item.center === selectedCenter) || null;
+            const draftKey = `${product.productCode}||${selectedCenter}`;
+            const draft = drafts[draftKey] || {};
 
             return (
-              <div key={item.key} style={styles.card}>
+              <div key={product.productCode} style={styles.card}>
                 <button
                   type="button"
                   style={styles.cardButton}
-                  onClick={() => setExpandedKey(isOpen ? "" : item.key)}
+                  onClick={() => {
+                    setExpandedProductCode((prev) =>
+                      prev === product.productCode ? "" : product.productCode
+                    );
+                    setSelectedCenterByProduct((prev) => ({
+                      ...prev,
+                      [product.productCode]: prev[product.productCode] || product.centerList[0]?.center || "",
+                    }));
+                  }}
                 >
                   <div style={styles.cardTopRow}>
-                    <div style={styles.cardTitle}>{item.productName || "상품명 없음"}</div>
-                    {item.eventLabel ? <span style={styles.eventBadge}>행사</span> : null}
+                    <div style={styles.cardTitle}>{product.productName || "상품명 없음"}</div>
+                    {product.eventInfo?.행사여부 ? (
+                      <span style={styles.eventBadge}>
+                        {product.eventInfo.행사명 || "행사"}
+                      </span>
+                    ) : null}
                   </div>
-                  <div style={styles.cardMeta}>코드 {item.productCode}</div>
-                  <div style={styles.cardMeta}>{item.center || "센터없음"}</div>
-                  <div style={styles.cardMeta}>{item.partner || "협력사없음"}</div>
+                  <div style={styles.cardMeta}>코드 {product.productCode}</div>
+                  <div style={styles.cardMeta}>협력사 {product.partnerText || "-"}</div>
                   <div style={styles.qtyRow}>
-                    <span style={styles.qtyChip}>수주 {item.orderQty}</span>
-                    <span style={styles.qtyChip}>사전예약 {item.preorderQty}</span>
+                    <span style={styles.qtyChip}>총 수주 {product.totalQty}</span>
+                    <span style={styles.qtyChip}>센터 {product.centerList.length}</span>
                   </div>
                 </button>
 
                 {isOpen && (
                   <div style={styles.editorBox}>
+                    <div style={{ marginBottom: 12 }}>
+                      <label style={styles.label}>센터 선택</label>
+                      <select
+                        value={selectedCenter}
+                        onChange={(e) =>
+                          setSelectedCenterByProduct((prev) => ({
+                            ...prev,
+                            [product.productCode]: e.target.value,
+                          }))
+                        }
+                        style={styles.input}
+                      >
+                        {product.centerList.map((center) => (
+                          <option key={center.center} value={center.center}>
+                            {center.center} / 수주 {center.totalQty}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {selectedCenterInfo && (
+                      <>
+                        <div style={styles.metaText}>
+                          선택 센터 수주수량: {selectedCenterInfo.totalQty}
+                        </div>
+                        <div style={styles.metaText}>
+                          협력사: {Array.from(
+                            new Set(selectedCenterInfo.rows.map((row) => row.__partner).filter(Boolean))
+                          ).join(", ") || "-"}
+                        </div>
+                      </>
+                    )}
+
                     <div style={styles.grid2}>
                       <div>
                         <label style={styles.label}>회송수량</label>
@@ -503,7 +605,7 @@ function App() {
                           type="number"
                           min="0"
                           value={draft.returnQty || ""}
-                          onChange={(e) => updateDraft(item.key, "returnQty", e.target.value)}
+                          onChange={(e) => updateDraft(draftKey, "returnQty", e.target.value)}
                           style={styles.input}
                         />
                       </div>
@@ -513,7 +615,7 @@ function App() {
                           type="number"
                           min="0"
                           value={draft.exchangeQty || ""}
-                          onChange={(e) => updateDraft(item.key, "exchangeQty", e.target.value)}
+                          onChange={(e) => updateDraft(draftKey, "exchangeQty", e.target.value)}
                           style={styles.input}
                         />
                       </div>
@@ -523,7 +625,7 @@ function App() {
                       <label style={styles.label}>비고</label>
                       <textarea
                         value={draft.memo || ""}
-                        onChange={(e) => updateDraft(item.key, "memo", e.target.value)}
+                        onChange={(e) => updateDraft(draftKey, "memo", e.target.value)}
                         style={styles.textarea}
                         rows={3}
                         placeholder="불량 사유 / 전달 사항"
@@ -535,11 +637,10 @@ function App() {
                       <input
                         type="file"
                         accept="image/*"
-                        capture="environment"
                         onChange={(e) => {
                           const file = e.target.files?.[0] || null;
-                          updateDraft(item.key, "photoFile", file);
-                          updateDraft(item.key, "photoName", file?.name || "");
+                          updateDraft(draftKey, "photoFile", file);
+                          updateDraft(draftKey, "photoName", file?.name || "");
                         }}
                         style={styles.fileInput}
                       />
@@ -548,11 +649,11 @@ function App() {
 
                     <button
                       type="button"
-                      onClick={() => saveRecord(item)}
-                      disabled={savingKey === item.key}
+                      onClick={() => saveRecord(product, selectedCenter)}
+                      disabled={savingKey === draftKey}
                       style={styles.saveButton}
                     >
-                      {savingKey === item.key ? "저장 중..." : "저장"}
+                      {savingKey === draftKey ? "저장 중..." : "저장"}
                     </button>
                   </div>
                 )}
@@ -625,6 +726,7 @@ const styles = {
     boxSizing: "border-box",
     fontSize: 16,
     resize: "vertical",
+    marginTop: 2,
   },
   fileInput: {
     width: "100%",
@@ -728,6 +830,7 @@ const styles = {
     display: "grid",
     gridTemplateColumns: "1fr 1fr",
     gap: 10,
+    marginTop: 12,
     marginBottom: 12,
   },
   saveButton: {
