@@ -1,14 +1,30 @@
-import React, { useEffect, useMemo, useState, useDeferredValue, useRef } from "react";
+import React, { useEffect, useMemo, useState, useDeferredValue } from "react";
 import Papa from "papaparse";
 import * as XLSX from "xlsx";
 
 function App() {
-  const [rows, setRows] = useState([]);
-  const [query, setQuery] = useState("");
-  const [fileName, setFileName] = useState("");
+  const STORAGE_KEY = "inspection-app-storage-v2";
+
+  const loadSavedData = () => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return {};
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch (err) {
+      console.error("저장 데이터 불러오기 실패", err);
+      return {};
+    }
+  };
+
+  const saved = loadSavedData();
+
+  const [rows, setRows] = useState(Array.isArray(saved.rows) ? saved.rows : []);
+  const [query, setQuery] = useState(saved.query || "");
+  const [fileName, setFileName] = useState(saved.fileName || "");
   const [error, setError] = useState("");
 
-  const [activeTab, setActiveTab] = useState("search");
+  const [activeTab, setActiveTab] = useState(saved.activeTab || "search");
 
   const [isMobileView, setIsMobileView] = useState(
     typeof window !== "undefined" ? window.innerWidth <= 768 : false
@@ -16,32 +32,54 @@ function App() {
 
   const [productMap, setProductMap] = useState({});
   const [supplierSummary, setSupplierSummary] = useState({});
-  const [selectedProductCode, setSelectedProductCode] = useState("");
-  const [selectedCenter, setSelectedCenter] = useState("");
+  const [selectedProductCode, setSelectedProductCode] = useState(
+    saved.selectedProductCode || ""
+  );
+  const [selectedCenter, setSelectedCenter] = useState(saved.selectedCenter || "");
 
-  const [returnInputs, setReturnInputs] = useState({});
-  const [memoInputs, setMemoInputs] = useState({});
-  const [showAllReturnHistory, setShowAllReturnHistory] = useState(false);
-  const [deletedReturnKeys, setDeletedReturnKeys] = useState(new Set());
-  const [returnHistory, setReturnHistory] = useState({});
-  const [csvFileSignature, setCsvFileSignature] = useState("");
+  const [returnInputs, setReturnInputs] = useState(
+    saved.returnInputs && typeof saved.returnInputs === "object" ? saved.returnInputs : {}
+  );
+  const [memoInputs, setMemoInputs] = useState(
+    saved.memoInputs && typeof saved.memoInputs === "object" ? saved.memoInputs : {}
+  );
+  const [showAllReturnHistory, setShowAllReturnHistory] = useState(
+    Boolean(saved.showAllReturnHistory)
+  );
+  const [deletedReturnKeys, setDeletedReturnKeys] = useState(
+    new Set(Array.isArray(saved.deletedReturnKeys) ? saved.deletedReturnKeys : [])
+  );
+  const [returnHistory, setReturnHistory] = useState(
+    saved.returnHistory && typeof saved.returnHistory === "object" ? saved.returnHistory : {}
+  );
+  const [csvFileSignature, setCsvFileSignature] = useState(saved.csvFileSignature || "");
 
-  const [excludeText, setExcludeText] = useState("");
-  const [eventEdits, setEventEdits] = useState({});
+  const [excludeText, setExcludeText] = useState(saved.excludeText || "");
+  const [eventEdits, setEventEdits] = useState(
+    saved.eventEdits && typeof saved.eventEdits === "object" ? saved.eventEdits : {}
+  );
 
-  const [excludeFileName, setExcludeFileName] = useState("");
-  const [eventFileName, setEventFileName] = useState("");
-  const [preorderFileName, setPreorderFileName] = useState("");
+  const [excludeFileName, setExcludeFileName] = useState(saved.excludeFileName || "");
+  const [eventFileName, setEventFileName] = useState(saved.eventFileName || "");
+  const [preorderFileName, setPreorderFileName] = useState(saved.preorderFileName || "");
 
-  const [excludeCodeSet, setExcludeCodeSet] = useState(new Set());
-  const [excludePartnerSet, setExcludePartnerSet] = useState(new Set());
-  const [eventCodeSet, setEventCodeSet] = useState(new Set());
-  const [preorderMap, setPreorderMap] = useState({});
-  const [unmatchedPreorderRows, setUnmatchedPreorderRows] = useState([]);
+  const [excludeCodeSet, setExcludeCodeSet] = useState(
+    new Set(Array.isArray(saved.excludeCodeSet) ? saved.excludeCodeSet : [])
+  );
+  const [excludePartnerSet, setExcludePartnerSet] = useState(
+    new Set(Array.isArray(saved.excludePartnerSet) ? saved.excludePartnerSet : [])
+  );
+  const [eventCodeSet, setEventCodeSet] = useState(
+    new Set(Array.isArray(saved.eventCodeSet) ? saved.eventCodeSet : [])
+  );
+  const [preorderMap, setPreorderMap] = useState(
+    saved.preorderMap && typeof saved.preorderMap === "object" ? saved.preorderMap : {}
+  );
+  const [unmatchedPreorderRows, setUnmatchedPreorderRows] = useState(
+    Array.isArray(saved.unmatchedPreorderRows) ? saved.unmatchedPreorderRows : []
+  );
 
   const deferredQuery = useDeferredValue(query);
-  const STORAGE_KEY = "inspection-app-storage-v1";
-  const hasLoadedStorageRef = useRef(false);
 
   const serializeSet = (setObj) => Array.from(setObj || []);
 
@@ -58,75 +96,6 @@ function App() {
   }, []);
 
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-
-      if (!saved) {
-        hasLoadedStorageRef.current = true;
-        return;
-      }
-
-      const parsed = JSON.parse(saved);
-
-      setRows(Array.isArray(parsed.rows) ? parsed.rows : []);
-      setQuery(parsed.query || "");
-      setFileName(parsed.fileName || "");
-      setError("");
-
-      setActiveTab(parsed.activeTab || "search");
-
-      setSelectedProductCode(parsed.selectedProductCode || "");
-      setSelectedCenter(parsed.selectedCenter || "");
-
-      setReturnInputs(
-        parsed.returnInputs && typeof parsed.returnInputs === "object"
-          ? parsed.returnInputs
-          : {}
-      );
-      setMemoInputs(
-        parsed.memoInputs && typeof parsed.memoInputs === "object" ? parsed.memoInputs : {}
-      );
-      setShowAllReturnHistory(Boolean(parsed.showAllReturnHistory));
-      setDeletedReturnKeys(
-        new Set(Array.isArray(parsed.deletedReturnKeys) ? parsed.deletedReturnKeys : [])
-      );
-      setReturnHistory(
-        parsed.returnHistory && typeof parsed.returnHistory === "object"
-          ? parsed.returnHistory
-          : {}
-      );
-      setCsvFileSignature(parsed.csvFileSignature || "");
-
-      setExcludeText(parsed.excludeText || "");
-      setEventEdits(
-        parsed.eventEdits && typeof parsed.eventEdits === "object" ? parsed.eventEdits : {}
-      );
-
-      setExcludeFileName(parsed.excludeFileName || "");
-      setEventFileName(parsed.eventFileName || "");
-      setPreorderFileName(parsed.preorderFileName || "");
-
-      setExcludeCodeSet(new Set(Array.isArray(parsed.excludeCodeSet) ? parsed.excludeCodeSet : []));
-      setExcludePartnerSet(
-        new Set(Array.isArray(parsed.excludePartnerSet) ? parsed.excludePartnerSet : [])
-      );
-      setEventCodeSet(new Set(Array.isArray(parsed.eventCodeSet) ? parsed.eventCodeSet : []));
-      setPreorderMap(
-        parsed.preorderMap && typeof parsed.preorderMap === "object" ? parsed.preorderMap : {}
-      );
-      setUnmatchedPreorderRows(
-        Array.isArray(parsed.unmatchedPreorderRows) ? parsed.unmatchedPreorderRows : []
-      );
-    } catch (err) {
-      console.error("저장 데이터 복원 실패", err);
-    } finally {
-      hasLoadedStorageRef.current = true;
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!hasLoadedStorageRef.current) return;
-
     try {
       const payload = {
         rows,
@@ -233,7 +202,6 @@ function App() {
   const readFileAsArrayBuffer = (file) =>
     new Promise((resolve, reject) => {
       const reader = new FileReader();
-
       reader.onload = (e) => resolve(e.target?.result);
       reader.onerror = () => reject(new Error("파일 읽기 실패"));
       reader.readAsArrayBuffer(file);
@@ -304,7 +272,6 @@ function App() {
       const partner = String(partnerRaw || "").trim();
       const center = String(centerRaw || "").trim();
       const qty = parseQty(qtyRaw);
-
       const eventValue = String(eventRaw || "").trim() ? "행사" : "";
 
       return {
@@ -716,14 +683,14 @@ function App() {
     if (!file) return;
 
     try {
-      const nextCsvSignature = `${file.name}__${file.size}__${file.lastModified}`;
-      const isDifferentCsv = csvFileSignature !== nextCsvSignature;
+      const nextSignature = `${file.name}__${file.size}__${file.lastModified}`;
+      const isDifferentCsv = nextSignature !== csvFileSignature;
 
       if (isDifferentCsv) {
         clearReturnDataOnly();
       }
 
-      setCsvFileSignature(nextCsvSignature);
+      setCsvFileSignature(nextSignature);
       setFileName(file.name);
       setError("");
       setShowAllReturnHistory(false);
@@ -953,11 +920,6 @@ function App() {
     return selectedProductCode ? productMap[selectedProductCode] || null : null;
   }, [productMap, selectedProductCode]);
 
-  const selectedCenterInfo = useMemo(() => {
-    if (!selectedProduct || !selectedCenter) return null;
-    return selectedProduct.centers[selectedCenter] || null;
-  }, [selectedProduct, selectedCenter]);
-
   const supplierList = useMemo(() => {
     return Object.values(supplierSummary)
       .map((supplier) => {
@@ -1089,15 +1051,18 @@ function App() {
       return next;
     });
 
-    setReturnInputs((prev) => {
-      const next = {
-        ...prev,
-        [key]: value,
-      };
-      const nextMemo = memoInputs[key] || "";
-      upsertReturnHistory(productCode, center, partner, value, nextMemo);
-      return next;
-    });
+    setReturnInputs((prev) => ({
+      ...prev,
+      [key]: value,
+    }));
+
+    upsertReturnHistory(
+      productCode,
+      center,
+      partner,
+      value,
+      memoInputs[key] || ""
+    );
   };
 
   const setReturnMemo = (productCode, center, partner, value) => {
@@ -1109,15 +1074,18 @@ function App() {
       return next;
     });
 
-    setMemoInputs((prev) => {
-      const next = {
-        ...prev,
-        [key]: value,
-      };
-      const nextQty = returnInputs[key] || 0;
-      upsertReturnHistory(productCode, center, partner, nextQty, value);
-      return next;
-    });
+    setMemoInputs((prev) => ({
+      ...prev,
+      [key]: value,
+    }));
+
+    upsertReturnHistory(
+      productCode,
+      center,
+      partner,
+      returnInputs[key] || 0,
+      value
+    );
   };
 
   const resetReturnInput = (productCode, center, partner) => {
@@ -1367,20 +1335,35 @@ function App() {
 
         <div style={styles.uploadCard}>
           <label style={styles.label}>제외목록 엑셀</label>
-          <input type="file" accept=".xlsx,.xls" onChange={handleExcludeFileUpload} style={styles.fileInput} />
+          <input
+            type="file"
+            accept=".xlsx,.xls"
+            onChange={handleExcludeFileUpload}
+            style={styles.fileInput}
+          />
           <div style={styles.fileName}>{excludeFileName || "선택된 파일 없음"}</div>
           <div style={styles.helper}>{excludeText || "코드제외 / 협력사제외 시트 사용"}</div>
         </div>
 
         <div style={styles.uploadCard}>
           <label style={styles.label}>행사표 엑셀</label>
-          <input type="file" accept=".xlsx,.xls" onChange={handleEventFileUpload} style={styles.fileInput} />
+          <input
+            type="file"
+            accept=".xlsx,.xls"
+            onChange={handleEventFileUpload}
+            style={styles.fileInput}
+          />
           <div style={styles.fileName}>{eventFileName || "선택된 파일 없음"}</div>
         </div>
 
         <div style={styles.uploadCard}>
           <label style={styles.label}>사전예약 엑셀</label>
-          <input type="file" accept=".xlsx,.xls" onChange={handlePreorderFileUpload} style={styles.fileInput} />
+          <input
+            type="file"
+            accept=".xlsx,.xls"
+            onChange={handlePreorderFileUpload}
+            style={styles.fileInput}
+          />
           <div style={styles.fileName}>{preorderFileName || "선택된 파일 없음"}</div>
           <div style={styles.helper}>미매칭 {unmatchedPreorderRows.length}건</div>
         </div>
@@ -1416,9 +1399,7 @@ function App() {
               style={styles.searchInput}
             />
 
-            <div style={styles.listInfo}>
-              총 {filteredProducts.length}건
-            </div>
+            <div style={styles.listInfo}>총 {filteredProducts.length}건</div>
 
             <div style={styles.productList}>
               {filteredProducts.length === 0 ? (
@@ -1450,9 +1431,7 @@ function App() {
             </div>
           </div>
 
-          <div style={styles.rightPane}>
-            {renderProductDetail(selectedProduct)}
-          </div>
+          <div style={styles.rightPane}>{renderProductDetail(selectedProduct)}</div>
         </div>
       )}
 
