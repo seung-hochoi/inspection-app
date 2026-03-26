@@ -212,28 +212,78 @@ function App() {
 
   const [isScannerOpen, setIsScannerOpen] = useState(false);
   const [scannerError, setScannerError] = useState("");
+  const [scannerStatus, setScannerStatus] = useState("카메라를 준비하고 있습니다...");
   const [scannerReady, setScannerReady] = useState(false);
+  const [torchSupported, setTorchSupported] = useState(false);
+  const [torchOn, setTorchOn] = useState(false);
 
   const fileInputRef = useRef(null);
+  const searchInputRef = useRef(null);
   const scannerVideoRef = useRef(null);
   const scannerReaderRef = useRef(null);
   const scannerControlsRef = useRef(null);
+  const scannerTrackRef = useRef(null);
+  const scannerStatusTimerRef = useRef(null);
 
   const stopScanner = () => {
+    if (scannerStatusTimerRef.current) {
+      clearInterval(scannerStatusTimerRef.current);
+      scannerStatusTimerRef.current = null;
+    }
+
     try {
       if (scannerControlsRef.current) {
         scannerControlsRef.current.stop();
       }
     } catch (_) {}
+
+    try {
+      if (scannerTrackRef.current) {
+        scannerTrackRef.current.stop();
+      }
+    } catch (_) {}
+
     scannerControlsRef.current = null;
     scannerReaderRef.current = null;
+    scannerTrackRef.current = null;
     setScannerReady(false);
+    setTorchSupported(false);
+    setTorchOn(false);
+  };
+
+  const closeScanner = () => {
+    stopScanner();
+    setIsScannerOpen(false);
+  };
+
+  const focusSearchInput = () => {
+    requestAnimationFrame(() => {
+      searchInputRef.current?.focus();
+      searchInputRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
+    });
+  };
+
+  const toggleTorch = async () => {
+    try {
+      const track = scannerTrackRef.current;
+      if (!track) return;
+
+      const nextTorch = !torchOn;
+      await track.applyConstraints({
+        advanced: [{ torch: nextTorch }],
+      });
+      setTorchOn(nextTorch);
+    } catch (_) {
+      setTorchSupported(false);
+      setTorchOn(false);
+    }
   };
 
   const startScanner = async () => {
     try {
       setScannerError("");
       setScannerReady(false);
+      setScannerStatus("카메라를 준비하고 있습니다...");
 
       const reader = new BrowserMultiFormatReader();
       scannerReaderRef.current = reader;
@@ -244,9 +294,25 @@ function App() {
           /back|rear|environment|후면|외부/i.test(String(device.label || ""))
         ) || devices[0];
 
+      let lastDetectedAt = Date.now();
+
       const callback = (result, err, controls) => {
         if (controls) {
           scannerControlsRef.current = controls;
+          try {
+            const stream = scannerVideoRef.current?.srcObject;
+            const track = stream?.getVideoTracks?.()?.[0] || null;
+            scannerTrackRef.current = track || scannerTrackRef.current;
+
+            const capabilities =
+              track && typeof track.getCapabilities === "function"
+                ? track.getCapabilities()
+                : null;
+
+            if (capabilities && "torch" in capabilities) {
+              setTorchSupported(true);
+            }
+          } catch (_) {}
         }
 
         if (result) {
@@ -257,19 +323,31 @@ function App() {
             .trim();
 
           if (scanned) {
+            if (typeof navigator !== "undefined" && typeof navigator.vibrate === "function") {
+              navigator.vibrate(100);
+            }
             setSearch(scanned);
-            stopScanner();
-            setIsScannerOpen(false);
+            closeScanner();
           }
+          return;
         }
 
         if (!scannerReady) {
           setScannerReady(true);
         }
 
-        if (err && err.name && err.name !== "NotFoundException") {
-          setScannerError("바코드 인식 중 오류가 발생했습니다.");
+        if (!err || err.name === "NotFoundException") {
+          const now = Date.now();
+          if (now - lastDetectedAt > 2000) {
+            setScannerStatus("바코드를 화면 중앙에 맞춰주세요");
+          } else {
+            setScannerStatus("바코드 인식 중...");
+          }
+          return;
         }
+
+        lastDetectedAt = Date.now();
+        setScannerStatus("바코드 인식 중...");
       };
 
       if (backCamera?.deviceId) {
@@ -293,8 +371,17 @@ function App() {
         );
         scannerControlsRef.current = controls;
       }
+
+      scannerStatusTimerRef.current = setInterval(() => {
+        setScannerStatus((prev) =>
+          prev === "바코드를 화면 중앙에 맞춰주세요"
+            ? "바코드 인식 중..."
+            : "바코드를 화면 중앙에 맞춰주세요"
+        );
+      }, 2200);
     } catch (err) {
       setScannerError(err.message || "카메라를 시작할 수 없습니다.");
+      setScannerStatus("카메라를 사용할 수 없습니다.");
       stopScanner();
     }
   };
@@ -754,19 +841,13 @@ function App() {
       <div style={styles.panel}>
         <div style={styles.searchRow}>
           <input
+            ref={searchInputRef}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="상품명 / 상품코드 / 협력사 검색"
             style={styles.searchInput}
           />
-          <button
-            type="button"
-            onClick={() => {
-              setScannerError("");
-              setIsScannerOpen(true);
-            }}
-            style={styles.scanButton}
-          >
+          <button type="button" onClick={() => setIsScannerOpen(true)} style={styles.scanButton}>
             바코드
           </button>
         </div>
@@ -789,7 +870,6 @@ function App() {
           onClick={async () => {
             const next = !showHistory;
             setShowHistory(next);
-
             if (next) {
               await loadHistoryRows();
             }
@@ -1017,28 +1097,43 @@ function App() {
       )}
 
       {isScannerOpen && (
-        <div style={styles.sheetOverlay} onClick={() => setIsScannerOpen(false)}>
-          <div style={styles.scannerSheet} onClick={(e) => e.stopPropagation()}>
-            <div style={styles.sheetHandle} />
-            <div style={styles.sheetHeader}>
-              <h2 style={styles.sheetTitle}>바코드 스캔</h2>
-              <button type="button" onClick={() => setIsScannerOpen(false)} style={styles.sheetClose}>
-                닫기
-              </button>
+        <div style={styles.scannerOverlay} onClick={closeScanner}>
+          <div style={styles.scannerModal} onClick={(e) => e.stopPropagation()}>
+            <button type="button" onClick={closeScanner} style={styles.scannerCloseBtn}>
+              ×
+            </button>
+
+            <div style={styles.scannerTopText}>
+              {scannerReady ? scannerStatus : "바코드 인식 중..."}
             </div>
 
-            <div style={styles.scannerFrame}>
+            <div style={styles.scannerViewport}>
               <video ref={scannerVideoRef} style={styles.scannerVideo} muted playsInline />
-              <div style={styles.scannerGuide} />
+              <div style={styles.scannerGuideBox} />
             </div>
 
-            <div style={styles.metaText}>
-              {scannerReady
-                ? "바코드를 화면 중앙에 맞춰주세요."
-                : "후면 카메라를 준비하고 있습니다..."}
-            </div>
+            <div style={styles.scannerHelperText}>바코드를 화면 중앙에 맞춰주세요</div>
 
             {scannerError ? <div style={styles.errorBox}>{scannerError}</div> : null}
+
+            <div style={styles.scannerActions}>
+              {torchSupported ? (
+                <button type="button" onClick={toggleTorch} style={styles.secondaryButton}>
+                  {torchOn ? "플래시 끄기" : "플래시 켜기"}
+                </button>
+              ) : null}
+
+              <button
+                type="button"
+                onClick={() => {
+                  closeScanner();
+                  focusSearchInput();
+                }}
+                style={styles.primaryButton}
+              >
+                직접 입력
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -1105,6 +1200,18 @@ const styles = {
     border: "none",
     background: "#2563eb",
     color: "#fff",
+    fontSize: 15,
+    fontWeight: 800,
+    cursor: "pointer",
+    whiteSpace: "nowrap",
+  },
+  secondaryButton: {
+    minHeight: 48,
+    padding: "0 16px",
+    borderRadius: 14,
+    border: "1px solid #d1d5db",
+    background: "#fff",
+    color: "#111827",
     fontSize: 15,
     fontWeight: 800,
     cursor: "pointer",
@@ -1336,7 +1443,6 @@ const styles = {
     display: "flex",
     alignItems: "flex-end",
     justifyContent: "center",
-    padding: 0,
   },
   bottomSheet: {
     width: "100%",
@@ -1347,15 +1453,6 @@ const styles = {
     borderTopRightRadius: 22,
     padding: "10px 14px 20px",
     overflow: "auto",
-    boxSizing: "border-box",
-  },
-  scannerSheet: {
-    width: "100%",
-    maxWidth: 760,
-    background: "#fff",
-    borderTopLeftRadius: 22,
-    borderTopRightRadius: 22,
-    padding: "10px 14px 20px",
     boxSizing: "border-box",
   },
   sheetHandle: {
@@ -1441,13 +1538,56 @@ const styles = {
     textDecoration: "none",
     fontWeight: 700,
   },
-  scannerFrame: {
+  scannerOverlay: {
+    position: "fixed",
+    inset: 0,
+    zIndex: 60,
+    background: "rgba(0,0,0,0.88)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 12,
+  },
+  scannerModal: {
+    width: "100%",
+    maxWidth: 560,
+    height: "100%",
+    maxHeight: "100dvh",
+    display: "flex",
+    flexDirection: "column",
+    justifyContent: "center",
+    position: "relative",
+    color: "#fff",
+  },
+  scannerCloseBtn: {
+    position: "absolute",
+    top: 8,
+    right: 0,
+    width: 48,
+    height: 48,
+    borderRadius: 999,
+    border: "none",
+    background: "rgba(255,255,255,0.14)",
+    color: "#fff",
+    fontSize: 28,
+    cursor: "pointer",
+    zIndex: 2,
+  },
+  scannerTopText: {
+    textAlign: "center",
+    fontSize: 16,
+    fontWeight: 800,
+    marginBottom: 14,
+    padding: "0 52px",
+  },
+  scannerViewport: {
     position: "relative",
     width: "100%",
     aspectRatio: "3 / 4",
-    borderRadius: 18,
+    borderRadius: 24,
     overflow: "hidden",
     background: "#111827",
+    border: "1px solid rgba(255,255,255,0.12)",
   },
   scannerVideo: {
     width: "100%",
@@ -1455,13 +1595,27 @@ const styles = {
     objectFit: "cover",
     display: "block",
   },
-  scannerGuide: {
+  scannerGuideBox: {
     position: "absolute",
-    inset: "18% 10%",
-    border: "2px solid rgba(255,255,255,0.9)",
-    borderRadius: 20,
-    boxShadow: "0 0 0 9999px rgba(0,0,0,0.18)",
+    inset: "24% 10%",
+    border: "2px solid rgba(255,255,255,0.95)",
+    borderRadius: 22,
+    boxShadow: "0 0 0 9999px rgba(0,0,0,0.22)",
     pointerEvents: "none",
+  },
+  scannerHelperText: {
+    textAlign: "center",
+    fontSize: 14,
+    color: "rgba(255,255,255,0.9)",
+    marginTop: 14,
+    lineHeight: 1.5,
+  },
+  scannerActions: {
+    display: "flex",
+    justifyContent: "center",
+    gap: 10,
+    marginTop: 16,
+    flexWrap: "wrap",
   },
 };
 
