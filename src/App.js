@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import Papa from "papaparse";
 
-const DEFAULT_SCRIPT_URL = process.env.REACT_APP_GOOGLE_SCRIPT_URL || "https://script.google.com/macros/s/AKfycbyNUZsGQWzmBKOkppy-3U-nwY0yuazgQTuufy5wtvmESfpGcLy1PUjPOeC9Haj5O50FLQ/exec";
+const DEFAULT_SCRIPT_URL = process.env.REACT_APP_GOOGLE_SCRIPT_URL || "https://script.google.com/macros/s/AKfycbxvuYPx8Gr_usMd3j-HSoaG5zvxwbrV9wzypJIdF56IHWw14bF04YlL0ExqRnvTwvcirQ/exec";
 
 const normalizeKey = (key) => String(key || "").replace(/\uFEFF/g, "").trim();
 
@@ -171,11 +171,11 @@ const getRecordQtyText = (record) => {
   const exchangeQty = parseQty(record.교환수량);
 
   if (returnQty > 0 && exchangeQty > 0) {
-    return `회송 ${returnQty} / 교환 ${exchangeQty}`;
+    return `회송 ${returnQty}개 / 교환 ${exchangeQty}개`;
   }
-  if (returnQty > 0) return `${returnQty}`;
-  if (exchangeQty > 0) return `${exchangeQty}`;
-  return "0";
+  if (returnQty > 0) return `${returnQty}개`;
+  if (exchangeQty > 0) return `${exchangeQty}개`;
+  return "0개";
 };
 
 function App() {
@@ -196,9 +196,9 @@ function App() {
   const [excludedPairKeys, setExcludedPairKeys] = useState(new Set());
   const [eventMap, setEventMap] = useState({});
 
-  const [showRecords, setShowRecords] = useState(false);
-  const [recordLoading, setRecordLoading] = useState(false);
-  const [records, setRecords] = useState([]);
+  const [showHistory, setShowHistory] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyRows, setHistoryRows] = useState([]);
 
   const loadBootstrap = async () => {
     if (!scriptUrl.trim()) {
@@ -276,33 +276,36 @@ function App() {
     }
   };
 
-  const loadRecords = async () => {
+  const loadHistoryRows = async () => {
     if (!scriptUrl.trim()) {
       setError("Apps Script 웹앱 URL이 필요합니다.");
       return;
     }
 
     try {
-      setRecordLoading(true);
+      setHistoryLoading(true);
       setError("");
 
       const response = await fetch(`${scriptUrl.trim()}?action=getRecords`);
       const result = await response.json();
 
       if (!response.ok || result.ok === false) {
-        throw new Error(result.message || "기록 불러오기 실패");
+        throw new Error(result.message || "내역 불러오기 실패");
       }
 
-      const nextRecords = Array.isArray(result.records) ? result.records : [];
-      nextRecords.sort((a, b) =>
+      const nextRows = Array.isArray(result.records) ? result.records : [];
+      nextRows.sort((a, b) =>
         String(b.작성일시 || "").localeCompare(String(a.작성일시 || ""), "ko")
       );
 
-      setRecords(nextRecords);
+      setHistoryRows(nextRows);
+      console.log("historyRows length:", nextRows.length);
     } catch (err) {
-      setError(err.message || "기록 불러오기 실패");
+      setError(err.message || "내역 불러오기 실패");
+      setHistoryRows([]);
+      console.log("historyRows length:", 0);
     } finally {
-      setRecordLoading(false);
+      setHistoryLoading(false);
     }
   };
 
@@ -511,7 +514,7 @@ function App() {
             상품코드: product.productCode,
             센터명: centerName,
             협력사명: partnerNames,
-            수주수량: centerInfo.totalQty || 0,
+            발주수량: centerInfo.totalQty || 0,
             행사여부: product.eventInfo?.행사여부 || "",
             행사명: product.eventInfo?.행사명 || "",
             회송수량: returnQty,
@@ -541,7 +544,7 @@ function App() {
       }));
 
       if (savedRecord) {
-        setRecords((prev) =>
+        setHistoryRows((prev) =>
           [savedRecord, ...prev].sort((a, b) =>
             String(b.작성일시 || "").localeCompare(String(a.작성일시 || ""), "ko")
           )
@@ -550,8 +553,7 @@ function App() {
 
       setMessage("기록이 저장되었습니다.");
     } catch (err) {
-      const msg = err.message || "기록 저장 실패";
-      setError(msg.includes("사진") ? msg : msg);
+      setError(err.message || "기록 저장 실패");
     } finally {
       setSavingKey("");
     }
@@ -605,17 +607,64 @@ function App() {
         <button
           type="button"
           onClick={async () => {
-            const nextShow = !showRecords;
-            setShowRecords(nextShow);
-            if (nextShow) {
-              await loadRecords();
+            const next = !showHistory;
+            setShowHistory(next);
+
+            if (next) {
+              await loadHistoryRows();
             }
           }}
           style={styles.historyButton}
         >
-          {showRecords ? "내역 닫기" : "내역 보기"}
+          {showHistory ? "내역 닫기" : "내역 보기"}
         </button>
       </div>
+
+      {showHistory && (
+        <div style={styles.historySection}>
+          {historyLoading ? (
+            <div style={styles.infoBox}>내역 불러오는 중...</div>
+          ) : historyRows.length === 0 ? (
+            <div style={styles.emptyBox}>저장된 내역이 없습니다.</div>
+          ) : (
+            <div style={styles.list}>
+              {historyRows.map((record, index) => (
+                <div
+                  key={`${record.작성일시 || "time"}-${record.상품코드 || "code"}-${index}`}
+                  style={styles.historyCard}
+                >
+                  <div style={styles.cardTopRow}>
+                    <div style={styles.cardTitle}>{record.상품명 || "상품명 없음"}</div>
+                    <span style={styles.typeBadge}>{getRecordType(record)}</span>
+                  </div>
+                  <div style={styles.cardMeta}>코드 {record.상품코드 || "-"}</div>
+                  <div style={styles.cardMeta}>센터 {record.센터명 || "-"}</div>
+                  <div style={styles.cardMeta}>협력사 {record.협력사명 || "-"}</div>
+                  <div style={styles.qtyRow}>
+                    <span style={styles.qtyChip}>처리수량 {getRecordQtyText(record)}</span>
+                    <span style={styles.qtyChip}>{record.작성일시 || "-"}</span>
+                  </div>
+                  <div style={styles.historyMemo}>{record.비고 || "-"}</div>
+
+                  {record.사진URL ? (
+                    <div style={styles.photoWrap}>
+                      <img src={record.사진URL} alt="첨부사진" style={styles.photoPreview} />
+                      <a
+                        href={record.사진URL}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={styles.photoLink}
+                      >
+                        사진 열기
+                      </a>
+                    </div>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       <div style={styles.list}>
         {productCards.length === 0 ? (
@@ -657,7 +706,7 @@ function App() {
                   <div style={styles.cardMeta}>코드 {product.productCode}</div>
                   <div style={styles.cardMeta}>협력사 {product.partnerText || "-"}</div>
                   <div style={styles.qtyRow}>
-                    <span style={styles.qtyChip}>총 수주 {product.totalQty}</span>
+                    <span style={styles.qtyChip}>총 발주 {product.totalQty}개</span>
                     <span style={styles.qtyChip}>센터 {product.centerList.length}</span>
                   </div>
                 </button>
@@ -678,7 +727,7 @@ function App() {
                       >
                         {product.centerList.map((center) => (
                           <option key={center.center} value={center.center}>
-                            {center.center} / 수주 {center.totalQty}
+                            {center.center} / {center.totalQty}개
                           </option>
                         ))}
                       </select>
@@ -687,7 +736,7 @@ function App() {
                     {selectedCenterInfo && (
                       <>
                         <div style={styles.metaText}>
-                          선택 센터 수주수량: {selectedCenterInfo.totalQty}
+                          선택 센터 발주수량: {selectedCenterInfo.totalQty}개
                         </div>
                         <div style={styles.metaText}>
                           협력사:{" "}
@@ -768,52 +817,6 @@ function App() {
           })
         )}
       </div>
-
-      {showRecords && (
-        <div style={styles.historySection}>
-          <div style={styles.historyTitleRow}>
-            <h2 style={styles.historyTitle}>저장 내역</h2>
-            {recordLoading ? <span style={styles.metaText}>불러오는 중...</span> : null}
-          </div>
-
-          {records.length === 0 ? (
-            <div style={styles.emptyBox}>저장된 내역이 없습니다.</div>
-          ) : (
-            <div style={styles.list}>
-              {records.map((record, index) => (
-                <div key={`${record.작성일시 || "time"}-${record.상품코드 || "code"}-${index}`} style={styles.historyCard}>
-                  <div style={styles.cardTopRow}>
-                    <div style={styles.cardTitle}>{record.상품명 || "상품명 없음"}</div>
-                    <span style={styles.typeBadge}>{getRecordType(record)}</span>
-                  </div>
-                  <div style={styles.cardMeta}>코드 {record.상품코드 || "-"}</div>
-                  <div style={styles.cardMeta}>센터 {record.센터명 || "-"}</div>
-                  <div style={styles.cardMeta}>협력사 {record.협력사명 || "-"}</div>
-                  <div style={styles.qtyRow}>
-                    <span style={styles.qtyChip}>처리수량 {getRecordQtyText(record)}</span>
-                    <span style={styles.qtyChip}>{record.작성일시 || "-"}</span>
-                  </div>
-                  <div style={styles.historyMemo}>{record.비고 || "-"}</div>
-
-                  {record.사진URL ? (
-                    <div style={styles.photoWrap}>
-                      <img src={record.사진URL} alt="첨부사진" style={styles.photoPreview} />
-                      <a
-                        href={record.사진URL}
-                        target="_blank"
-                        rel="noreferrer"
-                        style={styles.photoLink}
-                      >
-                        사진 열기
-                      </a>
-                    </div>
-                  ) : null}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
     </div>
   );
 }
@@ -930,6 +933,12 @@ const styles = {
     cursor: "pointer",
     color: "#374151",
   },
+  historySection: {
+    marginBottom: 16,
+    display: "block",
+    visibility: "visible",
+    overflow: "visible",
+  },
   list: {
     display: "flex",
     flexDirection: "column",
@@ -946,6 +955,7 @@ const styles = {
     borderRadius: 18,
     border: "1px solid #e5e7eb",
     padding: 14,
+    display: "block",
   },
   cardButton: {
     width: "100%",
@@ -1037,20 +1047,6 @@ const styles = {
     color: "#6b7280",
     textAlign: "center",
   },
-  historySection: {
-    marginTop: 18,
-  },
-  historyTitleRow: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: 12,
-  },
-  historyTitle: {
-    margin: 0,
-    fontSize: 18,
-    fontWeight: 800,
-  },
   historyMemo: {
     marginTop: 10,
     fontSize: 14,
@@ -1068,6 +1064,7 @@ const styles = {
     borderRadius: 14,
     border: "1px solid #e5e7eb",
     background: "#fff",
+    display: "block",
   },
   photoLink: {
     display: "inline-block",
