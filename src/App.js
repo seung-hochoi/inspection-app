@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import Papa from "papaparse";
 
-const DEFAULT_SCRIPT_URL = process.env.REACT_APP_GOOGLE_SCRIPT_URL || "https://script.google.com/macros/s/AKfycbxvuYPx8Gr_usMd3j-HSoaG5zvxwbrV9wzypJIdF56IHWw14bF04YlL0ExqRnvTwvcirQ/exec";
+const DEFAULT_SCRIPT_URL = process.env.REACT_APP_GOOGLE_SCRIPT_URL || "https://script.google.com/macros/s/AKfycbxs6llylYCmKVAqO_xvE7xAGBVGLiKT8MgbOLDOM5wwgh05RxIIw0RUjT15bN3DgwRbYA/exec";
 
 const normalizeKey = (key) => String(key || "").replace(/\uFEFF/g, "").trim();
 
@@ -189,6 +189,7 @@ function App() {
   const [bootLoading, setBootLoading] = useState(true);
   const [uploadingCsv, setUploadingCsv] = useState(false);
   const [savingKey, setSavingKey] = useState("");
+  const [deletingRowNumber, setDeletingRowNumber] = useState(null);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
@@ -559,6 +560,50 @@ function App() {
     }
   };
 
+  const deleteHistoryRecord = async (record) => {
+    const rowNumber = Number(record.__rowNumber || 0);
+    if (!rowNumber) {
+      setError("삭제할 행 정보를 찾지 못했습니다.");
+      return;
+    }
+
+    const ok = window.confirm("이 내역을 삭제할까요?");
+    if (!ok) return;
+
+    try {
+      setDeletingRowNumber(rowNumber);
+      setError("");
+      setMessage("");
+
+      const response = await fetch(scriptUrl.trim(), {
+        method: "POST",
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
+        body: JSON.stringify({
+          action: "deleteRecord",
+          payload: {
+            rowNumber,
+          },
+        }),
+      });
+
+      const result = await response.json();
+      if (!response.ok || result.ok === false) {
+        throw new Error(result.message || "내역 삭제 실패");
+      }
+
+      setHistoryRows((prev) => prev.filter((item) => Number(item.__rowNumber) !== rowNumber));
+      console.log(
+        "historyRows length:",
+        historyRows.filter((item) => Number(item.__rowNumber) !== rowNumber).length
+      );
+      setMessage("내역이 삭제되었습니다.");
+    } catch (err) {
+      setError(err.message || "내역 삭제 실패");
+    } finally {
+      setDeletingRowNumber(null);
+    }
+  };
+
   return (
     <div style={styles.app}>
       <div style={styles.headerCard}>
@@ -630,9 +675,18 @@ function App() {
             <div style={styles.list}>
               {historyRows.map((record, index) => (
                 <div
-                  key={`${record.작성일시 || "time"}-${record.상품코드 || "code"}-${index}`}
+                  key={`${record.__rowNumber || "row"}-${record.작성일시 || "time"}-${index}`}
                   style={styles.historyCard}
                 >
+                  <button
+                    type="button"
+                    onClick={() => deleteHistoryRecord(record)}
+                    style={styles.deleteBtn}
+                    disabled={deletingRowNumber === Number(record.__rowNumber)}
+                  >
+                    {deletingRowNumber === Number(record.__rowNumber) ? "..." : "×"}
+                  </button>
+
                   <div style={styles.cardTopRow}>
                     <div style={styles.cardTitle}>{record.상품명 || "상품명 없음"}</div>
                     <span style={styles.typeBadge}>{getRecordType(record)}</span>
@@ -951,6 +1005,7 @@ const styles = {
     overflow: "hidden",
   },
   historyCard: {
+    position: "relative",
     background: "#fff",
     borderRadius: 18,
     border: "1px solid #e5e7eb",
@@ -970,6 +1025,7 @@ const styles = {
     justifyContent: "space-between",
     alignItems: "flex-start",
     gap: 8,
+    paddingRight: 28,
   },
   cardTitle: {
     fontSize: 17,
@@ -995,6 +1051,21 @@ const styles = {
     fontSize: 12,
     fontWeight: 700,
     flexShrink: 0,
+  },
+  deleteBtn: {
+    position: "absolute",
+    top: 10,
+    right: 10,
+    width: 28,
+    height: 28,
+    borderRadius: 999,
+    border: "none",
+    background: "#ef4444",
+    color: "#fff",
+    fontSize: 18,
+    fontWeight: 700,
+    lineHeight: "28px",
+    cursor: "pointer",
   },
   cardMeta: {
     marginTop: 6,
