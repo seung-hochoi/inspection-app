@@ -1,7 +1,8 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import Papa from "papaparse";
+import { BrowserCodeReader, BrowserMultiFormatReader } from "@zxing/browser";
 
-const DEFAULT_SCRIPT_URL = process.env.REACT_APP_GOOGLE_SCRIPT_URL || "https://script.google.com/macros/s/AKfycbxs6llylYCmKVAqO_xvE7xAGBVGLiKT8MgbOLDOM5wwgh05RxIIw0RUjT15bN3DgwRbYA/exec";
+const SCRIPT_URL = process.env.REACT_APP_GOOGLE_SCRIPT_URL || "https://script.google.com/macros/s/AKfycbw3NOxnqL__-bibyaJiXtH_VUoiKHLAGwqsLz7B9NVGA-cYyqz_odzXqTb87-5PqYU_Jg/exec";
 
 const normalizeKey = (key) => String(key || "").replace(/\uFEFF/g, "").trim();
 
@@ -156,6 +157,13 @@ const fileToBase64 = (file) =>
     reader.readAsDataURL(file);
   });
 
+const formatDateTime = (value) => {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleString("ko-KR");
+};
+
 const getRecordType = (record) => {
   const returnQty = parseQty(record.회송수량);
   const exchangeQty = parseQty(record.교환수량);
@@ -179,9 +187,10 @@ const getRecordQtyText = (record) => {
 };
 
 function App() {
-  const [scriptUrl, setScriptUrl] = useState(DEFAULT_SCRIPT_URL);
   const [rows, setRows] = useState([]);
   const [currentJob, setCurrentJob] = useState(null);
+  const [currentFileName, setCurrentFileName] = useState("");
+  const [currentFileModifiedAt, setCurrentFileModifiedAt] = useState("");
   const [search, setSearch] = useState("");
   const [expandedProductCode, setExpandedProductCode] = useState("");
   const [selectedCenterByProduct, setSelectedCenterByProduct] = useState({});
@@ -201,10 +210,112 @@ function App() {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyRows, setHistoryRows] = useState([]);
 
+  const [isScannerOpen, setIsScannerOpen] = useState(false);
+  const [scannerError, setScannerError] = useState("");
+  const [scannerReady, setScannerReady] = useState(false);
+
+  const fileInputRef = useRef(null);
+  const scannerVideoRef = useRef(null);
+  const scannerReaderRef = useRef(null);
+  const scannerControlsRef = useRef(null);
+
+  const stopScanner = () => {
+    try {
+      if (scannerControlsRef.current) {
+        scannerControlsRef.current.stop();
+      }
+    } catch (_) {}
+    scannerControlsRef.current = null;
+    scannerReaderRef.current = null;
+    setScannerReady(false);
+  };
+
+  const startScanner = async () => {
+    try {
+      setScannerError("");
+      setScannerReady(false);
+
+      const reader = new BrowserMultiFormatReader();
+      scannerReaderRef.current = reader;
+
+      const devices = await BrowserCodeReader.listVideoInputDevices();
+      const backCamera =
+        devices.find((device) =>
+          /back|rear|environment|후면|외부/i.test(String(device.label || ""))
+        ) || devices[0];
+
+      const callback = (result, err, controls) => {
+        if (controls) {
+          scannerControlsRef.current = controls;
+        }
+
+        if (result) {
+          const scanned = String(
+            typeof result.getText === "function" ? result.getText() : result.text || result
+          )
+            .replace(/\s+/g, "")
+            .trim();
+
+          if (scanned) {
+            setSearch(scanned);
+            stopScanner();
+            setIsScannerOpen(false);
+          }
+        }
+
+        if (!scannerReady) {
+          setScannerReady(true);
+        }
+
+        if (err && err.name && err.name !== "NotFoundException") {
+          setScannerError("바코드 인식 중 오류가 발생했습니다.");
+        }
+      };
+
+      if (backCamera?.deviceId) {
+        const controls = await reader.decodeFromVideoDevice(
+          backCamera.deviceId,
+          scannerVideoRef.current,
+          callback
+        );
+        scannerControlsRef.current = controls;
+      } else {
+        const controls = await reader.decodeFromConstraints(
+          {
+            video: {
+              facingMode: { ideal: "environment" },
+              width: { ideal: 1280 },
+              height: { ideal: 720 },
+            },
+          },
+          scannerVideoRef.current,
+          callback
+        );
+        scannerControlsRef.current = controls;
+      }
+    } catch (err) {
+      setScannerError(err.message || "카메라를 시작할 수 없습니다.");
+      stopScanner();
+    }
+  };
+
+  useEffect(() => {
+    if (!isScannerOpen) {
+      stopScanner();
+      return undefined;
+    }
+
+    startScanner();
+
+    return () => {
+      stopScanner();
+    };
+  }, [isScannerOpen]);
+
   const loadBootstrap = async () => {
-    if (!scriptUrl.trim()) {
+    if (!SCRIPT_URL.trim()) {
       setBootLoading(false);
-      setError("Apps Script 웹앱 URL이 필요합니다.");
+      setError("REACT_APP_GOOGLE_SCRIPT_URL 환경변수가 필요합니다.");
       return;
     }
 
@@ -212,7 +323,7 @@ function App() {
       setBootLoading(true);
       setError("");
 
-      const response = await fetch(`${scriptUrl.trim()}?action=bootstrap`);
+      const response = await fetch(`${SCRIPT_URL}?action=bootstrap`);
       const result = await response.json();
 
       if (!response.ok || result.ok === false) {
@@ -269,6 +380,8 @@ function App() {
       setEventMap(nextEventMap);
       setCurrentJob(job);
       setRows(Array.isArray(job?.rows) ? job.rows : []);
+      setCurrentFileName(job?.source_file_name || "");
+      setCurrentFileModifiedAt(job?.source_file_modified || "");
       setMessage(job ? "최근 작업을 불러왔습니다." : "CSV를 업로드해주세요.");
     } catch (err) {
       setError(err.message || "초기 데이터 불러오기 실패");
@@ -278,16 +391,11 @@ function App() {
   };
 
   const loadHistoryRows = async () => {
-    if (!scriptUrl.trim()) {
-      setError("Apps Script 웹앱 URL이 필요합니다.");
-      return;
-    }
-
     try {
       setHistoryLoading(true);
       setError("");
 
-      const response = await fetch(`${scriptUrl.trim()}?action=getRecords`);
+      const response = await fetch(`${SCRIPT_URL}?action=getRecords`);
       const result = await response.json();
 
       if (!response.ok || result.ok === false) {
@@ -312,7 +420,7 @@ function App() {
 
   useEffect(() => {
     loadBootstrap();
-  }, [scriptUrl]);
+  }, []);
 
   const filteredRows = useMemo(() => {
     return rows.filter((row) => {
@@ -397,23 +505,26 @@ function App() {
     }));
   };
 
-  const cacheCsvJob = async (normalizedRows, fileName) => {
+  const cacheCsvJob = async (normalizedRows, file) => {
     const nextJobKey = computeJobKey(normalizedRows);
 
     if (currentJob?.job_key === nextJobKey) {
       setRows(normalizedRows);
+      setCurrentFileName(file.name);
+      setCurrentFileModifiedAt(new Date(file.lastModified).toISOString());
       setMessage("같은 CSV 작업으로 인식되어 기존 작업을 유지합니다.");
       return;
     }
 
-    const response = await fetch(scriptUrl.trim(), {
+    const response = await fetch(SCRIPT_URL, {
       method: "POST",
       headers: { "Content-Type": "text/plain;charset=utf-8" },
       body: JSON.stringify({
         action: "cacheCsv",
         payload: {
           job_key: nextJobKey,
-          source_file_name: fileName,
+          source_file_name: file.name,
+          source_file_modified: new Date(file.lastModified).toISOString(),
           parsed_rows: normalizedRows,
         },
       }),
@@ -427,6 +538,8 @@ function App() {
     const nextJob = result.job || null;
     setCurrentJob(nextJob);
     setRows(normalizedRows);
+    setCurrentFileName(file.name);
+    setCurrentFileModifiedAt(new Date(file.lastModified).toISOString());
     setDrafts({});
     setExpandedProductCode("");
     setSelectedCenterByProduct({});
@@ -451,7 +564,7 @@ function App() {
           complete: async (result) => {
             try {
               const normalizedRows = buildNormalizedRows(result.data || []);
-              await cacheCsvJob(normalizedRows, file.name);
+              await cacheCsvJob(normalizedRows, file);
               resolve();
             } catch (err) {
               reject(err);
@@ -464,7 +577,9 @@ function App() {
       setError(err.message || "CSV 업로드 실패");
     } finally {
       setUploadingCsv(false);
-      event.target.value = "";
+      if (event.target) {
+        event.target.value = "";
+      }
     }
   };
 
@@ -503,7 +618,7 @@ function App() {
 
       const photoPayload = await fileToBase64(photoFile);
 
-      const response = await fetch(scriptUrl.trim(), {
+      const response = await fetch(SCRIPT_URL, {
         method: "POST",
         headers: { "Content-Type": "text/plain;charset=utf-8" },
         body: JSON.stringify({
@@ -575,7 +690,7 @@ function App() {
       setError("");
       setMessage("");
 
-      const response = await fetch(scriptUrl.trim(), {
+      const response = await fetch(SCRIPT_URL, {
         method: "POST",
         headers: { "Content-Type": "text/plain;charset=utf-8" },
         body: JSON.stringify({
@@ -592,10 +707,6 @@ function App() {
       }
 
       setHistoryRows((prev) => prev.filter((item) => Number(item.__rowNumber) !== rowNumber));
-      console.log(
-        "historyRows length:",
-        historyRows.filter((item) => Number(item.__rowNumber) !== rowNumber).length
-      );
       setMessage("내역이 삭제되었습니다.");
     } catch (err) {
       setError(err.message || "내역 삭제 실패");
@@ -606,35 +717,59 @@ function App() {
 
   return (
     <div style={styles.app}>
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".csv"
+        onChange={handleCsvUpload}
+        style={styles.hiddenInput}
+      />
+
       <div style={styles.headerCard}>
         <h1 style={styles.title}>GS신선강화지원팀</h1>
         <p style={styles.subtitle}>승호</p>
       </div>
 
       <div style={styles.panel}>
-        <label style={styles.label}>Apps Script URL</label>
-        <input
-          value={scriptUrl}
-          onChange={(e) => setScriptUrl(e.target.value)}
-          placeholder="https://script.google.com/macros/s/.../exec"
-          style={styles.input}
-        />
+        <div style={styles.csvHeaderRow}>
+          <div>
+            <div style={styles.sectionTitle}>CSV 업로드</div>
+            <div style={styles.metaText}>
+              현재 작업: {currentFileName || "업로드된 파일 없음"}
+            </div>
+            <div style={styles.metaText}>
+              파일 수정일자: {currentFileModifiedAt ? formatDateTime(currentFileModifiedAt) : "-"}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            style={styles.primaryButton}
+          >
+            {uploadingCsv ? "처리 중..." : "CSV 선택"}
+          </button>
+        </div>
       </div>
 
       <div style={styles.panel}>
-        <label style={styles.label}>CSV 업로드</label>
-        <input type="file" accept=".csv" onChange={handleCsvUpload} style={styles.fileInput} />
-        <div style={styles.metaText}>현재 작업: {currentJob?.source_file_name || "없음"}</div>
-        <div style={styles.metaText}>작업 식별값: {currentJob?.job_key || "-"}</div>
-      </div>
-
-      <div style={styles.panel}>
-        <input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="상품명 / 상품코드 / 협력사 검색"
-          style={styles.input}
-        />
+        <div style={styles.searchRow}>
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="상품명 / 상품코드 / 협력사 검색"
+            style={styles.searchInput}
+          />
+          <button
+            type="button"
+            onClick={() => {
+              setScannerError("");
+              setIsScannerOpen(true);
+            }}
+            style={styles.scanButton}
+          >
+            바코드
+          </button>
+        </div>
       </div>
 
       {(bootLoading || uploadingCsv || error || message) && (
@@ -664,61 +799,6 @@ function App() {
           {showHistory ? "내역 닫기" : "내역 보기"}
         </button>
       </div>
-
-      {showHistory && (
-        <div style={styles.historySection}>
-          {historyLoading ? (
-            <div style={styles.infoBox}>내역 불러오는 중...</div>
-          ) : historyRows.length === 0 ? (
-            <div style={styles.emptyBox}>저장된 내역이 없습니다.</div>
-          ) : (
-            <div style={styles.list}>
-              {historyRows.map((record, index) => (
-                <div
-                  key={`${record.__rowNumber || "row"}-${record.작성일시 || "time"}-${index}`}
-                  style={styles.historyCard}
-                >
-                  <button
-                    type="button"
-                    onClick={() => deleteHistoryRecord(record)}
-                    style={styles.deleteBtn}
-                    disabled={deletingRowNumber === Number(record.__rowNumber)}
-                  >
-                    {deletingRowNumber === Number(record.__rowNumber) ? "..." : "×"}
-                  </button>
-
-                  <div style={styles.cardTopRow}>
-                    <div style={styles.cardTitle}>{record.상품명 || "상품명 없음"}</div>
-                    <span style={styles.typeBadge}>{getRecordType(record)}</span>
-                  </div>
-                  <div style={styles.cardMeta}>코드 {record.상품코드 || "-"}</div>
-                  <div style={styles.cardMeta}>센터 {record.센터명 || "-"}</div>
-                  <div style={styles.cardMeta}>협력사 {record.협력사명 || "-"}</div>
-                  <div style={styles.qtyRow}>
-                    <span style={styles.qtyChip}>처리수량 {getRecordQtyText(record)}</span>
-                    <span style={styles.qtyChip}>{record.작성일시 || "-"}</span>
-                  </div>
-                  <div style={styles.historyMemo}>{record.비고 || "-"}</div>
-
-                  {record.사진URL ? (
-                    <div style={styles.photoWrap}>
-                      <img src={record.사진URL} alt="첨부사진" style={styles.photoPreview} />
-                      <a
-                        href={record.사진URL}
-                        target="_blank"
-                        rel="noreferrer"
-                        style={styles.photoLink}
-                      >
-                        사진 열기
-                      </a>
-                    </div>
-                  ) : null}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
 
       <div style={styles.list}>
         {productCards.length === 0 ? (
@@ -761,13 +841,12 @@ function App() {
                   <div style={styles.cardMeta}>협력사 {product.partnerText || "-"}</div>
                   <div style={styles.qtyRow}>
                     <span style={styles.qtyChip}>총 발주 {product.totalQty}개</span>
-                    <span style={styles.qtyChip}>센터 {product.centerList.length}</span>
                   </div>
                 </button>
 
                 {isOpen && (
                   <div style={styles.editorBox}>
-                    <div style={{ marginBottom: 12 }}>
+                    <div style={styles.formGroup}>
                       <label style={styles.label}>센터 선택</label>
                       <select
                         value={selectedCenter}
@@ -788,7 +867,7 @@ function App() {
                     </div>
 
                     {selectedCenterInfo && (
-                      <>
+                      <div style={styles.detailBlock}>
                         <div style={styles.metaText}>
                           선택 센터 발주수량: {selectedCenterInfo.totalQty}개
                         </div>
@@ -804,11 +883,11 @@ function App() {
                           행사: {product.eventInfo?.행사여부 || ""}
                           {product.eventInfo?.행사명 ? ` (${product.eventInfo.행사명})` : ""}
                         </div>
-                      </>
+                      </div>
                     )}
 
                     <div style={styles.grid2}>
-                      <div>
+                      <div style={styles.formGroup}>
                         <label style={styles.label}>회송수량</label>
                         <input
                           type="number"
@@ -818,7 +897,7 @@ function App() {
                           style={styles.input}
                         />
                       </div>
-                      <div>
+                      <div style={styles.formGroup}>
                         <label style={styles.label}>교환수량</label>
                         <input
                           type="number"
@@ -830,7 +909,7 @@ function App() {
                       </div>
                     </div>
 
-                    <div>
+                    <div style={styles.formGroup}>
                       <label style={styles.label}>비고</label>
                       <textarea
                         value={draft.memo || ""}
@@ -841,7 +920,7 @@ function App() {
                       />
                     </div>
 
-                    <div>
+                    <div style={styles.formGroup}>
                       <label style={styles.label}>사진 첨부</label>
                       <input
                         type="file"
@@ -871,6 +950,98 @@ function App() {
           })
         )}
       </div>
+
+      {showHistory && (
+        <div style={styles.sheetOverlay} onClick={() => setShowHistory(false)}>
+          <div style={styles.bottomSheet} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.sheetHandle} />
+            <div style={styles.sheetHeader}>
+              <h2 style={styles.sheetTitle}>저장 내역</h2>
+              <button type="button" onClick={() => setShowHistory(false)} style={styles.sheetClose}>
+                닫기
+              </button>
+            </div>
+
+            {historyLoading ? (
+              <div style={styles.infoBox}>내역 불러오는 중...</div>
+            ) : historyRows.length === 0 ? (
+              <div style={styles.emptyBox}>저장된 내역이 없습니다.</div>
+            ) : (
+              <div style={styles.sheetList}>
+                {historyRows.map((record, index) => (
+                  <div
+                    key={`${record.__rowNumber || "row"}-${record.작성일시 || "time"}-${index}`}
+                    style={styles.historyCard}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => deleteHistoryRecord(record)}
+                      style={styles.deleteBtn}
+                      disabled={deletingRowNumber === Number(record.__rowNumber)}
+                    >
+                      {deletingRowNumber === Number(record.__rowNumber) ? "..." : "×"}
+                    </button>
+
+                    <div style={styles.cardTopRow}>
+                      <div style={styles.cardTitle}>{record.상품명 || "상품명 없음"}</div>
+                      <span style={styles.typeBadge}>{getRecordType(record)}</span>
+                    </div>
+                    <div style={styles.cardMeta}>코드 {record.상품코드 || "-"}</div>
+                    <div style={styles.cardMeta}>센터 {record.센터명 || "-"}</div>
+                    <div style={styles.cardMeta}>협력사 {record.협력사명 || "-"}</div>
+                    <div style={styles.qtyRow}>
+                      <span style={styles.qtyChip}>처리수량 {getRecordQtyText(record)}</span>
+                      <span style={styles.qtyChip}>{formatDateTime(record.작성일시)}</span>
+                    </div>
+                    <div style={styles.historyMemo}>{record.비고 || "-"}</div>
+
+                    {record.사진URL ? (
+                      <div style={styles.photoWrap}>
+                        <img src={record.사진URL} alt="첨부사진" style={styles.photoPreview} />
+                        <a
+                          href={record.사진URL}
+                          target="_blank"
+                          rel="noreferrer"
+                          style={styles.photoLink}
+                        >
+                          사진 열기
+                        </a>
+                      </div>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {isScannerOpen && (
+        <div style={styles.sheetOverlay} onClick={() => setIsScannerOpen(false)}>
+          <div style={styles.scannerSheet} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.sheetHandle} />
+            <div style={styles.sheetHeader}>
+              <h2 style={styles.sheetTitle}>바코드 스캔</h2>
+              <button type="button" onClick={() => setIsScannerOpen(false)} style={styles.sheetClose}>
+                닫기
+              </button>
+            </div>
+
+            <div style={styles.scannerFrame}>
+              <video ref={scannerVideoRef} style={styles.scannerVideo} muted playsInline />
+              <div style={styles.scannerGuide} />
+            </div>
+
+            <div style={styles.metaText}>
+              {scannerReady
+                ? "바코드를 화면 중앙에 맞춰주세요."
+                : "후면 카메라를 준비하고 있습니다..."}
+            </div>
+
+            {scannerError ? <div style={styles.errorBox}>{scannerError}</div> : null}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -883,8 +1054,11 @@ const styles = {
     color: "#1f2937",
     fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, sans-serif",
     boxSizing: "border-box",
-    maxWidth: 720,
+    maxWidth: 760,
     margin: "0 auto",
+  },
+  hiddenInput: {
+    display: "none",
   },
   headerCard: {
     background: "#ffffff",
@@ -912,6 +1086,30 @@ const styles = {
     marginBottom: 12,
     border: "1px solid #e5e7eb",
   },
+  csvHeaderRow: {
+    display: "flex",
+    justifyContent: "space-between",
+    gap: 12,
+    alignItems: "center",
+    flexWrap: "wrap",
+  },
+  sectionTitle: {
+    fontSize: 15,
+    fontWeight: 800,
+    marginBottom: 4,
+  },
+  primaryButton: {
+    minHeight: 48,
+    padding: "0 16px",
+    borderRadius: 14,
+    border: "none",
+    background: "#2563eb",
+    color: "#fff",
+    fontSize: 15,
+    fontWeight: 800,
+    cursor: "pointer",
+    whiteSpace: "nowrap",
+  },
   label: {
     display: "block",
     marginBottom: 8,
@@ -920,12 +1118,24 @@ const styles = {
   },
   input: {
     width: "100%",
+    minHeight: 48,
     padding: 12,
     borderRadius: 12,
     border: "1px solid #d1d5db",
     boxSizing: "border-box",
     fontSize: 16,
     background: "#fff",
+  },
+  searchInput: {
+    flex: 1,
+    minHeight: 48,
+    padding: 12,
+    borderRadius: 12,
+    border: "1px solid #d1d5db",
+    boxSizing: "border-box",
+    fontSize: 16,
+    background: "#fff",
+    minWidth: 0,
   },
   textarea: {
     width: "100%",
@@ -940,12 +1150,38 @@ const styles = {
   fileInput: {
     width: "100%",
     fontSize: 14,
+    minHeight: 40,
+  },
+  searchRow: {
+    display: "flex",
+    gap: 10,
+    alignItems: "center",
+  },
+  scanButton: {
+    minWidth: 88,
+    minHeight: 48,
+    padding: "0 14px",
+    borderRadius: 12,
+    border: "1px solid #111827",
+    background: "#111827",
+    color: "#fff",
+    fontSize: 14,
+    fontWeight: 800,
+    cursor: "pointer",
+    flexShrink: 0,
+  },
+  formGroup: {
+    marginBottom: 12,
+  },
+  detailBlock: {
+    marginBottom: 12,
   },
   metaText: {
     marginTop: 8,
     fontSize: 12,
     color: "#6b7280",
     wordBreak: "break-all",
+    lineHeight: 1.5,
   },
   infoBox: {
     padding: 12,
@@ -981,36 +1217,25 @@ const styles = {
     border: "1px solid #d1d5db",
     background: "#fff",
     borderRadius: 999,
-    padding: "8px 12px",
+    padding: "10px 14px",
     fontSize: 13,
     fontWeight: 700,
     cursor: "pointer",
     color: "#374151",
-  },
-  historySection: {
-    marginBottom: 16,
-    display: "block",
-    visibility: "visible",
-    overflow: "visible",
+    minHeight: 40,
   },
   list: {
     display: "flex",
     flexDirection: "column",
     gap: 12,
+    paddingBottom: 18,
   },
   card: {
     background: "#fff",
     borderRadius: 18,
     border: "1px solid #e5e7eb",
     overflow: "hidden",
-  },
-  historyCard: {
-    position: "relative",
-    background: "#fff",
-    borderRadius: 18,
-    border: "1px solid #e5e7eb",
-    padding: 14,
-    display: "block",
+    boxShadow: "0 6px 20px rgba(15,23,42,0.04)",
   },
   cardButton: {
     width: "100%",
@@ -1030,7 +1255,27 @@ const styles = {
   cardTitle: {
     fontSize: 17,
     fontWeight: 800,
-    lineHeight: 1.4,
+    lineHeight: 1.45,
+  },
+  cardMeta: {
+    marginTop: 6,
+    fontSize: 13,
+    color: "#4b5563",
+    lineHeight: 1.45,
+  },
+  qtyRow: {
+    display: "flex",
+    gap: 8,
+    flexWrap: "wrap",
+    marginTop: 10,
+  },
+  qtyChip: {
+    background: "#f3f4f6",
+    borderRadius: 999,
+    padding: "6px 10px",
+    fontSize: 12,
+    fontWeight: 700,
+    color: "#374151",
   },
   eventBadge: {
     display: "inline-block",
@@ -1052,40 +1297,6 @@ const styles = {
     fontWeight: 700,
     flexShrink: 0,
   },
-  deleteBtn: {
-    position: "absolute",
-    top: 10,
-    right: 10,
-    width: 28,
-    height: 28,
-    borderRadius: 999,
-    border: "none",
-    background: "#ef4444",
-    color: "#fff",
-    fontSize: 18,
-    fontWeight: 700,
-    lineHeight: "28px",
-    cursor: "pointer",
-  },
-  cardMeta: {
-    marginTop: 6,
-    fontSize: 13,
-    color: "#4b5563",
-  },
-  qtyRow: {
-    display: "flex",
-    gap: 8,
-    flexWrap: "wrap",
-    marginTop: 10,
-  },
-  qtyChip: {
-    background: "#f3f4f6",
-    borderRadius: 999,
-    padding: "6px 10px",
-    fontSize: 12,
-    fontWeight: 700,
-    color: "#374151",
-  },
   editorBox: {
     borderTop: "1px solid #e5e7eb",
     padding: 14,
@@ -1095,11 +1306,10 @@ const styles = {
     display: "grid",
     gridTemplateColumns: "1fr 1fr",
     gap: 10,
-    marginTop: 12,
-    marginBottom: 12,
   },
   saveButton: {
     width: "100%",
+    minHeight: 50,
     border: "none",
     borderRadius: 14,
     padding: "14px 16px",
@@ -1117,6 +1327,92 @@ const styles = {
     background: "#fff",
     color: "#6b7280",
     textAlign: "center",
+  },
+  sheetOverlay: {
+    position: "fixed",
+    inset: 0,
+    background: "rgba(15,23,42,0.32)",
+    zIndex: 40,
+    display: "flex",
+    alignItems: "flex-end",
+    justifyContent: "center",
+    padding: 0,
+  },
+  bottomSheet: {
+    width: "100%",
+    maxWidth: 760,
+    maxHeight: "78vh",
+    background: "#fff",
+    borderTopLeftRadius: 22,
+    borderTopRightRadius: 22,
+    padding: "10px 14px 20px",
+    overflow: "auto",
+    boxSizing: "border-box",
+  },
+  scannerSheet: {
+    width: "100%",
+    maxWidth: 760,
+    background: "#fff",
+    borderTopLeftRadius: 22,
+    borderTopRightRadius: 22,
+    padding: "10px 14px 20px",
+    boxSizing: "border-box",
+  },
+  sheetHandle: {
+    width: 54,
+    height: 6,
+    borderRadius: 999,
+    background: "#d1d5db",
+    margin: "0 auto 12px",
+  },
+  sheetHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 12,
+    marginBottom: 12,
+  },
+  sheetTitle: {
+    margin: 0,
+    fontSize: 18,
+    fontWeight: 800,
+  },
+  sheetClose: {
+    minHeight: 40,
+    padding: "0 12px",
+    border: "1px solid #d1d5db",
+    borderRadius: 999,
+    background: "#fff",
+    cursor: "pointer",
+    fontWeight: 700,
+  },
+  sheetList: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 12,
+    paddingBottom: 12,
+  },
+  historyCard: {
+    position: "relative",
+    background: "#fff",
+    borderRadius: 18,
+    border: "1px solid #e5e7eb",
+    padding: 14,
+  },
+  deleteBtn: {
+    position: "absolute",
+    top: 10,
+    right: 10,
+    width: 32,
+    height: 32,
+    borderRadius: 999,
+    border: "none",
+    background: "#ef4444",
+    color: "#fff",
+    fontSize: 18,
+    fontWeight: 700,
+    lineHeight: "32px",
+    cursor: "pointer",
   },
   historyMemo: {
     marginTop: 10,
@@ -1144,6 +1440,28 @@ const styles = {
     color: "#2563eb",
     textDecoration: "none",
     fontWeight: 700,
+  },
+  scannerFrame: {
+    position: "relative",
+    width: "100%",
+    aspectRatio: "3 / 4",
+    borderRadius: 18,
+    overflow: "hidden",
+    background: "#111827",
+  },
+  scannerVideo: {
+    width: "100%",
+    height: "100%",
+    objectFit: "cover",
+    display: "block",
+  },
+  scannerGuide: {
+    position: "absolute",
+    inset: "18% 10%",
+    border: "2px solid rgba(255,255,255,0.9)",
+    borderRadius: 20,
+    boxShadow: "0 0 0 9999px rgba(0,0,0,0.18)",
+    pointerEvents: "none",
   },
 };
 
