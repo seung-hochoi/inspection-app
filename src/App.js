@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import Papa from "papaparse";
 
-const DEFAULT_SCRIPT_URL = process.env.REACT_APP_GOOGLE_SCRIPT_URL || "https://script.google.com/macros/s/AKfycbyx9KO8yqJAJDYMMrPE13mwOWRkz249HvoEYQtChbBIgvgAbcyeaOsy08cnSHeZiKWfWQ/exec";
+const DEFAULT_SCRIPT_URL = process.env.REACT_APP_GOOGLE_SCRIPT_URL || "https://script.google.com/macros/s/AKfycbwa0l2iyvlxvUXDceXSah_hEb6fShKKs9o4okjM438EwTLg70Ckeyz8zVe3rZDBr4caKQ/exec";
 
 const normalizeKey = (key) => String(key || "").replace(/\uFEFF/g, "").trim();
 
@@ -13,17 +13,23 @@ const normalizeText = (value) =>
     .trim()
     .toLowerCase();
 
-const cleanCode = (value) => {
+const normalizeProductCode = (value) => {
   if (value == null) return "";
 
   let text = String(value).replace(/\uFEFF/g, "").trim();
-  const tMatch = text.match(/^=T\("(.+)"\)$/i);
 
+  const tMatch = text.match(/^=T\("(.+)"\)$/i);
   if (tMatch) {
     text = tMatch[1];
   }
 
   text = text.replace(/^"+|"+$/g, "").trim();
+
+  const numericText = text.replace(/,/g, "").trim();
+  if (/^\d+(\.0+)?$/.test(numericText)) {
+    return numericText.replace(/\.0+$/, "");
+  }
+
   return text;
 };
 
@@ -39,6 +45,18 @@ const getValue = (row, candidates) => {
     }
   }
   return "";
+};
+
+const isTruthyUsage = (value) => {
+  if (value === true) return true;
+  const text = normalizeText(value);
+  return ["true", "y", "yes", "1", "사용", "활성"].includes(text);
+};
+
+const isExplicitFalseUsage = (value) => {
+  if (value === false) return true;
+  const text = normalizeText(value);
+  return ["false", "n", "no", "0", "미사용"].includes(text);
 };
 
 const decodeCsvFile = async (file) => {
@@ -67,7 +85,9 @@ const buildNormalizedRows = (parsedRows) =>
       row[normalizeKey(key)] = rawRow[key];
     });
 
-    const productCode = cleanCode(getValue(row, ["상품코드", "상품 코드", "바코드", "코드"]));
+    const productCode = normalizeProductCode(
+      getValue(row, ["상품코드", "상품 코드", "바코드", "코드"])
+    );
     const productName = String(
       getValue(row, ["상품명", "상품 명", "품목명", "품명"]) || ""
     ).trim();
@@ -112,11 +132,6 @@ const computeJobKey = (rows) =>
       }))
     )
   )}`;
-
-const isActiveFlag = (value) => {
-  const text = normalizeText(value);
-  return ["y", "yes", "사용", "사용중", "활성", "active", "1", "true"].includes(text);
-};
 
 const fileToBase64 = (file) =>
   new Promise((resolve, reject) => {
@@ -167,6 +182,7 @@ function App() {
     try {
       setBootLoading(true);
       setError("");
+
       const response = await fetch(`${scriptUrl.trim()}?action=bootstrap`);
       const result = await response.json();
 
@@ -182,12 +198,13 @@ function App() {
       const nextExcludedPairKeys = new Set();
 
       (config.exclude_rows || []).forEach((row) => {
-        const useYn = getValue(row, ["사용여부"]);
-        if (!isActiveFlag(useYn)) return;
-
-        const productCode = cleanCode(getValue(row, ["상품코드", "상품 코드", "코드", "바코드"]));
+        const productCode = normalizeProductCode(
+          getValue(row, ["상품코드", "상품 코드", "코드", "바코드"])
+        );
         const partner = String(getValue(row, ["협력사"]) || "").trim();
+        const useFlag = getValue(row, ["사용여부"]);
 
+        if (!isTruthyUsage(useFlag)) return;
         if (!productCode) return;
 
         if (partner) {
@@ -199,15 +216,16 @@ function App() {
 
       const nextEventMap = {};
       (config.event_rows || []).forEach((row) => {
-        const useYn = getValue(row, ["사용여부"]);
-        if (!isActiveFlag(useYn)) return;
-
-        const productCode = cleanCode(getValue(row, ["상품코드", "상품 코드", "코드", "바코드"]));
+        const productCode = normalizeProductCode(
+          getValue(row, ["상품코드", "상품 코드", "코드", "바코드"])
+        );
         const eventName = String(getValue(row, ["행사명"]) || "").trim();
         const startDate = String(getValue(row, ["시작일"]) || "").trim();
         const endDate = String(getValue(row, ["종료일"]) || "").trim();
+        const useFlag = getValue(row, ["사용여부"]);
 
         if (!productCode) return;
+        if (isExplicitFalseUsage(useFlag)) return;
 
         nextEventMap[productCode] = {
           행사여부: "행사",
@@ -236,20 +254,23 @@ function App() {
 
   const filteredRows = useMemo(() => {
     return rows.filter((row) => {
-      if (!row.__productCode) return false;
-      if (excludedProductCodes.has(row.__productCode)) return false;
-      if (excludedPairKeys.has(`${row.__productCode}||${row.__partner}`)) return false;
+      const code = normalizeProductCode(row.__productCode);
+      const partner = String(row.__partner || "").trim();
+
+      if (!code) return false;
+      if (excludedProductCodes.has(code)) return false;
+      if (excludedPairKeys.has(`${code}||${partner}`)) return false;
+
       return true;
     });
   }, [rows, excludedProductCodes, excludedPairKeys]);
 
   const productCards = useMemo(() => {
     const keyword = normalizeText(search);
-
     const grouped = {};
 
     filteredRows.forEach((row) => {
-      const productCode = row.__productCode;
+      const productCode = normalizeProductCode(row.__productCode);
       const productName = row.__productName || "상품명 없음";
       const partner = row.__partner || "협력사없음";
       const center = row.__center || "센터없음";
@@ -281,35 +302,27 @@ function App() {
       grouped[productCode].centers[center].rows.push(row);
     });
 
-    const cards = Object.values(grouped)
-      .map((product) => {
-        const centerList = Object.values(product.centers).sort(
+    return Object.values(grouped)
+      .map((product) => ({
+        ...product,
+        centerList: Object.values(product.centers).sort(
           (a, b) => (b.totalQty || 0) - (a.totalQty || 0)
-        );
-
-        return {
-          ...product,
-          centerList,
-          partnerText: Array.from(product.partners).join(", "),
-        };
-      })
+        ),
+        partnerText: Array.from(product.partners).join(", "),
+      }))
       .filter((product) => {
         if (!keyword) return true;
-
         return (
           normalizeText(product.productName).includes(keyword) ||
           normalizeText(product.partnerText).includes(keyword) ||
           String(product.productCode || "").includes(search.trim())
         );
       })
-      .sort((a, b) => {
-        return (
+      .sort(
+        (a, b) =>
           (b.totalQty || 0) - (a.totalQty || 0) ||
           a.productName.localeCompare(b.productName, "ko")
-        );
-      });
-
-    return cards;
+      );
   }, [filteredRows, search, eventMap]);
 
   const updateDraft = (key, field, value) => {
@@ -543,7 +556,8 @@ function App() {
                     );
                     setSelectedCenterByProduct((prev) => ({
                       ...prev,
-                      [product.productCode]: prev[product.productCode] || product.centerList[0]?.center || "",
+                      [product.productCode]:
+                        prev[product.productCode] || product.centerList[0]?.center || "",
                     }));
                   }}
                 >
@@ -591,9 +605,16 @@ function App() {
                           선택 센터 수주수량: {selectedCenterInfo.totalQty}
                         </div>
                         <div style={styles.metaText}>
-                          협력사: {Array.from(
-                            new Set(selectedCenterInfo.rows.map((row) => row.__partner).filter(Boolean))
+                          협력사:{" "}
+                          {Array.from(
+                            new Set(
+                              selectedCenterInfo.rows.map((row) => row.__partner).filter(Boolean)
+                            )
                           ).join(", ") || "-"}
+                        </div>
+                        <div style={styles.metaText}>
+                          행사: {product.eventInfo?.행사여부 || ""}
+                          {product.eventInfo?.행사명 ? ` (${product.eventInfo.행사명})` : ""}
                         </div>
                       </>
                     )}
