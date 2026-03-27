@@ -1,6 +1,7 @@
 ﻿import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Papa from "papaparse";
 import { BrowserCodeReader, BrowserMultiFormatReader } from "@zxing/browser";
+import JSZip from "jszip";
 
 const SCRIPT_URL = process.env.REACT_APP_GOOGLE_SCRIPT_URL || "https://script.google.com/macros/s/AKfycbxZM2BlpkhkPt5uNtf9pSPa3J9xMhiKq_wozPn7OBH8aH31A62bKtKXFVbWwZhCTlFMKA/exec";
 
@@ -106,6 +107,76 @@ const buildNormalizedRows = (parsedRows) =>
     };
   });
 
+const buildReservationRows = (reservationRows) =>
+  (reservationRows || []).map((rawRow, index) => {
+    const row = {};
+
+    Object.keys(rawRow || {}).forEach((key) => {
+      row[normalizeKey(key)] = rawRow[key];
+    });
+
+    const productCode = normalizeProductCode(
+      getValue(row, ["상품코드", "상품 코드", "바코드", "코드"])
+    );
+    const productName = String(getValue(row, ["상품명", "상품 명", "품목명", "품명"]) || "").trim();
+    const partner = String(getValue(row, ["협력사명", "협력사", "거래처명"]) || "").trim();
+    const center = String(getValue(row, ["센터명", "센터"]) || "").trim();
+    const qty = parseQty(getValue(row, ["발주수량", "수량"]));
+    const incomingCost = parseQty(getValue(row, ["입고원가", "원가"]));
+
+    return {
+      ...row,
+      __id: `reservation-${productCode || "empty"}-${center || "nocenter"}-${partner || "nopartner"}-${index}`,
+      __index: index,
+      __productCode: productCode,
+      __productName: productName,
+      __partner: partner,
+      __center: center,
+      __qty: qty,
+      __incomingCost: incomingCost,
+      __reservationRow: true,
+      __productNameNormalized: normalizeText(productName),
+      __partnerNormalized: normalizeText(partner),
+    };
+  });
+
+const mergeRowsWithReservation = (baseRows, reservationRows) => {
+  const mergedMap = new Map();
+
+  (baseRows || []).forEach((row) => {
+    const key = [row.__center || "", row.__partner || "", row.__productCode || ""].join("||");
+    mergedMap.set(key, {
+      ...row,
+      __incomingCost: parseQty(row.__incomingCost || row.입고원가 || 0),
+    });
+  });
+
+  (reservationRows || []).forEach((row) => {
+    const key = [row.__center || "", row.__partner || "", row.__productCode || ""].join("||");
+    const existing = mergedMap.get(key);
+
+    if (existing) {
+      mergedMap.set(key, {
+        ...existing,
+        ...row,
+        __id: existing.__id,
+        __index: existing.__index,
+        __qty: parseQty(existing.__qty) + parseQty(row.__qty),
+        __incomingCost: parseQty(row.__incomingCost || existing.__incomingCost || 0),
+        입고원가: parseQty(row.__incomingCost || existing.__incomingCost || 0),
+      });
+      return;
+    }
+
+    mergedMap.set(key, {
+      ...row,
+      입고원가: parseQty(row.__incomingCost || 0),
+    });
+  });
+
+  return Array.from(mergedMap.values());
+};
+
 const hashString = (text) => {
   let hash = 0;
   for (let i = 0; i < text.length; i += 1) {
@@ -190,6 +261,147 @@ const getRecordQtyText = (record) => {
   return `${Math.max(returnQty, exchangeQty, 0)}개`;
 };
 
+const formatDateForFileName = () => new Date().toLocaleDateString("sv-SE");
+
+const sanitizeFileName = (name) =>
+  String(name || "상품")
+    .replace(/[\\/:*?"<>|]/g, "")
+    .replace(/\s+/g, "_")
+    .trim() || "상품";
+
+const getFileExtension = (url, blobType) => {
+  if (blobType) {
+    if (blobType.includes("png")) return "png";
+    if (blobType.includes("gif")) return "gif";
+    if (blobType.includes("webp")) return "webp";
+    if (blobType.includes("bmp")) return "bmp";
+    if (blobType.includes("heic")) return "heic";
+  }
+
+  const target = String(url || "").toLowerCase();
+  if (target.includes(".png")) return "png";
+  if (target.includes(".gif")) return "gif";
+  if (target.includes(".webp")) return "webp";
+  return "jpg";
+};
+
+const extractImageFormulaUrl = (value) => {
+  const text = String(value || "").trim();
+  const match = text.match(/^=IMAGE\("(.+)"\)$/i);
+  return match ? match[1] : text;
+};
+
+const extractGoogleDriveId = (value) => {
+  const text = String(value || "").trim();
+  if (!text) return "";
+
+  const directId = text.match(/^[a-zA-Z0-9_-]{20,}$/);
+  if (directId) return directId[0];
+
+  const fileMatch = text.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+  if (fileMatch) return fileMatch[1];
+
+  const openMatch = text.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  if (openMatch) return openMatch[1];
+
+  const ucMatch = text.match(/\/d\/([a-zA-Z0-9_-]+)/);
+  if (ucMatch) return ucMatch[1];
+
+  return "";
+};
+
+const buildPhotoCandidate = (rawValue) => {
+  const normalized = extractImageFormulaUrl(rawValue);
+  const text = String(normalized || "").trim();
+  if (!text) return null;
+
+  const driveId = extractGoogleDriveId(text);
+  if (driveId) {
+    return {
+      key: driveId,
+      previewUrl: `https://drive.google.com/thumbnail?id=${driveId}&sz=w1200`,
+      downloadUrl: `https://drive.google.com/uc?export=download&id=${driveId}`,
+    };
+  }
+
+  if (/^https?:\/\//i.test(text)) {
+    return {
+      key: text,
+      previewUrl: text,
+      downloadUrl: text,
+    };
+  }
+
+  return null;
+};
+
+const splitPhotoSourceText = (value) =>
+  String(value || "")
+    .split(/\r?\n|[,;]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+const getPhotoCandidatesFromRecord = (record) => {
+  const rawItems = [
+    record?.사진URL,
+    record?.사진링크,
+    ...splitPhotoSourceText(record?.사진링크목록),
+    ...splitPhotoSourceText(record?.사진파일ID목록),
+  ];
+
+  const seen = {};
+  const candidates = [];
+
+  rawItems.forEach((item) => {
+    const candidate = buildPhotoCandidate(item);
+    if (!candidate || seen[candidate.key]) return;
+    seen[candidate.key] = true;
+    candidates.push(candidate);
+  });
+
+  return candidates;
+};
+
+function HistoryPhotoItem({ candidate, index, onOpen, styles }) {
+  const [failed, setFailed] = useState(false);
+
+  if (failed) {
+    return <div style={styles.photoThumbEmpty}>미리보기 불가</div>;
+  }
+
+  return (
+    <img
+      src={candidate.previewUrl}
+      alt={`첨부사진 ${index + 1}`}
+      style={styles.photoThumb}
+      onClick={() => onOpen(candidate.previewUrl)}
+      onError={() => setFailed(true)}
+    />
+  );
+}
+
+function HistoryPhotoPreview({ record, onOpen, styles }) {
+  const candidates = useMemo(() => getPhotoCandidatesFromRecord(record), [record]);
+
+  if (!candidates.length) {
+    return <div style={styles.photoEmpty}>사진 없음</div>;
+  }
+
+  return (
+    <div style={styles.photoGrid}>
+      {candidates.map((candidate, index) => (
+        <HistoryPhotoItem
+          key={candidate.key || `${record.__rowNumber || "row"}-${index}`}
+          candidate={candidate}
+          index={index}
+          onOpen={onOpen}
+          styles={styles}
+        />
+      ))}
+    </div>
+  );
+}
+
 function App() {
   const [rows, setRows] = useState([]);
   const [currentJob, setCurrentJob] = useState(null);
@@ -214,11 +426,13 @@ function App() {
   const [excludedProductCodes, setExcludedProductCodes] = useState(new Set());
   const [excludedPairKeys, setExcludedPairKeys] = useState(new Set());
   const [eventMap, setEventMap] = useState({});
+  const [reservationRows, setReservationRows] = useState([]);
 
   const [showHistory, setShowHistory] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyRows, setHistoryRows] = useState([]);
   const [zoomPhotoUrl, setZoomPhotoUrl] = useState("");
+  const [zipDownloading, setZipDownloading] = useState("");
 
   const [isScannerOpen, setIsScannerOpen] = useState(false);
   const [scannerError, setScannerError] = useState("");
@@ -490,6 +704,7 @@ function App() {
     try {
       setUploadingCsv(true);
       setError("");
+      setMessage("");
   
       const { text } = await decodeCsvFile(file);
   
@@ -499,19 +714,48 @@ function App() {
       });
   
       const normalized = buildNormalizedRows(parsed.data);
-  
-      const jobKey = computeJobKey(normalized);
-  
-      setRows(normalized);
-      setCurrentJob({ job_key: jobKey, rows: normalized });
+      const mergedRows = mergeRowsWithReservation(normalized, reservationRows);
+      const jobKey = computeJobKey(mergedRows);
+
+      const response = await fetch(SCRIPT_URL, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
+        body: JSON.stringify({
+          action: "cacheCsv",
+          payload: {
+            job_key: jobKey,
+            source_file_name: file.name,
+            source_file_modified: new Date(file.lastModified).toISOString(),
+            parsed_rows: mergedRows,
+          },
+        }),
+      });
+
+      const result = await response.json();
+      if (!response.ok || result.ok === false) {
+        throw new Error(result.message || "CSV 캐시 저장 실패");
+      }
+
+      const nextJob = result.job || {
+        job_key: jobKey,
+        rows: mergedRows,
+        source_file_name: file.name,
+        source_file_modified: new Date(file.lastModified).toISOString(),
+      };
+
+      setRows(Array.isArray(nextJob.rows) ? nextJob.rows : mergedRows);
+      setCurrentJob(nextJob);
       setCurrentFileName(file.name);
-      setCurrentFileModifiedAt(file.lastModified);
+      setCurrentFileModifiedAt(new Date(file.lastModified).toISOString());
   
       setMessage("CSV 업로드 완료");
     } catch (err) {
-      setError("CSV 처리 실패");
+      setError(err.message || "CSV 처리 실패");
     } finally {
       setUploadingCsv(false);
+      if (e.target) {
+        e.target.value = "";
+      }
     }
   };
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -546,6 +790,7 @@ function App() {
       const data = result.data || {};
       const config = data.config || {};
       const job = data.current_job || null;
+      const normalizedReservationRows = buildReservationRows(config.reservation_rows || []);
 
       const nextExcludedProductCodes = new Set();
       const nextExcludedPairKeys = new Set();
@@ -587,6 +832,7 @@ function App() {
       setExcludedProductCodes(nextExcludedProductCodes);
       setExcludedPairKeys(nextExcludedPairKeys);
       setEventMap(nextEventMap);
+      setReservationRows(normalizedReservationRows);
       setCurrentJob(job);
       setRows(Array.isArray(job?.rows) ? job.rows : []);
       setCurrentFileName(job?.source_file_name || "");
@@ -599,26 +845,30 @@ function App() {
     }
   };
 
+  const fetchHistoryRowsData = async () => {
+    const response = await fetch(`${SCRIPT_URL}?action=getRecords`);
+    const result = await response.json();
+
+    if (!response.ok || result.ok === false) {
+      throw new Error(result.message || "내역 불러오기 실패");
+    }
+
+    return (Array.isArray(result.records) ? result.records : []).sort((a, b) =>
+      String(b.작성일시 || "").localeCompare(String(a.작성일시 || ""), "ko")
+    );
+  };
+
   const loadHistoryRows = async () => {
     try {
       setHistoryLoading(true);
       setError("");
-
-      const response = await fetch(`${SCRIPT_URL}?action=getRecords`);
-      const result = await response.json();
-
-      if (!response.ok || result.ok === false) {
-        throw new Error(result.message || "내역 불러오기 실패");
-      }
-
-      const nextRows = Array.isArray(result.records) ? result.records : [];
-      nextRows.sort((a, b) =>
-        String(b.작성일시 || "").localeCompare(String(a.작성일시 || ""), "ko")
-      );
+      const nextRows = await fetchHistoryRowsData();
       setHistoryRows(nextRows);
+      return nextRows;
     } catch (err) {
       setError(err.message || "내역 불러오기 실패");
       setHistoryRows([]);
+      return [];
     } finally {
       setHistoryLoading(false);
     }
@@ -797,11 +1047,6 @@ function App() {
     }
   };
 
-  const flushPendingNow = () => {
-    clearFlushTimer();
-    flushPending();
-  };
-
   useEffect(() => {
     pendingRef.current = pendingMap;
   }, [pendingMap]);
@@ -863,7 +1108,7 @@ function App() {
         photoFiles: pendingMap[entityKey]?.photoFiles || [],
       },
     ]);
-    flushPendingNow();
+    setToast("저장 대기중");
   };
 
   const saveReturnExchange = async (product, centerName) => {
@@ -956,7 +1201,17 @@ function App() {
     }
 
     upsertPendingEntries(movementEntries);
-    flushPendingNow();
+    setDrafts((prev) => ({
+      ...prev,
+      [draftKey]: {
+        returnQty: "",
+        exchangeQty: "",
+        memo: "",
+        photoFiles: [],
+        photoNames: [],
+      },
+    }));
+    setToast("저장 대기중");
   };
 
   const deleteHistoryRecord = async (record) => {
@@ -978,6 +1233,85 @@ function App() {
       setError(err.message || "내역 삭제 실패");
     } finally {
       setDeletingRowNumber(null);
+    }
+  };
+
+  const downloadPhotoZip = async (mode) => {
+    try {
+      setZipDownloading(mode);
+      setError("");
+      setMessage("");
+
+      const records = historyRows.length ? historyRows : await loadHistoryRows();
+      const targetRecords = records.filter((record) => {
+        const hasPhotos = getPhotoCandidatesFromRecord(record).length > 0;
+        if (!hasPhotos) return false;
+
+        const hasMovement = parseQty(record.회송수량) > 0 || parseQty(record.교환수량) > 0;
+        if (mode === "movement") return hasMovement;
+        return !hasMovement;
+      });
+
+      if (!targetRecords.length) {
+        setToast("다운로드할 사진이 없습니다");
+        return;
+      }
+
+      const zip = new JSZip();
+      const usedNames = {};
+      let addedCount = 0;
+
+      for (const record of targetRecords) {
+        const candidates = getPhotoCandidatesFromRecord(record);
+
+        for (let i = 0; i < candidates.length; i += 1) {
+          const candidate = candidates[i];
+
+          try {
+            const response = await fetch(candidate.downloadUrl || candidate.previewUrl, {
+              mode: "cors",
+            });
+            if (!response.ok) continue;
+
+            const blob = await response.blob();
+            const ext = getFileExtension(candidate.downloadUrl || candidate.previewUrl, blob.type);
+            const baseName = `${sanitizeFileName(record.상품명)}_${i + 1}`;
+            const count = (usedNames[baseName] || 0) + 1;
+            usedNames[baseName] = count;
+            const finalName = `${baseName}${count > 1 ? `_${count}` : ""}.${ext}`;
+
+            zip.file(finalName, blob);
+            addedCount += 1;
+          } catch (_) {
+            // Skip failed downloads and continue creating the zip.
+          }
+        }
+      }
+
+      if (!addedCount) {
+        setToast("다운로드 가능한 사진이 없습니다");
+        return;
+      }
+
+      const blob = await zip.generateAsync({ type: "blob" });
+      const link = document.createElement("a");
+      const href = URL.createObjectURL(blob);
+      const fileName =
+        mode === "movement"
+          ? `회송_교환_사진_${formatDateForFileName()}.zip`
+          : `사진만있는상품_${formatDateForFileName()}.zip`;
+
+      link.href = href;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(href);
+      setToast("ZIP 다운로드 완료");
+    } catch (err) {
+      setError(err.message || "ZIP 다운로드 실패");
+    } finally {
+      setZipDownloading("");
     }
   };
 
@@ -1061,19 +1395,35 @@ function App() {
 
       <div style={styles.countRow}>
         <div style={styles.countText}>총 {groupedPartners.reduce((sum, item) => sum + item.products.length, 0)}건</div>
-        <button
-          type="button"
-          onClick={async () => {
-            const next = !showHistory;
-            setShowHistory(next);
-            if (next) {
-              await loadHistoryRows();
-            }
-          }}
-          style={styles.historyButton}
-        >
-          {showHistory ? "내역 닫기" : "내역 보기"}
-        </button>
+        <div style={styles.countActions}>
+          <button
+            type="button"
+            onClick={() => downloadPhotoZip("movement")}
+            style={styles.historyButton}
+          >
+            {zipDownloading === "movement" ? "ZIP 생성중..." : "회송/교환 사진 ZIP"}
+          </button>
+          <button
+            type="button"
+            onClick={() => downloadPhotoZip("photoOnly")}
+            style={styles.historyButton}
+          >
+            {zipDownloading === "photoOnly" ? "ZIP 생성중..." : "사진만 있는 상품 ZIP"}
+          </button>
+          <button
+            type="button"
+            onClick={async () => {
+              const next = !showHistory;
+              setShowHistory(next);
+              if (next) {
+                await loadHistoryRows();
+              }
+            }}
+            style={styles.historyButton}
+          >
+            {showHistory ? "내역 닫기" : "내역 보기"}
+          </button>
+        </div>
       </div>
 
       <div style={styles.list}>
@@ -1377,16 +1727,13 @@ function App() {
                     </div>
                     <div style={styles.historyMemo}>{record.비고 || "-"}</div>
 
-                    {record.사진URL || record.사진링크 ? (
-                      <div style={styles.photoWrap}>
-                        <img
-                          src={record.사진URL || record.사진링크}
-                          alt="첨부사진"
-                          style={styles.photoPreview}
-                          onClick={() => setZoomPhotoUrl(record.사진URL || record.사진링크)}
-                        />
-                      </div>
-                    ) : null}
+                    <div style={styles.photoWrap}>
+                      <HistoryPhotoPreview
+                        record={record}
+                        onOpen={(url) => setZoomPhotoUrl(url)}
+                        styles={styles}
+                      />
+                    </div>
                   </div>
                 ))}
               </div>
@@ -1645,6 +1992,12 @@ const styles = {
   countText: {
     fontSize: 13,
     color: "#6b7280",
+  },
+  countActions: {
+    display: "flex",
+    gap: 8,
+    flexWrap: "wrap",
+    justifyContent: "flex-end",
   },
   historyButton: {
     border: "1px solid #d1d5db",
@@ -1913,6 +2266,43 @@ const styles = {
   },
   photoWrap: {
     marginTop: 12,
+  },
+  photoGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fill, minmax(92px, 1fr))",
+    gap: 8,
+  },
+  photoEmpty: {
+    border: "1px dashed #d1d5db",
+    borderRadius: 14,
+    background: "#f9fafb",
+    color: "#6b7280",
+    fontSize: 13,
+    padding: "18px 12px",
+    textAlign: "center",
+  },
+  photoThumb: {
+    width: "100%",
+    aspectRatio: "1 / 1",
+    objectFit: "cover",
+    borderRadius: 12,
+    border: "1px solid #e5e7eb",
+    background: "#fff",
+    display: "block",
+    cursor: "pointer",
+  },
+  photoThumbEmpty: {
+    minHeight: 92,
+    border: "1px dashed #d1d5db",
+    borderRadius: 12,
+    background: "#f9fafb",
+    color: "#9ca3af",
+    fontSize: 12,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    textAlign: "center",
+    padding: 8,
   },
   photoPreview: {
     width: "100%",
