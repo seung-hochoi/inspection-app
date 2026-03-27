@@ -6,6 +6,7 @@
   jobCache: "job_cache",
   records: "return_exchange_records",
   inspection: "inspection_data",
+  summary: "inspection_summary",
 };
 const ADMIN_RESET_PASSWORD = "0000";
 const JOB_CACHE_MAX_ROWS = 30000;
@@ -376,6 +377,10 @@ function getInspectionSheet_(ss) {
   const sheet = getOrCreateSheet_(ss, SHEET_NAMES.inspection);
   ensureHeaderRow_(sheet, inspectionHeaders_());
   return sheet;
+}
+
+function getInspectionSummarySheet_(ss) {
+  return getOrCreateSheet_(ss, SHEET_NAMES.summary);
 }
 
 function loadRecords_() {
@@ -1450,7 +1455,8 @@ function getRowSkuKey_(row) {
 
 function updateInspectionDashboard_(ss) {
   var inspectionSheet = getInspectionSheet_(ss);
-  if (!inspectionSheet) return;
+  var summarySheet = getInspectionSummarySheet_(ss);
+  if (!inspectionSheet || !summarySheet) return;
 
   var latestJob = loadLatestJob_();
   var latestRows = latestJob && Array.isArray(latestJob.rows) ? latestJob.rows : [];
@@ -1597,17 +1603,19 @@ function updateInspectionDashboard_(ss) {
     ],
   ];
 
-  inspectionSheet.getRange("L2:Q7").setValues(values);
-  inspectionSheet.getRange("L2:Q2").setBackground("#c6efce").setFontWeight("bold");
-  inspectionSheet.getRange("L4:Q4").setBackground("#fff2cc").setFontWeight("bold");
-  inspectionSheet.getRange("L6:Q6").setBackground("#d9ead3").setFontWeight("bold");
-  inspectionSheet.getRange("L3:Q3").setNumberFormats([["#,##0", "#,##0", "#,##0", "0.0%", "0.0%", "@"]]);
-  inspectionSheet.getRange("L5:Q5").setNumberFormats([["#,##0", "#,##0", "#,##0", "0.0%", "#,##0", "0.0%"]]);
-  inspectionSheet.getRange("L7:Q7").setNumberFormats([["#,##0", "#,##0", "#,##0", "#,##0", "#,##0", "#,##0"]]);
-  inspectionSheet.autoResizeColumns(12, 6);
+  inspectionSheet.getRange("L2:Q7").clearContent().clearFormat();
+
+  summarySheet.getRange("L2:Q7").setValues(values);
+  summarySheet.getRange("L2:Q2").setBackground("#c6efce").setFontWeight("bold");
+  summarySheet.getRange("L4:Q4").setBackground("#fff2cc").setFontWeight("bold");
+  summarySheet.getRange("L6:Q6").setBackground("#d9ead3").setFontWeight("bold");
+  summarySheet.getRange("L3:Q3").setNumberFormats([["#,##0", "#,##0", "#,##0", "0.0%", "0.0%", "@"]]);
+  summarySheet.getRange("L5:Q5").setNumberFormats([["#,##0", "#,##0", "#,##0", "0.0%", "#,##0", "0.0%"]]);
+  summarySheet.getRange("L7:Q7").setNumberFormats([["#,##0", "#,##0", "#,##0", "#,##0", "#,##0", "#,##0"]]);
+  summarySheet.autoResizeColumns(12, 6);
   [12, 13, 14, 15, 16, 17].forEach(function (col) {
-    if (inspectionSheet.getColumnWidth(col) < 110) {
-      inspectionSheet.setColumnWidth(col, 110);
+    if (summarySheet.getColumnWidth(col) < 110) {
+      summarySheet.setColumnWidth(col, 110);
     }
   });
 }

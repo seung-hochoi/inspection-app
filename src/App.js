@@ -2,7 +2,7 @@
 import Papa from "papaparse";
 import { BrowserCodeReader, BrowserMultiFormatReader } from "@zxing/browser";
 
-const SCRIPT_URL = process.env.REACT_APP_GOOGLE_SCRIPT_URL || "https://script.google.com/macros/s/AKfycbwUbyFJCNSiZrlXopi5W2OHFi1dJ49TeJKWtxgJRFAUoI-45oSUNI5rmaMIcg14uWM2EQ/exec";
+const SCRIPT_URL = process.env.REACT_APP_GOOGLE_SCRIPT_URL || "https://script.google.com/macros/s/AKfycbzjAFAwgBjQLMSO9U5emoFm7iy_KReky8I6ILpvLk28Mx0n4Clksec8w31cvZpdy2rDbw/exec";
 
 const normalizeKey = (key) => String(key || "").replace(/\uFEFF/g, "").trim();
 
