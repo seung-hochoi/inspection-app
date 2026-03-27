@@ -114,6 +114,10 @@ function doPost(e) {
       });
     }
 
+    if (action === "downloadPhotoZip") {
+      return jsonOutput_(Object.assign({ ok: true }, createPhotoZip_(body.payload || {})));
+    }
+
     return jsonOutput_({
       ok: false,
       message: "지원하지 않는 action입니다.",
@@ -1001,6 +1005,181 @@ function ensureHeaderRow_(sheet, headers) {
   if (sheet.getLastRow() === 0 || changed) {
     sheet.getRange(1, 1, 1, width).setValues([headers]);
   }
+}
+
+function createPhotoZip_(payload) {
+  var mode = String(payload.mode || "movement").trim();
+  var records = loadRecords_();
+  var blobs = [];
+  var usedNames = {};
+  var skippedCount = 0;
+
+  records.forEach(function (record) {
+    var photos = getPhotoSourcesFromRecord_(record);
+    if (!photos.length) return;
+
+    var hasMovement = isMovementRecord_(record);
+    if (mode === "movement" && !hasMovement) return;
+    if (mode !== "movement" && hasMovement) return;
+
+    photos.forEach(function (source, index) {
+      try {
+        var blob = getPhotoBlobFromSource_(source);
+        if (!blob) {
+          skippedCount += 1;
+          return;
+        }
+
+        var baseName = sanitizeFileName_(record["상품명"] || "상품") + "_" + (index + 1);
+        var count = (usedNames[baseName] || 0) + 1;
+        usedNames[baseName] = count;
+        var finalName =
+          baseName + (count > 1 ? "_" + count : "") + "." + getBlobExtension_(blob, source);
+
+        blobs.push(blob.setName(finalName));
+      } catch (err) {
+        skippedCount += 1;
+      }
+    });
+  });
+
+  var fileName =
+    mode === "movement"
+      ? "회송_교환_사진_" + Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd") + ".zip"
+      : "사진만있는상품_" + Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd") + ".zip";
+
+  if (!blobs.length) {
+    return {
+      fileName: fileName,
+      mimeType: "application/zip",
+      zipBase64: "",
+      addedCount: 0,
+      skippedCount: skippedCount,
+    };
+  }
+
+  var zipBlob = Utilities.zip(blobs, fileName);
+  return {
+    fileName: fileName,
+    mimeType: zipBlob.getContentType() || "application/zip",
+    zipBase64: Utilities.base64Encode(zipBlob.getBytes()),
+    addedCount: blobs.length,
+    skippedCount: skippedCount,
+  };
+}
+
+function getPhotoSourcesFromRecord_(record) {
+  var rawItems = []
+    .concat([record["사진URL"], record["사진링크"], record["사진미리보기"]])
+    .concat(splitPhotoSourceText_(record["사진링크목록"]))
+    .concat(splitPhotoSourceText_(record["사진파일ID목록"]));
+
+  var seen = {};
+  var sources = [];
+
+  rawItems.forEach(function (item) {
+    var normalized = extractImageFormulaUrl_(item);
+    var text = String(normalized || "").trim();
+    if (!text || seen[text]) return;
+    seen[text] = true;
+    sources.push(text);
+  });
+
+  return sources;
+}
+
+function splitPhotoSourceText_(value) {
+  return String(value || "")
+    .split(/\r?\n|[,;]+/)
+    .map(function (item) {
+      return String(item || "").trim();
+    })
+    .filter(Boolean);
+}
+
+function extractImageFormulaUrl_(value) {
+  var text = String(value || "").trim();
+  var match = text.match(/^=IMAGE\("(.+)"\)$/i);
+  return match ? match[1] : text;
+}
+
+function extractGoogleDriveId_(value) {
+  var text = String(value || "").trim();
+  if (!text) return "";
+
+  var directId = text.match(/^[a-zA-Z0-9_-]{20,}$/);
+  if (directId) return directId[0];
+
+  var fileMatch = text.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+  if (fileMatch) return fileMatch[1];
+
+  var openMatch = text.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  if (openMatch) return openMatch[1];
+
+  var ucMatch = text.match(/\/d\/([a-zA-Z0-9_-]+)/);
+  if (ucMatch) return ucMatch[1];
+
+  return "";
+}
+
+function getPhotoBlobFromSource_(source) {
+  var text = extractImageFormulaUrl_(source);
+  var driveId = extractGoogleDriveId_(text);
+
+  if (driveId) {
+    return DriveApp.getFileById(driveId).getBlob();
+  }
+
+  if (/^https?:\/\//i.test(text)) {
+    var response = UrlFetchApp.fetch(text, {
+      muteHttpExceptions: true,
+      followRedirects: true,
+    });
+
+    if (response.getResponseCode() >= 200 && response.getResponseCode() < 300) {
+      return response.getBlob();
+    }
+  }
+
+  return null;
+}
+
+function getBlobExtension_(blob, source) {
+  var contentType = String((blob && blob.getContentType && blob.getContentType()) || "").toLowerCase();
+  if (contentType.indexOf("png") >= 0) return "png";
+  if (contentType.indexOf("gif") >= 0) return "gif";
+  if (contentType.indexOf("webp") >= 0) return "webp";
+  if (contentType.indexOf("bmp") >= 0) return "bmp";
+  if (contentType.indexOf("heic") >= 0) return "heic";
+
+  var text = String(source || "").toLowerCase();
+  if (text.indexOf(".png") >= 0) return "png";
+  if (text.indexOf(".gif") >= 0) return "gif";
+  if (text.indexOf(".webp") >= 0) return "webp";
+  return "jpg";
+}
+
+function sanitizeFileName_(name) {
+  var text = String(name || "상품")
+    .replace(/[\\\/:*?"<>|]/g, "")
+    .replace(/\s+/g, "_")
+    .trim();
+
+  return text || "상품";
+}
+
+function getRecordType_(record) {
+  var type = String(record["처리유형"] || "").trim();
+  if (type) return type;
+  if (parseNumber_(record["회송수량"]) > 0) return "회송";
+  if (parseNumber_(record["교환수량"]) > 0) return "교환";
+  return "기타";
+}
+
+function isMovementRecord_(record) {
+  var type = String(getRecordType_(record) || "").trim().toUpperCase();
+  if (["회송", "교환", "RETURN", "EXCHANGE"].indexOf(type) >= 0) return true;
+  return parseNumber_(record["회송수량"]) > 0 || parseNumber_(record["교환수량"]) > 0;
 }
 
 function jsonOutput_(obj) {

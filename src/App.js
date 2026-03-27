@@ -1,9 +1,8 @@
 ﻿import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Papa from "papaparse";
 import { BrowserCodeReader, BrowserMultiFormatReader } from "@zxing/browser";
-import JSZip from "jszip";
 
-const SCRIPT_URL = process.env.REACT_APP_GOOGLE_SCRIPT_URL || "https://script.google.com/macros/s/AKfycbxZM2BlpkhkPt5uNtf9pSPa3J9xMhiKq_wozPn7OBH8aH31A62bKtKXFVbWwZhCTlFMKA/exec";
+const SCRIPT_URL = process.env.REACT_APP_GOOGLE_SCRIPT_URL || "https://script.google.com/macros/s/AKfycbyP6zVi9Do0zt9Hj6ByOG79aAXXRJ9n5ze-KIzXfSnuPk6ZkuTEcF3BOhekAqcmuOwUtQ/exec";
 
 const normalizeKey = (key) => String(key || "").replace(/\uFEFF/g, "").trim();
 
@@ -285,6 +284,25 @@ const getFileExtension = (url, blobType) => {
   return "jpg";
 };
 
+const base64ToBlob = (base64, mimeType = "application/octet-stream") => {
+  const binary = window.atob(String(base64 || ""));
+  const chunkSize = 1024;
+  const bytes = [];
+
+  for (let offset = 0; offset < binary.length; offset += chunkSize) {
+    const slice = binary.slice(offset, offset + chunkSize);
+    const array = new Uint8Array(slice.length);
+
+    for (let i = 0; i < slice.length; i += 1) {
+      array[i] = slice.charCodeAt(i);
+    }
+
+    bytes.push(array);
+  }
+
+  return new Blob(bytes, { type: mimeType });
+};
+
 const extractImageFormulaUrl = (value) => {
   const text = String(value || "").trim();
   const match = text.match(/^=IMAGE\("(.+)"\)$/i);
@@ -360,6 +378,12 @@ const getPhotoCandidatesFromRecord = (record) => {
   });
 
   return candidates;
+};
+
+const hasMovementRecord = (record) => {
+  const type = String(getRecordType(record) || "").trim().toUpperCase();
+  if (["회송", "교환", "RETURN", "EXCHANGE"].includes(type)) return true;
+  return parseQty(record?.회송수량) > 0 || parseQty(record?.교환수량) > 0;
 };
 
 function HistoryPhotoItem({ candidate, index, onOpen, styles }) {
@@ -1247,7 +1271,7 @@ function App() {
         const hasPhotos = getPhotoCandidatesFromRecord(record).length > 0;
         if (!hasPhotos) return false;
 
-        const hasMovement = parseQty(record.회송수량) > 0 || parseQty(record.교환수량) > 0;
+        const hasMovement = hasMovementRecord(record);
         if (mode === "movement") return hasMovement;
         return !hasMovement;
       });
@@ -1257,49 +1281,32 @@ function App() {
         return;
       }
 
-      const zip = new JSZip();
-      const usedNames = {};
-      let addedCount = 0;
+      const response = await fetch(SCRIPT_URL, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
+        body: JSON.stringify({
+          action: "downloadPhotoZip",
+          payload: { mode },
+        }),
+      });
 
-      for (const record of targetRecords) {
-        const candidates = getPhotoCandidatesFromRecord(record);
-
-        for (let i = 0; i < candidates.length; i += 1) {
-          const candidate = candidates[i];
-
-          try {
-            const response = await fetch(candidate.downloadUrl || candidate.previewUrl, {
-              mode: "cors",
-            });
-            if (!response.ok) continue;
-
-            const blob = await response.blob();
-            const ext = getFileExtension(candidate.downloadUrl || candidate.previewUrl, blob.type);
-            const baseName = `${sanitizeFileName(record.상품명)}_${i + 1}`;
-            const count = (usedNames[baseName] || 0) + 1;
-            usedNames[baseName] = count;
-            const finalName = `${baseName}${count > 1 ? `_${count}` : ""}.${ext}`;
-
-            zip.file(finalName, blob);
-            addedCount += 1;
-          } catch (_) {
-            // Skip failed downloads and continue creating the zip.
-          }
-        }
+      const result = await response.json();
+      if (!response.ok || result.ok === false) {
+        throw new Error(result.message || "ZIP 다운로드 실패");
       }
 
-      if (!addedCount) {
+      if (!result.zipBase64) {
         setToast("다운로드 가능한 사진이 없습니다");
         return;
       }
 
-      const blob = await zip.generateAsync({ type: "blob" });
+      const blob = base64ToBlob(result.zipBase64, result.mimeType || "application/zip");
       const link = document.createElement("a");
       const href = URL.createObjectURL(blob);
-      const fileName =
-        mode === "movement"
+      const fileName = result.fileName ||
+        (mode === "movement"
           ? `회송_교환_사진_${formatDateForFileName()}.zip`
-          : `사진만있는상품_${formatDateForFileName()}.zip`;
+          : `사진만있는상품_${formatDateForFileName()}.zip`);
 
       link.href = href;
       link.download = fileName;
