@@ -1,8 +1,8 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+﻿import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Papa from "papaparse";
 import { BrowserCodeReader, BrowserMultiFormatReader } from "@zxing/browser";
 
-const SCRIPT_URL = process.env.REACT_APP_GOOGLE_SCRIPT_URL || "https://script.google.com/macros/s/AKfycbw3NOxnqL__-bibyaJiXtH_VUoiKHLAGwqsLz7B9NVGA-cYyqz_odzXqTb87-5PqYU_Jg/exec";
+const SCRIPT_URL = process.env.REACT_APP_GOOGLE_SCRIPT_URL || "https://script.google.com/macros/s/AKfycby4MjJxoty4IKuEZehG1blwFTUnRF7IkYvVig-J9kyYzNkeyOIQNIAgrCf9pSj54RHO/exec";
 
 const normalizeKey = (key) => String(key || "").replace(/\uFEFF/g, "").trim();
 
@@ -189,11 +189,13 @@ function App() {
   const [drafts, setDrafts] = useState({});
   const [bootLoading, setBootLoading] = useState(true);
   const [uploadingCsv, setUploadingCsv] = useState(false);
-  const [savingKey, setSavingKey] = useState("");
   const [deletingRowNumber, setDeletingRowNumber] = useState(null);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [toast, setToast] = useState("");
+  const [pendingMap, setPendingMap] = useState({});
+  const [saving, setSaving] = useState(false);
+  const [itemStatusMap, setItemStatusMap] = useState({});
 
   const [excludedProductCodes, setExcludedProductCodes] = useState(new Set());
   const [excludedPairKeys, setExcludedPairKeys] = useState(new Set());
@@ -217,12 +219,103 @@ function App() {
   const scannerControlsRef = useRef(null);
   const scannerTrackRef = useRef(null);
   const scannerStatusTimerRef = useRef(null);
+  const pendingRef = useRef({});
+  const savingRef = useRef(false);
+  const flushTimerRef = useRef(null);
 
   useEffect(() => {
     if (!toast) return undefined;
     const timer = setTimeout(() => setToast(""), 1800);
     return () => clearTimeout(timer);
   }, [toast]);
+
+  useEffect(() => () => clearFlushTimer(), []);
+
+  const clearFlushTimer = () => {
+    if (flushTimerRef.current) {
+      clearTimeout(flushTimerRef.current);
+      flushTimerRef.current = null;
+    }
+  };
+
+  const makeEntityKey = (jobKey, productCode, partnerName) =>
+    [jobKey || "", productCode || "", partnerName || ""].join("||");
+
+  const makeMovementPendingKey = (movementType, jobKey, productCode, partnerName) =>
+    [
+      "movement",
+      movementType || "",
+      jobKey || "",
+      productCode || "",
+      partnerName || "",
+      new Date().toISOString(),
+      Math.random().toString(36).slice(2, 8),
+    ].join("||");
+
+  const setItemStatuses = (keys, status) => {
+    if (!keys.length) return;
+    setItemStatusMap((prev) => {
+      const next = { ...prev };
+      keys.forEach((key) => {
+        next[key] = status;
+      });
+      return next;
+    });
+  };
+
+  const removePendingKeys = (keys) => {
+    if (!keys.length) return;
+    setPendingMap((prev) => {
+      const next = { ...prev };
+      keys.forEach((key) => {
+        delete next[key];
+      });
+      pendingRef.current = next;
+      return next;
+    });
+  };
+
+  const upsertPendingEntries = (entries) => {
+    if (!entries.length) return;
+    setPendingMap((prev) => {
+      const next = { ...prev };
+      entries.forEach((entry) => {
+        const prevEntry = next[entry.key] || {};
+        const merged = {
+          ...prevEntry,
+          ...entry,
+        };
+
+        if (entry.type === "inspection") {
+          merged.회송수량 = prevEntry.회송수량 || 0;
+          merged.교환수량 = prevEntry.교환수량 || 0;
+          merged.센터명 = prevEntry.센터명 || merged.센터명 || "";
+          merged.비고 = prevEntry.비고 || merged.비고 || "";
+          merged.photoFile = prevEntry.photoFile || merged.photoFile || null;
+        }
+
+        if (entry.type === "return" || entry.type === "exchange") {
+          merged.검품수량 = prevEntry.검품수량 || merged.검품수량 || 0;
+        }
+
+        next[entry.key] = merged;
+      });
+      pendingRef.current = next;
+      return next;
+    });
+    setItemStatuses(
+      entries.map((entry) => entry.key),
+      "pending"
+    );
+  };
+
+  const getStatusText = (status) => {
+    if (status === "saving") return "저장중";
+    if (status === "saved") return "저장됨";
+    if (status === "failed") return "저장실패";
+    if (status === "pending") return "미전송";
+    return "";
+  };
 
   const stopScanner = () => {
     if (scannerStatusTimerRef.current) {
@@ -270,6 +363,7 @@ function App() {
     }
   };
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const startScanner = useCallback(async () => {
     try {
@@ -598,48 +692,12 @@ function App() {
     }));
   };
 
-  const ensureHistoryRowsLoaded = async () => {
-    if (historyRows.length > 0) return historyRows;
-
-    const response = await fetch(`${SCRIPT_URL}?action=getRecords`);
-    const result = await response.json();
-
-    if (!response.ok || result.ok === false) {
-      throw new Error(result.message || "내역 불러오기 실패");
-    }
-
-    const nextRows = Array.isArray(result.records) ? result.records : [];
-    nextRows.sort((a, b) =>
-      String(b.작성일시 || "").localeCompare(String(a.작성일시 || ""), "ko")
-    );
-    setHistoryRows(nextRows);
-    return nextRows;
-  };
-
-  const saveSingleRecord = async (payload) => {
+  const cancelMovementEventByRow = async (rowNumber) => {
     const response = await fetch(SCRIPT_URL, {
       method: "POST",
       headers: { "Content-Type": "text/plain;charset=utf-8" },
       body: JSON.stringify({
-        action: "saveRecord",
-        payload,
-      }),
-    });
-
-    const result = await response.json();
-    if (!response.ok || result.ok === false) {
-      throw new Error(result.message || "기록 저장 실패");
-    }
-
-    return result.record || null;
-  };
-
-  const deleteSingleRecordByRow = async (rowNumber) => {
-    const response = await fetch(SCRIPT_URL, {
-      method: "POST",
-      headers: { "Content-Type": "text/plain;charset=utf-8" },
-      body: JSON.stringify({
-        action: "deleteRecord",
+        action: "cancelMovementEvent",
         payload: { rowNumber },
       }),
     });
@@ -650,55 +708,135 @@ function App() {
     }
   };
 
+  const flushPending = async () => {
+    const rows = Object.values(pendingRef.current || {});
+    if (!rows.length || savingRef.current) return;
+
+    const targetKeys = rows.map((row) => row.key);
+
+    clearFlushTimer();
+    savingRef.current = true;
+    setSaving(true);
+    setItemStatuses(targetKeys, "saving");
+
+    try {
+      const requestRows = [];
+
+      for (const row of rows) {
+        const { key, photoFile, ...rest } = row;
+        let photoPayload = null;
+
+        if (photoFile) {
+          photoPayload = await fileToBase64(photoFile);
+        }
+
+        requestRows.push({
+          ...rest,
+          사진: photoPayload,
+        });
+      }
+
+      const response = await fetch(SCRIPT_URL, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
+        body: JSON.stringify({
+          action: "saveBatch",
+          rows: requestRows,
+        }),
+      });
+
+      const result = await response.json();
+      if (!response.ok || result.ok === false) {
+        throw new Error(result.message || "배치 저장 실패");
+      }
+
+      removePendingKeys(targetKeys);
+      setItemStatuses(targetKeys, "saved");
+
+      if (Array.isArray(result.records)) {
+        const nextRows = [...result.records].sort((a, b) =>
+          String(b.작성일시 || "").localeCompare(String(a.작성일시 || ""), "ko")
+        );
+        setHistoryRows(nextRows);
+      }
+
+      setToast("저장 완료");
+    } catch (err) {
+      setItemStatuses(targetKeys, "failed");
+      setError(err.message || "배치 저장 실패");
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
+    }
+  };
+
+  const flushPendingNow = () => {
+    clearFlushTimer();
+    flushPending();
+  };
+
+  useEffect(() => {
+    pendingRef.current = pendingMap;
+  }, [pendingMap]);
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!Object.keys(pendingMap).length) {
+      clearFlushTimer();
+      return undefined;
+    }
+
+    if (saving) {
+      return undefined;
+    }
+
+    if (Object.keys(pendingMap).length >= 5) {
+      flushPending();
+      return undefined;
+    }
+
+    clearFlushTimer();
+    flushTimerRef.current = setTimeout(() => {
+      flushPending();
+    }, 2000);
+
+    return () => clearFlushTimer();
+  }, [pendingMap, saving]);
+
   const saveInspectionQtySimple = async (product) => {
     const draftKey = `inspection||${product.productCode}`;
     const qty = parseQty(drafts[draftKey]?.inspectionQty);
+    const entityKey = makeEntityKey(currentJob?.job_key, product.productCode, product.partner);
 
     if (qty <= 0) {
       setError("검품수량을 입력해줘.");
       return;
     }
 
-    try {
-      setSavingKey(draftKey);
-      setError("");
-      setMessage("");
-
-      const response = await fetch(SCRIPT_URL, {
-        method: "POST",
-        headers: { "Content-Type": "text/plain;charset=utf-8" },
-        body: JSON.stringify({
-          action: "saveInspectionQty",
-          payload: {
-            작성일시: new Date().toISOString(),
-            작업기준일또는CSV식별값: currentJob?.job_key || "",
-            상품명: product.productName,
-            상품코드: product.productCode,
-            협력사명: product.partner,
-            발주수량: product.totalQty || 0,
-            검품수량: qty,
-            전체발주수량: product.totalQty || 0,
-          },
-        }),
-      });
-
-      const result = await response.json();
-      if (!response.ok || result.ok === false) {
-        throw new Error(result.message || "검품수량 저장 실패");
-      }
-
-      setDrafts((prev) => ({
-        ...prev,
-        [draftKey]: {
-          inspectionQty: "",
-        },
-      }));
-      setToast("저장 완료");
-    } catch (err) {
-      setError(err.message || "검품수량 저장 실패");
-    } finally {
-      setSavingKey("");
-    }
+    setError("");
+    setMessage("");
+    upsertPendingEntries([
+      {
+        key: entityKey,
+        type: "inspection",
+        작업기준일또는CSV식별값: currentJob?.job_key || "",
+        작성일시: new Date().toISOString(),
+        상품코드: product.productCode,
+        상품명: product.productName,
+        협력사명: product.partner,
+        전체발주수량: product.totalQty || 0,
+        발주수량: product.totalQty || 0,
+        검품수량: qty,
+        회송수량: pendingMap[entityKey]?.회송수량 || 0,
+        교환수량: pendingMap[entityKey]?.교환수량 || 0,
+        센터명: pendingMap[entityKey]?.센터명 || "",
+        비고: pendingMap[entityKey]?.비고 || "",
+        행사여부: product.eventInfo?.행사여부 || "",
+        행사명: product.eventInfo?.행사명 || "",
+        photoFile: pendingMap[entityKey]?.photoFile || null,
+      },
+    ]);
+    flushPendingNow();
   };
 
   const saveReturnExchange = async (product, centerName) => {
@@ -725,128 +863,71 @@ function App() {
       return;
     }
 
-    try {
-      setSavingKey(draftKey);
-      setError("");
-      setMessage("");
+    setError("");
+    setMessage("");
 
-      const photoPayload = await fileToBase64(photoFile);
-      const loadedHistory = await ensureHistoryRowsLoaded();
-      const partnerName = product.partner;
+    const movementEntries = [];
 
-      const tasks = [];
-
-      if (returnQty > 0) {
-        const match = loadedHistory.find((row) => {
-          return (
-            getRecordType(row) === "회송" &&
-            normalizeProductCode(row.상품코드) === product.productCode &&
-            String(row.상품명 || "") === product.productName &&
-            String(row.센터명 || "") === centerName &&
-            String(row.협력사명 || "") === partnerName
-          );
-        });
-
-        let nextQty = returnQty;
-        if (match) {
-          nextQty += parseQty(match.회송수량);
-          await deleteSingleRecordByRow(Number(match.__rowNumber));
-        }
-
-        tasks.push({
-          작성일시: new Date().toISOString(),
-          작업기준일또는CSV식별값: currentJob.job_key,
-          상품명: product.productName,
-          상품코드: product.productCode,
-          센터명: centerName,
-          협력사명: partnerName,
-          발주수량: centerInfo.totalQty || 0,
-          행사여부: product.eventInfo?.행사여부 || "",
-          행사명: product.eventInfo?.행사명 || "",
-          처리유형: "회송",
-          회송수량: nextQty,
-          교환수량: 0,
-          비고: memo,
-          사진: photoPayload,
-          전체발주수량: product.totalQty || 0,
-        });
-      }
-
-      if (exchangeQty > 0) {
-        const match = loadedHistory.find((row) => {
-          return (
-            getRecordType(row) === "교환" &&
-            normalizeProductCode(row.상품코드) === product.productCode &&
-            String(row.상품명 || "") === product.productName &&
-            String(row.센터명 || "") === "" &&
-            String(row.협력사명 || "") === partnerName
-          );
-        });
-
-        let nextQty = exchangeQty;
-        if (match) {
-          nextQty += parseQty(match.교환수량);
-          await deleteSingleRecordByRow(Number(match.__rowNumber));
-        }
-
-        tasks.push({
-          작성일시: new Date().toISOString(),
-          작업기준일또는CSV식별값: currentJob.job_key,
-          상품명: product.productName,
-          상품코드: product.productCode,
-          센터명: "",
-          협력사명: partnerName,
-          발주수량: product.totalQty || 0,
-          행사여부: product.eventInfo?.행사여부 || "",
-          행사명: product.eventInfo?.행사명 || "",
-          처리유형: "교환",
-          회송수량: 0,
-          교환수량: nextQty,
-          비고: memo,
-          사진: photoPayload,
-          전체발주수량: product.totalQty || 0,
-        });
-      }
-
-      const savedRecords = [];
-      for (const payload of tasks) {
-        const saved = await saveSingleRecord(payload);
-        if (saved) savedRecords.push(saved);
-      }
-
-      if (savedRecords.length > 0) {
-        const reloaded = await (async () => {
-          const response = await fetch(`${SCRIPT_URL}?action=getRecords`);
-          const result = await response.json();
-          if (!response.ok || result.ok === false) {
-            throw new Error(result.message || "내역 불러오기 실패");
-          }
-          return Array.isArray(result.records) ? result.records : [];
-        })();
-
-        reloaded.sort((a, b) =>
-          String(b.작성일시 || "").localeCompare(String(a.작성일시 || ""), "ko")
-        );
-        setHistoryRows(reloaded);
-      }
-
-      setDrafts((prev) => ({
-        ...prev,
-        [draftKey]: {
-          returnQty: "",
-          exchangeQty: "",
-          memo: "",
-          photoFile: null,
-          photoName: "",
-        },
-      }));
-
-      setToast("저장 완료");
-    } catch (err) {
-      setError(err.message || "기록 저장 실패");
-    } finally {
-      setSavingKey("");
+    if (returnQty > 0) {
+      movementEntries.push({
+        key: makeMovementPendingKey(
+          "RETURN",
+          currentJob?.job_key,
+          product.productCode,
+          product.partner
+        ),
+        type: "movement",
+        movementType: "RETURN",
+        작업기준일또는CSV식별값: currentJob?.job_key || "",
+        작성일시: new Date().toISOString(),
+        상품명: product.productName,
+        상품코드: product.productCode,
+        센터명: centerName,
+        협력사명: product.partner,
+        발주수량: centerInfo.totalQty || 0,
+        행사여부: product.eventInfo?.행사여부 || "",
+        행사명: product.eventInfo?.행사명 || "",
+        처리유형: "회송",
+        회송수량: returnQty,
+        교환수량: 0,
+        qty: returnQty,
+        비고: memo,
+        photoFile,
+        전체발주수량: product.totalQty || 0,
+      });
     }
+
+    if (exchangeQty > 0) {
+      movementEntries.push({
+        key: makeMovementPendingKey(
+          "EXCHANGE",
+          currentJob?.job_key,
+          product.productCode,
+          product.partner
+        ),
+        type: "movement",
+        movementType: "EXCHANGE",
+        작업기준일또는CSV식별값: currentJob?.job_key || "",
+        작성일시: new Date().toISOString(),
+        상품명: product.productName,
+        상품코드: product.productCode,
+        센터명: "",
+        협력사명: product.partner,
+        발주수량: product.totalQty || 0,
+        행사여부: product.eventInfo?.행사여부 || "",
+        행사명: product.eventInfo?.행사명 || "",
+        처리유형: "교환",
+        회송수량: 0,
+        교환수량: exchangeQty,
+        qty: exchangeQty,
+        비고: memo,
+        photoFile,
+        전체발주수량: product.totalQty || 0,
+      });
+    }
+
+    upsertPendingEntries(movementEntries);
+    flushPendingNow();
   };
 
   const deleteHistoryRecord = async (record) => {
@@ -861,7 +942,7 @@ function App() {
 
     try {
       setDeletingRowNumber(rowNumber);
-      await deleteSingleRecordByRow(rowNumber);
+      await cancelMovementEventByRow(rowNumber);
       setHistoryRows((prev) => prev.filter((item) => Number(item.__rowNumber) !== rowNumber));
       setToast("삭제 완료");
     } catch (err) {
@@ -997,6 +1078,13 @@ function App() {
                         ? `inspection||${product.productCode}`
                         : `return||${product.productCode}||${selectedCenter}`;
                     const draft = drafts[draftKey] || {};
+                    const entityKey = makeEntityKey(currentJob?.job_key, product.productCode, product.partner);
+                    const inspectionStatus = itemStatusMap[entityKey];
+                    const returnStatus = itemStatusMap[entityKey];
+                    const exchangeStatus = itemStatusMap[entityKey];
+                    const actionStatus = mode === "inspection"
+                      ? inspectionStatus
+                      : returnStatus || exchangeStatus;
 
                     return (
                       <div key={`${partnerGroup.partner}-${product.productCode}`} style={styles.card}>
@@ -1023,21 +1111,46 @@ function App() {
                                 type="number"
                                 min="0"
                                 value={draft.inspectionQty || ""}
-                                onChange={(e) =>
-                                  updateDraft(draftKey, "inspectionQty", e.target.value)
-                                }
+                                onChange={(e) => {
+                                  const nextValue = e.target.value;
+                                  updateDraft(draftKey, "inspectionQty", nextValue);
+
+                                  const qty = parseQty(nextValue);
+                                  if (qty > 0) {
+                                    upsertPendingEntries([
+                                      {
+                                        key: entityKey,
+                                        type: "inspection",
+                                        작업기준일또는CSV식별값: currentJob?.job_key || "",
+                                        작성일시: new Date().toISOString(),
+                                        상품코드: product.productCode,
+                                        상품명: product.productName,
+                                        협력사명: product.partner,
+                                        전체발주수량: product.totalQty || 0,
+                                        발주수량: product.totalQty || 0,
+                                        검품수량: qty,
+                                        회송수량: 0,
+                                        교환수량: 0,
+                                      },
+                                    ]);
+                                  } else {
+                                    removePendingKeys([entityKey]);
+                                  }
+                                }}
                                 style={styles.inlineQtyInput}
                                 placeholder="검품수량"
                               />
                               <button
                                 type="button"
                                 onClick={() => saveInspectionQtySimple(product)}
-                                disabled={savingKey === draftKey}
                                 style={styles.inlineSaveButton}
                               >
-                                {savingKey === draftKey ? "..." : "저장"}
+                                {inspectionStatus === "saving" ? "..." : "저장"}
                               </button>
                             </div>
+                            {inspectionStatus ? (
+                              <div style={styles.itemStatusText}>{getStatusText(inspectionStatus)}</div>
+                            ) : null}
                           </div>
                         ) : (
                           <>
@@ -1160,11 +1273,13 @@ function App() {
                                 <button
                                   type="button"
                                   onClick={() => saveReturnExchange(product, selectedCenter)}
-                                  disabled={savingKey === draftKey}
                                   style={styles.saveButton}
                                 >
-                                  {savingKey === draftKey ? "저장 중..." : "저장"}
+                                  {actionStatus === "saving" ? "저장 중..." : "저장"}
                                 </button>
+                                {actionStatus ? (
+                                  <div style={styles.itemStatusText}>{getStatusText(actionStatus)}</div>
+                                ) : null}
                               </>
                           </div>
                             )}
@@ -1456,6 +1571,12 @@ const styles = {
     color: "#6b7280",
     wordBreak: "break-all",
     lineHeight: 1.5,
+  },
+  itemStatusText: {
+    marginTop: 8,
+    fontSize: 12,
+    color: "#2563eb",
+    fontWeight: 700,
   },
   infoBox: {
     padding: 12,
