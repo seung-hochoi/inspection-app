@@ -243,7 +243,6 @@ function cacheCsvJob_(payload) {
   const existingJob = findJobByKey_(jobsSheet, jobKey);
   if (existingJob) {
     var existingLoadedJob = loadJobRowsByKey_(ss, jobKey);
-    syncInspectionRowsFromJob_(ss, existingLoadedJob);
     updateInspectionDashboard_(ss);
     return existingLoadedJob;
   }
@@ -263,7 +262,6 @@ function cacheCsvJob_(payload) {
   pruneJobCacheRows_(cacheSheet, JOB_CACHE_MAX_ROWS);
 
   var job = loadJobRowsByKey_(ss, jobKey);
-  syncInspectionRowsFromJob_(ss, job);
   updateInspectionDashboard_(ss);
   return job;
 }
