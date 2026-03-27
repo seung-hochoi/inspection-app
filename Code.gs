@@ -9,7 +9,6 @@
   summary: "inspection_summary",
 };
 const ADMIN_RESET_PASSWORD = "0000";
-const JOB_CACHE_MAX_ROWS = 30000;
 
 function doGet(e) {
   try {
@@ -258,8 +257,6 @@ function cacheCsvJob_(payload) {
 
     cacheSheet.getRange(cacheSheet.getLastRow() + 1, 1, values.length, 4).setValues(values);
   }
-
-  pruneJobCacheRows_(cacheSheet, JOB_CACHE_MAX_ROWS);
 
   var job = loadJobRowsByKey_(ss, jobKey);
   updateInspectionDashboard_(ss);
@@ -1029,20 +1026,6 @@ function ensureHeaderRow_(sheet, headers) {
   if (sheet.getLastRow() === 0 || changed) {
     sheet.getRange(1, 1, 1, width).setValues([headers]);
   }
-}
-
-function pruneJobCacheRows_(cacheSheet, maxDataRows) {
-  if (!cacheSheet || cacheSheet.getLastRow() <= 1) {
-    return;
-  }
-
-  var dataRowCount = cacheSheet.getLastRow() - 1;
-  if (dataRowCount <= maxDataRows) {
-    return;
-  }
-
-  var deleteCount = dataRowCount - maxDataRows;
-  cacheSheet.deleteRows(2, deleteCount);
 }
 
 function createPhotoZip_(payload) {
