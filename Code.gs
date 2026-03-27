@@ -6,6 +6,7 @@
   records: "return_exchange_records",
   inspection: "inspection_data",
 };
+const ADMIN_RESET_PASSWORD = "0000";
 
 function doGet(e) {
   try {
@@ -116,6 +117,10 @@ function doPost(e) {
 
     if (action === "downloadPhotoZip") {
       return jsonOutput_(Object.assign({ ok: true }, createPhotoZip_(body.payload || {})));
+    }
+
+    if (action === "resetCurrentJobInputData") {
+      return jsonOutput_(resetCurrentJobInputData_(body.payload || {}));
     }
 
     return jsonOutput_({
@@ -1180,6 +1185,121 @@ function isMovementRecord_(record) {
   var type = String(getRecordType_(record) || "").trim().toUpperCase();
   if (["회송", "교환", "RETURN", "EXCHANGE"].indexOf(type) >= 0) return true;
   return parseNumber_(record["회송수량"]) > 0 || parseNumber_(record["교환수량"]) > 0;
+}
+
+function resetCurrentJobInputData_(payload) {
+  var jobKey = String(payload.jobKey || "").trim();
+  var password = String(payload.password || "").trim();
+
+  if (!jobKey) {
+    throw new Error("초기화할 작업키가 없습니다.");
+  }
+
+  if (password !== ADMIN_RESET_PASSWORD) {
+    throw new Error("관리자 비밀번호가 올바르지 않습니다.");
+  }
+
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var recordsSheet = getRecordSheet_(ss);
+  var inspectionSheet = getInspectionSheet_(ss);
+  var deletedPhotos = trashPhotosForJob_(recordsSheet, jobKey);
+  var deletedRecords = deleteRecordRowsByJobKey_(recordsSheet, jobKey);
+  var resetInspectionCount = resetInspectionRowsByJobKey_(inspectionSheet, jobKey);
+
+  return {
+    ok: true,
+    jobKey: jobKey,
+    deletedRecords: deletedRecords,
+    deletedPhotos: deletedPhotos,
+    resetInspectionRows: resetInspectionCount,
+    records: loadRecords_(),
+    inspectionRows: loadInspectionRows_(),
+  };
+}
+
+function trashPhotosForJob_(recordsSheet, jobKey) {
+  if (!recordsSheet || recordsSheet.getLastRow() < 2) return 0;
+
+  var values = recordsSheet.getDataRange().getValues();
+  var headers = values[0].map(function (header) {
+    return String(header || "").trim();
+  });
+  var seenIds = {};
+  var deletedCount = 0;
+
+  for (var r = 1; r < values.length; r += 1) {
+    var row = {};
+    for (var c = 0; c < headers.length; c += 1) {
+      if (!headers[c]) continue;
+      row[headers[c]] = values[r][c];
+    }
+
+    if (String(row["작업기준일또는CSV식별값"] || "").trim() !== jobKey) continue;
+
+    getPhotoSourcesFromRecord_(row).forEach(function (source) {
+      var driveId = extractGoogleDriveId_(source);
+      if (!driveId || seenIds[driveId]) return;
+      seenIds[driveId] = true;
+
+      try {
+        DriveApp.getFileById(driveId).setTrashed(true);
+        deletedCount += 1;
+      } catch (_) {
+        // Ignore photo deletion failures and continue.
+      }
+    });
+  }
+
+  return deletedCount;
+}
+
+function deleteRecordRowsByJobKey_(recordsSheet, jobKey) {
+  if (!recordsSheet || recordsSheet.getLastRow() < 2) return 0;
+
+  var rowNumbers = [];
+  var values = recordsSheet
+    .getRange(2, 1, recordsSheet.getLastRow() - 1, recordsSheet.getLastColumn())
+    .getValues();
+
+  for (var i = 0; i < values.length; i += 1) {
+    if (String(values[i][1] || "").trim() === jobKey) {
+      rowNumbers.push(i + 2);
+    }
+  }
+
+  rowNumbers.sort(function (a, b) {
+    return b - a;
+  });
+
+  rowNumbers.forEach(function (rowNumber) {
+    recordsSheet.deleteRow(rowNumber);
+  });
+
+  return rowNumbers.length;
+}
+
+function resetInspectionRowsByJobKey_(inspectionSheet, jobKey) {
+  if (!inspectionSheet || inspectionSheet.getLastRow() < 2) return 0;
+
+  var range = inspectionSheet.getRange(
+    2,
+    1,
+    inspectionSheet.getLastRow() - 1,
+    inspectionSheet.getLastColumn()
+  );
+  var values = range.getValues();
+  var resetCount = 0;
+
+  for (var i = 0; i < values.length; i += 1) {
+    if (String(values[i][1] || "").trim() !== jobKey) continue;
+    values[i][7] = 0;
+    values[i][8] = 0;
+    values[i][9] = 0;
+    resetCount += 1;
+  }
+
+  range.setValues(values);
+  return resetCount;
 }
 
 function jsonOutput_(obj) {

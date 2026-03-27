@@ -2,7 +2,7 @@
 import Papa from "papaparse";
 import { BrowserCodeReader, BrowserMultiFormatReader } from "@zxing/browser";
 
-const SCRIPT_URL = process.env.REACT_APP_GOOGLE_SCRIPT_URL || "https://script.google.com/macros/s/AKfycbyP6zVi9Do0zt9Hj6ByOG79aAXXRJ9n5ze-KIzXfSnuPk6ZkuTEcF3BOhekAqcmuOwUtQ/exec";
+const SCRIPT_URL = process.env.REACT_APP_GOOGLE_SCRIPT_URL || "https://script.google.com/macros/s/AKfycbwbblAEzvaKxrkqP_3H1AKlDlvpejFwNsQkIe3y2zuVTtNg9pWXk5hB4zQ6_QUIzB75Fg/exec";
 
 const normalizeKey = (key) => String(key || "").replace(/\uFEFF/g, "").trim();
 
@@ -457,6 +457,9 @@ function App() {
   const [historyRows, setHistoryRows] = useState([]);
   const [zoomPhotoUrl, setZoomPhotoUrl] = useState("");
   const [zipDownloading, setZipDownloading] = useState("");
+  const [showAdminReset, setShowAdminReset] = useState(false);
+  const [adminPassword, setAdminPassword] = useState("");
+  const [adminResetting, setAdminResetting] = useState(false);
 
   const [isScannerOpen, setIsScannerOpen] = useState(false);
   const [scannerError, setScannerError] = useState("");
@@ -1322,6 +1325,58 @@ function App() {
     }
   };
 
+  const resetCurrentJobInputs = async () => {
+    if (!currentJob?.job_key) {
+      setError("초기화할 현재 작업이 없습니다.");
+      return;
+    }
+
+    if (!adminPassword.trim()) {
+      setError("관리자 비밀번호를 입력해줘.");
+      return;
+    }
+
+    try {
+      setAdminResetting(true);
+      setError("");
+      setMessage("");
+
+      const response = await fetch(SCRIPT_URL, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
+        body: JSON.stringify({
+          action: "resetCurrentJobInputData",
+          payload: {
+            jobKey: currentJob.job_key,
+            password: adminPassword.trim(),
+          },
+        }),
+      });
+
+      const result = await response.json();
+      if (!response.ok || result.ok === false) {
+        throw new Error(result.message || "초기화 실패");
+      }
+
+      clearFlushTimer();
+      savingRef.current = false;
+      pendingRef.current = {};
+      setSaving(false);
+      setPendingMap({});
+      setItemStatusMap({});
+      setDrafts({});
+      setHistoryRows(Array.isArray(result.records) ? result.records : []);
+      setShowAdminReset(false);
+      setAdminPassword("");
+      await loadBootstrap();
+      setToast("현재 작업 입력 데이터 초기화 완료");
+    } catch (err) {
+      setError(err.message || "초기화 실패");
+    } finally {
+      setAdminResetting(false);
+    }
+  };
+
   return (
     <div style={styles.app}>
       <input
@@ -1403,6 +1458,17 @@ function App() {
       <div style={styles.countRow}>
         <div style={styles.countText}>총 {groupedPartners.reduce((sum, item) => sum + item.products.length, 0)}건</div>
         <div style={styles.countActions}>
+          <button
+            type="button"
+            onClick={() => {
+              setError("");
+              setAdminPassword("");
+              setShowAdminReset(true);
+            }}
+            style={styles.historyButton}
+          >
+            관리자 초기화
+          </button>
           <button
             type="button"
             onClick={() => downloadPhotoZip("movement")}
@@ -1752,6 +1818,53 @@ function App() {
       {zoomPhotoUrl && (
         <div style={styles.photoOverlay} onClick={() => setZoomPhotoUrl("")}>
           <img src={zoomPhotoUrl} alt="확대사진" style={styles.photoZoom} />
+        </div>
+      )}
+
+      {showAdminReset && (
+        <div style={styles.sheetOverlay} onClick={() => !adminResetting && setShowAdminReset(false)}>
+          <div style={styles.bottomSheet} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.sheetHandle} />
+            <div style={styles.sheetHeader}>
+              <h2 style={styles.sheetTitle}>관리자 초기화</h2>
+              <button
+                type="button"
+                onClick={() => !adminResetting && setShowAdminReset(false)}
+                style={styles.sheetClose}
+              >
+                닫기
+              </button>
+            </div>
+
+            <div style={styles.infoBox}>
+              현재 작업의 검품수량, 회송/교환 내역, 연결된 사진과 드라이브 원본까지 삭제됩니다.
+            </div>
+
+            <div style={styles.formGroup}>
+              <label style={styles.label}>관리자 비밀번호</label>
+              <input
+                type="password"
+                value={adminPassword}
+                onChange={(e) => setAdminPassword(e.target.value)}
+                style={styles.input}
+                placeholder="비밀번호 입력"
+                disabled={adminResetting}
+              />
+            </div>
+
+            <button
+              type="button"
+              onClick={resetCurrentJobInputs}
+              disabled={adminResetting}
+              style={{
+                ...styles.saveButton,
+                background: "#dc2626",
+                marginTop: 4,
+              }}
+            >
+              {adminResetting ? "초기화 중..." : "현재 작업 입력 데이터 초기화"}
+            </button>
+          </div>
         </div>
       )}
 
