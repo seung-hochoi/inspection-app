@@ -1,6 +1,7 @@
 ﻿const SHEET_NAMES = {
   exclude: "제외목록",
   event: "행사표",
+  reservation: "사전예약",
   jobs: "jobs",
   jobCache: "job_cache",
   records: "return_exchange_records",
@@ -253,7 +254,9 @@ function cacheCsvJob_(payload) {
     cacheSheet.getRange(cacheSheet.getLastRow() + 1, 1, values.length, 4).setValues(values);
   }
 
-  return loadJobRowsByKey_(ss, jobKey);
+  var job = loadJobRowsByKey_(ss, jobKey);
+  updateInspectionDashboard_(ss);
+  return job;
 }
 
 function loadLatestJob_() {
@@ -449,6 +452,7 @@ function appendRecord_(payload) {
   const inspectionSheet = getInspectionSheet_(ss);
   const record = upsertMovementRow_(recordsSheet, payload || {});
   syncInspectionMovementTotals_(inspectionSheet, recordsSheet);
+  updateInspectionDashboard_(ss);
   return record;
 }
 
@@ -467,6 +471,7 @@ function deleteRecord_(payload) {
 
   sheet.deleteRow(rowNumber);
   syncInspectionMovementTotals_(getInspectionSheet_(ss), sheet);
+  updateInspectionDashboard_(ss);
 
   return {
     rowNumber: rowNumber,
@@ -483,6 +488,7 @@ function saveInspectionQty_(payload) {
   const recordsSheet = getRecordSheet_(ss);
   const saved = upsertInspectionRow_(inspectionSheet, payload || {});
   syncInspectionMovementTotals_(inspectionSheet, recordsSheet);
+  updateInspectionDashboard_(ss);
   return saved;
 }
 
@@ -498,6 +504,7 @@ function saveInspectionBatch_(rows) {
   });
 
   syncInspectionMovementTotals_(inspectionSheet, recordsSheet);
+  updateInspectionDashboard_(ss);
 
   return {
     rows: saved,
@@ -527,6 +534,7 @@ function saveBatch_(rows) {
   });
 
   syncInspectionMovementTotals_(inspectionSheet, recordsSheet);
+  updateInspectionDashboard_(ss);
 
   return {
     inspectionRows: inspectionRows,
@@ -1205,6 +1213,7 @@ function resetCurrentJobInputData_(payload) {
   var deletedPhotos = trashPhotosForJob_(recordsSheet, jobKey);
   var deletedRecords = deleteRecordRowsByJobKey_(recordsSheet, jobKey);
   var resetInspectionCount = resetInspectionRowsByJobKey_(inspectionSheet, jobKey);
+  updateInspectionDashboard_(ss);
 
   return {
     ok: true,
@@ -1300,6 +1309,170 @@ function resetInspectionRowsByJobKey_(inspectionSheet, jobKey) {
 
   range.setValues(values);
   return resetCount;
+}
+
+function updateInspectionDashboard_(ss) {
+  var inspectionSheet = getInspectionSheet_(ss);
+  if (!inspectionSheet) return;
+
+  var inspectionRows = loadInspectionRows_();
+  var recordRows = loadRecords_();
+  var excludeRows = readObjectsSheet_(SHEET_NAMES.exclude);
+  var eventRows = readObjectsSheet_(SHEET_NAMES.event);
+  var reservationRows = readObjectsSheet_(SHEET_NAMES.reservation);
+
+  var excludedCodes = {};
+  var excludedPairs = {};
+
+  excludeRows.forEach(function (row) {
+    var code = normalizeCode_(row["상품코드"] || row["상품 코드"] || row["코드"] || row["바코드"]);
+    var partner = String(row["협력사"] || row["협력사명"] || "").trim();
+    if (!code) return;
+    if (partner) {
+      excludedPairs[code + "||" + partner] = true;
+    } else {
+      excludedCodes[code] = true;
+    }
+  });
+
+  var eventCodes = {};
+  eventRows.forEach(function (row) {
+    var code = normalizeCode_(row["상품코드"] || row["상품 코드"] || row["코드"] || row["바코드"]);
+    if (code) {
+      eventCodes[code] = true;
+    }
+  });
+
+  var costMap = {};
+  reservationRows.forEach(function (row) {
+    var code = normalizeCode_(row["상품코드"] || row["상품 코드"] || row["코드"] || row["바코드"]);
+    var partner = String(row["협력사명"] || row["협력사"] || "").trim();
+    var cost = parseNumber_(row["입고원가"] || row["원가"] || 0);
+    if (!code || cost <= 0) return;
+    costMap[code + "||" + partner] = cost;
+    if (!costMap[code]) {
+      costMap[code] = cost;
+    }
+  });
+
+  var totalInboundAmount = 0;
+  var totalInboundQty = 0;
+  var targetInboundAmount = 0;
+  var targetInboundQty = 0;
+  var totalSkuMap = {};
+  var targetSkuMap = {};
+  var inspectedSkuMap = {};
+  var realInspectedSkuMap = {};
+  var eventSkuMap = {};
+  var returnQtyTotal = 0;
+  var exchangeQtyTotal = 0;
+
+  inspectionRows.forEach(function (row) {
+    var code = normalizeCode_(row["상품코드"]);
+    var partner = String(row["협력사명"] || "").trim();
+    var qty = parseNumber_(row["발주수량"] || 0);
+    var inspectionQty = parseNumber_(row["검품수량"] || 0);
+    var returnQty = parseNumber_(row["회송수량"] || 0);
+    var exchangeQty = parseNumber_(row["교환수량"] || 0);
+    var pairKey = code + "||" + partner;
+    var cost = parseNumber_(costMap[pairKey] || costMap[code] || 0);
+    var excluded = !!excludedCodes[code] || !!excludedPairs[pairKey];
+
+    if (code) {
+      totalSkuMap[code] = true;
+      if (eventCodes[code]) {
+        eventSkuMap[code] = true;
+      }
+    }
+
+    totalInboundQty += qty;
+    totalInboundAmount += qty * cost;
+
+    if (excluded) return;
+
+    targetInboundQty += qty;
+    targetInboundAmount += qty * cost;
+    returnQtyTotal += returnQty;
+    exchangeQtyTotal += exchangeQty;
+
+    if (code) {
+      targetSkuMap[code] = true;
+      if (inspectionQty > 0) {
+        inspectedSkuMap[code] = true;
+      }
+      if (Math.max(inspectionQty - returnQty - exchangeQty, 0) > 0) {
+        realInspectedSkuMap[code] = true;
+      }
+    }
+  });
+
+  var inspectionQtyTotal = 0;
+  var realInspectionQtyTotal = 0;
+  inspectionRows.forEach(function (row) {
+    var code = normalizeCode_(row["상품코드"]);
+    var partner = String(row["협력사명"] || "").trim();
+    var pairKey = code + "||" + partner;
+    var excluded = !!excludedCodes[code] || !!excludedPairs[pairKey];
+    if (excluded) return;
+
+    var inspectionQty = parseNumber_(row["검품수량"] || 0);
+    var returnQty = parseNumber_(row["회송수량"] || 0);
+    var exchangeQty = parseNumber_(row["교환수량"] || 0);
+    inspectionQtyTotal += inspectionQty;
+    realInspectionQtyTotal += Math.max(inspectionQty - returnQty - exchangeQty, 0);
+  });
+
+  var photoRecordCount = 0;
+  recordRows.forEach(function (row) {
+    if (getPhotoSourcesFromRecord_(row).length > 0) {
+      photoRecordCount += 1;
+    }
+  });
+
+  var targetSkuCount = Object.keys(targetSkuMap).length;
+  var totalSkuCount = Object.keys(totalSkuMap).length;
+  var inspectedSkuCount = Object.keys(inspectedSkuMap).length;
+  var realInspectedSkuCount = Object.keys(realInspectedSkuMap).length;
+  var eventSkuCount = Object.keys(eventSkuMap).length;
+
+  var values = [
+    ["총 입고금액", "총 입고수량", "검품 수량", "검품율", "실 검품율", "최근 갱신"],
+    [
+      totalInboundAmount,
+      totalInboundQty,
+      inspectionQtyTotal,
+      targetInboundQty > 0 ? inspectionQtyTotal / targetInboundQty : 0,
+      targetInboundQty > 0 ? realInspectionQtyTotal / targetInboundQty : 0,
+      Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm"),
+    ],
+    ["검품 입고금액", "입고 SKU", "검품 SKU", "SKU 커버리지", "검품 입고 SKU", "실제 SKU 커버리지"],
+    [
+      targetInboundAmount,
+      totalSkuCount,
+      inspectedSkuCount,
+      targetSkuCount > 0 ? inspectedSkuCount / targetSkuCount : 0,
+      targetSkuCount,
+      targetSkuCount > 0 ? realInspectedSkuCount / targetSkuCount : 0,
+    ],
+    ["행사 SKU", "검품 대상 SKU", "검품 입고수량", "회송 수량", "교환 수량", "사진 기록 건수"],
+    [
+      eventSkuCount,
+      targetSkuCount,
+      targetInboundQty,
+      returnQtyTotal,
+      exchangeQtyTotal,
+      photoRecordCount,
+    ],
+  ];
+
+  inspectionSheet.getRange("L2:Q7").setValues(values);
+  inspectionSheet.getRange("L2:Q2").setBackground("#c6efce").setFontWeight("bold");
+  inspectionSheet.getRange("L4:Q4").setBackground("#fff2cc").setFontWeight("bold");
+  inspectionSheet.getRange("L6:Q6").setBackground("#d9ead3").setFontWeight("bold");
+  inspectionSheet.getRange("L3:Q3").setNumberFormats([["#,##0", "#,##0", "#,##0", "0.0%", "0.0%", "@"]]);
+  inspectionSheet.getRange("L5:Q5").setNumberFormats([["#,##0", "#,##0", "#,##0", "0.0%", "#,##0", "0.0%"]]);
+  inspectionSheet.getRange("L7:Q7").setNumberFormats([["#,##0", "#,##0", "#,##0", "#,##0", "#,##0", "#,##0"]]);
+  inspectionSheet.autoResizeColumns(12, 6);
 }
 
 function jsonOutput_(obj) {
