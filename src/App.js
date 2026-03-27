@@ -2,7 +2,7 @@
 import Papa from "papaparse";
 import { BrowserCodeReader, BrowserMultiFormatReader } from "@zxing/browser";
 
-const SCRIPT_URL = process.env.REACT_APP_GOOGLE_SCRIPT_URL || "https://script.google.com/macros/s/AKfycbzgOAKnoLEzRxLYCQytk69PweErym9OjYayqmjtK6qABUdLVCw5WgUAosMd9_1z1QL5Xw/exec";
+const SCRIPT_URL = process.env.REACT_APP_GOOGLE_SCRIPT_URL || "https://script.google.com/macros/s/AKfycbwWL9STfFu_znh6k0IlK0nUJv667JyJv6s3_KFtreNJMjov41lijnbr-KTc11cqrtFBZA/exec";
 
 const normalizeKey = (key) => String(key || "").replace(/\uFEFF/g, "").trim();
 
@@ -148,6 +148,20 @@ const fileToBase64 = (file) =>
     reader.readAsDataURL(file);
   });
 
+const filesToBase64 = async (files) => {
+  const list = Array.isArray(files) ? files : [];
+  const results = [];
+
+  for (const file of list) {
+    const encoded = await fileToBase64(file);
+    if (encoded) {
+      results.push(encoded);
+    }
+  }
+
+  return results;
+};
+
 const formatDateTime = (value) => {
   if (!value) return "-";
   const date = new Date(value);
@@ -165,8 +179,8 @@ const getRecordType = (record) => {
 
 const getRecordQtyText = (record) => {
   const type = getRecordType(record);
-  if (type === "회송") return `${parseQty(record.회송수량)}개`;
-  if (type === "교환") return `${parseQty(record.교환수량)}개`;
+  if (type === "회송" || type === "RETURN") return `${parseQty(record.회송수량)}개`;
+  if (type === "교환" || type === "EXCHANGE") return `${parseQty(record.교환수량)}개`;
 
   const returnQty = parseQty(record.회송수량);
   const exchangeQty = parseQty(record.교환수량);
@@ -241,15 +255,14 @@ function App() {
   const makeEntityKey = (jobKey, productCode, partnerName) =>
     [jobKey || "", productCode || "", partnerName || ""].join("||");
 
-  const makeMovementPendingKey = (movementType, jobKey, productCode, partnerName) =>
+  const makeMovementPendingKey = (movementType, jobKey, productCode, partnerName, centerName) =>
     [
       "movement",
       movementType || "",
       jobKey || "",
       productCode || "",
       partnerName || "",
-      new Date().toISOString(),
-      Math.random().toString(36).slice(2, 8),
+      centerName || "",
     ].join("||");
 
   const setItemStatuses = (keys, status) => {
@@ -291,11 +304,22 @@ function App() {
           merged.교환수량 = prevEntry.교환수량 || 0;
           merged.센터명 = prevEntry.센터명 || merged.센터명 || "";
           merged.비고 = prevEntry.비고 || merged.비고 || "";
-          merged.photoFile = prevEntry.photoFile || merged.photoFile || null;
+          merged.photoFiles = prevEntry.photoFiles || merged.photoFiles || [];
         }
 
         if (entry.type === "return" || entry.type === "exchange") {
           merged.검품수량 = prevEntry.검품수량 || merged.검품수량 || 0;
+        }
+
+        if (entry.type === "movement") {
+          merged.qty = parseQty(prevEntry.qty) + parseQty(entry.qty);
+          merged.회송수량 = parseQty(prevEntry.회송수량) + parseQty(entry.회송수량);
+          merged.교환수량 = parseQty(prevEntry.교환수량) + parseQty(entry.교환수량);
+          merged.비고 = entry.비고 || prevEntry.비고 || "";
+          merged.photoFiles = [
+            ...(Array.isArray(prevEntry.photoFiles) ? prevEntry.photoFiles : []),
+            ...(Array.isArray(entry.photoFiles) ? entry.photoFiles : []),
+          ];
         }
 
         next[entry.key] = merged;
@@ -723,16 +747,19 @@ function App() {
       const requestRows = [];
 
       for (const row of rows) {
-        const { key, photoFile, ...rest } = row;
-        let photoPayload = null;
+        const { key, photoFile, photoFiles, ...rest } = row;
+        let photosPayload = [];
 
-        if (photoFile) {
-          photoPayload = await fileToBase64(photoFile);
+        if (Array.isArray(photoFiles) && photoFiles.length) {
+          photosPayload = await filesToBase64(photoFiles);
+        } else if (photoFile) {
+          const singlePhoto = await fileToBase64(photoFile);
+          photosPayload = singlePhoto ? [singlePhoto] : [];
         }
 
         requestRows.push({
           ...rest,
-          사진: photoPayload,
+          사진들: photosPayload,
         });
       }
 
@@ -833,7 +860,7 @@ function App() {
         비고: pendingMap[entityKey]?.비고 || "",
         행사여부: product.eventInfo?.행사여부 || "",
         행사명: product.eventInfo?.행사명 || "",
-        photoFile: pendingMap[entityKey]?.photoFile || null,
+        photoFiles: pendingMap[entityKey]?.photoFiles || [],
       },
     ]);
     flushPendingNow();
@@ -851,14 +878,14 @@ function App() {
     const returnQty = parseQty(draft.returnQty);
     const exchangeQty = parseQty(draft.exchangeQty);
     const memo = String(draft.memo || "").trim();
-    const photoFile = draft.photoFile || null;
+    const photoFiles = Array.isArray(draft.photoFiles) ? draft.photoFiles : [];
 
     if (!currentJob?.job_key) {
       setError("저장 가능한 작업 기준 CSV가 없습니다.");
       return;
     }
 
-    if (returnQty <= 0 && exchangeQty <= 0 && !memo && !photoFile) {
+    if (returnQty <= 0 && exchangeQty <= 0 && !memo && photoFiles.length === 0) {
       setError("회송수량, 교환수량, 비고, 사진 중 하나 이상 입력해줘.");
       return;
     }
@@ -874,7 +901,8 @@ function App() {
           "RETURN",
           currentJob?.job_key,
           product.productCode,
-          product.partner
+          product.partner,
+          centerName
         ),
         type: "movement",
         movementType: "RETURN",
@@ -892,7 +920,7 @@ function App() {
         교환수량: 0,
         qty: returnQty,
         비고: memo,
-        photoFile,
+        photoFiles,
         전체발주수량: product.totalQty || 0,
       });
     }
@@ -903,7 +931,8 @@ function App() {
           "EXCHANGE",
           currentJob?.job_key,
           product.productCode,
-          product.partner
+          product.partner,
+          ""
         ),
         type: "movement",
         movementType: "EXCHANGE",
@@ -921,7 +950,7 @@ function App() {
         교환수량: exchangeQty,
         qty: exchangeQty,
         비고: memo,
-        photoFile,
+        photoFiles,
         전체발주수량: product.totalQty || 0,
       });
     }
@@ -1260,14 +1289,23 @@ function App() {
                                   <input
                                     type="file"
                                     accept="image/*"
+                                    multiple
                                     onChange={(e) => {
-                                      const file = e.target.files?.[0] || null;
-                                      updateDraft(draftKey, "photoFile", file);
-                                      updateDraft(draftKey, "photoName", file?.name || "");
+                                      const files = Array.from(e.target.files || []);
+                                      updateDraft(draftKey, "photoFiles", files);
+                                      updateDraft(
+                                        draftKey,
+                                        "photoNames",
+                                        files.map((file) => file.name)
+                                      );
                                     }}
                                     style={styles.fileInput}
                                   />
-                                  <div style={styles.metaText}>{draft.photoName || "선택된 사진 없음"}</div>
+                                  <div style={styles.metaText}>
+                                    {Array.isArray(draft.photoNames) && draft.photoNames.length
+                                      ? draft.photoNames.join(", ")
+                                      : "선택된 사진 없음"}
+                                  </div>
                                 </div>
 
                                 <button
@@ -1339,13 +1377,13 @@ function App() {
                     </div>
                     <div style={styles.historyMemo}>{record.비고 || "-"}</div>
 
-                    {record.사진URL ? (
+                    {record.사진URL || record.사진링크 ? (
                       <div style={styles.photoWrap}>
                         <img
-                          src={record.사진URL}
+                          src={record.사진URL || record.사진링크}
                           alt="첨부사진"
                           style={styles.photoPreview}
-                          onClick={() => setZoomPhotoUrl(record.사진URL)}
+                          onClick={() => setZoomPhotoUrl(record.사진URL || record.사진링크)}
                         />
                       </div>
                     ) : null}

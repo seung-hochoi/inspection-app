@@ -1,4 +1,4 @@
-const SHEET_NAMES = {
+﻿const SHEET_NAMES = {
   exclude: "제외목록",
   event: "행사표",
   jobs: "jobs",
@@ -28,6 +28,13 @@ function doGet(e) {
       return jsonOutput_({
         ok: true,
         records: loadRecords_(),
+      });
+    }
+
+    if (action === "getInspectionRows") {
+      return jsonOutput_({
+        ok: true,
+        rows: loadInspectionRows_(),
       });
     }
 
@@ -63,6 +70,7 @@ function doPost(e) {
       return jsonOutput_({
         ok: true,
         record: appendRecord_(body.payload || {}),
+        records: loadRecords_(),
       });
     }
 
@@ -70,13 +78,21 @@ function doPost(e) {
       return jsonOutput_({
         ok: true,
         deleted: deleteRecord_(body.payload || {}),
+        records: loadRecords_(),
       });
     }
 
-    if (action === "cancelMovementEvent") {
+    if (action === "saveInspectionQty") {
       return jsonOutput_({
         ok: true,
-        deleted: cancelMovementEvent_(body.payload || {}),
+        row: saveInspectionQty_(body.payload || {}),
+      });
+    }
+
+    if (action === "saveInspectionBatch") {
+      return jsonOutput_({
+        ok: true,
+        data: saveInspectionBatch_(body.rows || []),
       });
     }
 
@@ -85,6 +101,16 @@ function doPost(e) {
         ok: true,
         data: saveBatch_(body.rows || []),
         records: loadRecords_(),
+        inspectionRows: loadInspectionRows_(),
+      });
+    }
+
+    if (action === "cancelMovementEvent") {
+      return jsonOutput_({
+        ok: true,
+        deleted: cancelMovementEvent_(body.payload || {}),
+        records: loadRecords_(),
+        inspectionRows: loadInspectionRows_(),
       });
     }
 
@@ -120,6 +146,15 @@ function normalizeCode_(value) {
   }
 
   return text;
+}
+
+function parseNumber_(value) {
+  var num = Number(String(value == null ? "" : value).replace(/,/g, "").trim());
+  return Number.isNaN(num) ? 0 : num;
+}
+
+function makeEntityKey_(jobKey, productCode, partnerName) {
+  return [String(jobKey || "").trim(), normalizeCode_(productCode || ""), String(partnerName || "").trim()].join("||");
 }
 
 function readObjectsSheet_(sheetName) {
@@ -166,14 +201,17 @@ function readObjectsSheet_(sheetName) {
 
 function cacheCsvJob_(payload) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const jobsSheet = getOrCreateSheet_(ss, SHEET_NAMES.jobs, [
+  const jobsSheet = getOrCreateSheet_(ss, SHEET_NAMES.jobs);
+  const cacheSheet = getOrCreateSheet_(ss, SHEET_NAMES.jobCache);
+
+  ensureHeaderRow_(jobsSheet, [
     "created_at",
     "job_key",
     "source_file_name",
     "source_file_modified",
     "row_count",
   ]);
-  const cacheSheet = getOrCreateSheet_(ss, SHEET_NAMES.jobCache, [
+  ensureHeaderRow_(cacheSheet, [
     "created_at",
     "job_key",
     "row_index",
@@ -307,8 +345,22 @@ function findJobByKey_(jobsSheet, jobKey) {
   return null;
 }
 
+function getRecordSheet_(ss) {
+  const sheet = getOrCreateSheet_(ss, SHEET_NAMES.records);
+  migrateRecordSheetIfNeeded_(sheet);
+  ensureHeaderRow_(sheet, recordHeaders_());
+  return sheet;
+}
+
+function getInspectionSheet_(ss) {
+  const sheet = getOrCreateSheet_(ss, SHEET_NAMES.inspection);
+  ensureHeaderRow_(sheet, inspectionHeaders_());
+  return sheet;
+}
+
 function loadRecords_() {
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_NAMES.records);
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = getRecordSheet_(ss);
   if (!sheet || sheet.getLastRow() < 2) {
     return [];
   }
@@ -321,9 +373,7 @@ function loadRecords_() {
   const rows = [];
 
   for (var r = 1; r < values.length; r += 1) {
-    const row = {
-      __rowNumber: r + 1,
-    };
+    const row = { __rowNumber: r + 1 };
     var hasValue = false;
 
     for (var c = 0; c < headers.length; c += 1) {
@@ -335,6 +385,9 @@ function loadRecords_() {
     }
 
     if (hasValue) {
+      if (row["사진링크"] && !row["사진URL"]) {
+        row["사진URL"] = row["사진링크"];
+      }
       rows.push(row);
     }
   }
@@ -346,13 +399,47 @@ function loadRecords_() {
   return rows;
 }
 
+function loadInspectionRows_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = getInspectionSheet_(ss);
+  if (!sheet || sheet.getLastRow() < 2) {
+    return [];
+  }
+
+  const values = sheet.getDataRange().getValues();
+  const headers = values[0].map(function (header) {
+    return String(header || "").trim();
+  });
+  const rows = [];
+
+  for (var r = 1; r < values.length; r += 1) {
+    const row = { __rowNumber: r + 1 };
+    var hasValue = false;
+
+    for (var c = 0; c < headers.length; c += 1) {
+      const header = headers[c];
+      if (!header) continue;
+      const value = values[r][c];
+      if (value !== "") hasValue = true;
+      row[header] = value;
+    }
+
+    if (hasValue) rows.push(row);
+  }
+
+  rows.sort(function (a, b) {
+    return String(b["작성일시"] || "").localeCompare(String(a["작성일시"] || ""));
+  });
+
+  return rows;
+}
+
 function appendRecord_(payload) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = getOrCreateSheet_(ss, SHEET_NAMES.records, recordHeaders_());
-  const record = buildRecordPayload_(payload || {});
-
-  writeRecordRow_(sheet, 0, record);
-  record.__rowNumber = sheet.getLastRow();
+  const recordsSheet = getRecordSheet_(ss);
+  const inspectionSheet = getInspectionSheet_(ss);
+  const record = upsertMovementRow_(recordsSheet, payload || {});
+  syncInspectionMovementTotals_(inspectionSheet, recordsSheet);
   return record;
 }
 
@@ -363,17 +450,14 @@ function deleteRecord_(payload) {
   }
 
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = ss.getSheetByName(SHEET_NAMES.records);
-
-  if (!sheet) {
-    throw new Error("기록 시트를 찾을 수 없습니다.");
-  }
+  const sheet = getRecordSheet_(ss);
 
   if (rowNumber > sheet.getLastRow()) {
     throw new Error("이미 삭제되었거나 존재하지 않는 행입니다.");
   }
 
   sheet.deleteRow(rowNumber);
+  syncInspectionMovementTotals_(getInspectionSheet_(ss), sheet);
 
   return {
     rowNumber: rowNumber,
@@ -384,49 +468,179 @@ function cancelMovementEvent_(payload) {
   return deleteRecord_(payload);
 }
 
+function saveInspectionQty_(payload) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const inspectionSheet = getInspectionSheet_(ss);
+  const recordsSheet = getRecordSheet_(ss);
+  const saved = upsertInspectionRow_(inspectionSheet, payload || {});
+  syncInspectionMovementTotals_(inspectionSheet, recordsSheet);
+  return saved;
+}
+
+function saveInspectionBatch_(rows) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const inspectionSheet = getInspectionSheet_(ss);
+  const recordsSheet = getRecordSheet_(ss);
+  const list = Array.isArray(rows) ? rows : [];
+  const saved = [];
+
+  list.forEach(function (row) {
+    saved.push(upsertInspectionRow_(inspectionSheet, row || {}));
+  });
+
+  syncInspectionMovementTotals_(inspectionSheet, recordsSheet);
+
+  return {
+    rows: saved,
+  };
+}
+
 function saveBatch_(rows) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const inspectionSheet = getOrCreateSheet_(ss, SHEET_NAMES.inspection, inspectionHeaders_());
-  const recordsSheet = getOrCreateSheet_(ss, SHEET_NAMES.records, recordHeaders_());
+  const inspectionSheet = getInspectionSheet_(ss);
+  const recordsSheet = getRecordSheet_(ss);
   const list = Array.isArray(rows) ? rows : [];
+  const inspectionRows = [];
+  const movementRows = [];
 
   list.forEach(function (rawRow) {
     const row = rawRow || {};
     const type = String(row.type || "").trim();
 
     if (type === "inspection") {
-      upsertInspectionRow_(inspectionSheet, row);
+      inspectionRows.push(upsertInspectionRow_(inspectionSheet, row));
       return;
     }
 
     if (type === "movement" || type === "return" || type === "exchange") {
-      appendMovementRow_(recordsSheet, row);
+      movementRows.push(upsertMovementRow_(recordsSheet, row));
     }
   });
 
+  syncInspectionMovementTotals_(inspectionSheet, recordsSheet);
+
   return {
+    inspectionRows: inspectionRows,
+    movementRows: movementRows,
     records: loadRecords_(),
+    inspectionRowsSnapshot: loadInspectionRows_(),
   };
 }
 
 function upsertInspectionRow_(sheet, payload) {
-  const row = buildInspectionPayload_(payload);
-  const targetRow = findInspectionRow_(
-    sheet,
-    row["작업기준일또는CSV식별값"],
-    row["상품코드"],
-    row["협력사명"]
-  );
+  const row = buildInspectionPayload_(payload || {});
+  const targetRow = findInspectionRow_(sheet, row["작업기준일또는CSV식별값"], row["상품코드"], row["협력사명"]);
   writeInspectionRow_(sheet, targetRow, row);
   row.__rowNumber = targetRow > 0 ? targetRow : sheet.getLastRow();
   return row;
 }
 
-function appendMovementRow_(sheet, payload) {
-  const row = buildRecordPayload_(payload);
+function upsertMovementRow_(sheet, payload) {
+  const row = buildRecordPayload_(payload || {});
+  const targetRow = findMovementRow_(
+    sheet,
+    row["작업기준일또는CSV식별값"],
+    row["상품코드"],
+    row["협력사명"],
+    row["센터명"],
+    row["처리유형"]
+  );
+
+  if (targetRow > 0) {
+    const existing = readMovementRow_(sheet, targetRow);
+    row["회송수량"] = parseNumber_(existing["회송수량"]) + parseNumber_(row["회송수량"]);
+    row["교환수량"] = parseNumber_(existing["교환수량"]) + parseNumber_(row["교환수량"]);
+    row["발주수량"] = parseNumber_(existing["발주수량"] || row["발주수량"]);
+    row["총 발주 수량"] = parseNumber_(existing["총 발주 수량"] || row["총 발주 수량"]);
+    row["비고"] = mergeTextValue_(existing["비고"], row["비고"]);
+    row["사진링크"] = row["사진링크"] || existing["사진링크"] || "";
+    row["사진링크목록"] = mergePhotoLinks_(existing["사진링크목록"], row["사진링크목록"], row["사진링크"]);
+    row["사진미리보기"] =
+      row["사진링크"] || existing["사진링크"]
+        ? `=IMAGE("${row["사진링크"] || existing["사진링크"]}")`
+        : existing["사진미리보기"] || "";
+    writeRecordRow_(sheet, targetRow, row);
+    row.__rowNumber = targetRow;
+    return row;
+  }
+
   writeRecordRow_(sheet, 0, row);
   row.__rowNumber = sheet.getLastRow();
   return row;
+}
+
+function findMovementRow_(sheet, jobKey, productCode, partnerName, centerName, typeName) {
+  if (!sheet || sheet.getLastRow() < 2) return 0;
+
+  const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues();
+
+  for (var i = values.length - 1; i >= 0; i -= 1) {
+    const rowJobKey = String(values[i][1] || "").trim();
+    const rowCode = normalizeCode_(values[i][3] || "");
+    const rowCenter = String(values[i][4] || "").trim();
+    const rowPartner = String(values[i][5] || "").trim();
+    const rowType = String(values[i][9] || "").trim();
+
+    if (
+      rowJobKey === String(jobKey || "").trim() &&
+      rowCode === normalizeCode_(productCode || "") &&
+      rowCenter === String(centerName || "").trim() &&
+      rowPartner === String(partnerName || "").trim() &&
+      rowType === String(typeName || "").trim()
+    ) {
+      return i + 2;
+    }
+  }
+
+  return 0;
+}
+
+function readMovementRow_(sheet, rowNumber) {
+  const values = sheet.getRange(rowNumber, 1, 1, sheet.getLastColumn()).getValues()[0];
+  const headers = recordHeaders_();
+  const row = {};
+
+  for (var i = 0; i < headers.length; i += 1) {
+    row[headers[i]] = values[i];
+  }
+
+  return row;
+}
+
+function mergeTextValue_(a, b) {
+  const left = String(a || "").trim();
+  const right = String(b || "").trim();
+  if (left && right && left !== right) return left + "\n" + right;
+  return right || left;
+}
+
+function mergePhotoLinks_(existingLinksText, newLinksText, newPrimaryLink) {
+  const map = {};
+  String(existingLinksText || "")
+    .split(/\n+/)
+    .map(function (item) {
+      return String(item || "").trim();
+    })
+    .filter(Boolean)
+    .forEach(function (item) {
+      map[item] = true;
+    });
+
+  String(newLinksText || "")
+    .split(/\n+/)
+    .map(function (item) {
+      return String(item || "").trim();
+    })
+    .filter(Boolean)
+    .forEach(function (item) {
+      map[item] = true;
+    });
+
+  if (newPrimaryLink) {
+    map[String(newPrimaryLink).trim()] = true;
+  }
+
+  return Object.keys(map).join("\n");
 }
 
 function findInspectionRow_(sheet, jobKey, productCode, partnerName) {
@@ -455,56 +669,70 @@ function buildInspectionPayload_(payload) {
   return {
     "작성일시": payload["작성일시"] || new Date().toISOString(),
     "작업기준일또는CSV식별값": payload["작업기준일또는CSV식별값"] || "",
-    "상품코드": normalizeCode_(payload["상품코드"] || ""),
-    "상품명": payload["상품명"] || "",
-    "협력사명": payload["협력사명"] || "",
-    "전체발주수량": Number(payload["전체발주수량"] || payload["발주수량"] || 0),
-    "발주수량": Number(payload["발주수량"] || payload["전체발주수량"] || 0),
-    "검품수량": Number(payload["검품수량"] || 0),
-    "회송수량": Number(payload["회송수량"] || 0),
-    "교환수량": Number(payload["교환수량"] || 0),
+    "상품코드": normalizeCode_(payload["상품코드"] || payload["productCode"] || ""),
+    "상품명": payload["상품명"] || payload["productName"] || "",
+    "협력사명": payload["협력사명"] || payload["partnerName"] || "",
+    "전체발주수량": parseNumber_(payload["전체발주수량"] || payload["totalQty"] || payload["발주수량"] || 0),
+    "발주수량": parseNumber_(payload["발주수량"] || payload["totalQty"] || payload["전체발주수량"] || 0),
+    "검품수량": parseNumber_(payload["검품수량"] || payload["inspectionQty"] || 0),
+    "회송수량": parseNumber_(payload["회송수량"] || 0),
+    "교환수량": parseNumber_(payload["교환수량"] || 0),
   };
 }
 
 function buildRecordPayload_(payload) {
+  const movementType = String(payload["movementType"] || "").trim().toUpperCase();
+  const photos = Array.isArray(payload["사진들"]) ? payload["사진들"] : [];
+  const uploaded = photos.length ? savePhotosToDrive_(photos) : [];
+  const firstPhoto = uploaded.length ? uploaded[0].viewUrl : "";
+  const photoLinks = uploaded.map(function (item) {
+    return item.viewUrl;
+  });
+  const photoFormula = photoLinks.length ? `=IMAGE("${photoLinks[0]}")` : "";
+
   const record = {
     "작성일시": payload["작성일시"] || new Date().toISOString(),
     "작업기준일또는CSV식별값": payload["작업기준일또는CSV식별값"] || "",
-    "상품명": payload["상품명"] || "",
-    "상품코드": normalizeCode_(payload["상품코드"] || ""),
-    "센터명": payload["센터명"] || "",
-    "협력사명": payload["협력사명"] || "",
-    "발주수량": Number(payload["발주수량"] || 0),
-    "행사여부": payload["행사여부"] || "",
-    "행사명": payload["행사명"] || "",
+    "상품명": payload["상품명"] || payload["productName"] || "",
+    "상품코드": normalizeCode_(payload["상품코드"] || payload["productCode"] || ""),
+    "센터명": payload["센터명"] || payload["centerName"] || "",
+    "협력사명": payload["협력사명"] || payload["partnerName"] || "",
+    "발주수량": parseNumber_(payload["발주수량"] || payload["qty"] || 0),
+    "행사명": payload["행사명"] || payload["eventName"] || "",
+    "행사여부": payload["행사여부"] || payload["eventFlag"] || "",
     "처리유형": payload["처리유형"] || "",
-    "movementType": payload["movementType"] || "",
-    "회송수량": Number(payload["회송수량"] || 0),
-    "교환수량": Number(payload["교환수량"] || 0),
-    "비고": payload["비고"] || "",
-    "사진URL": payload["사진URL"] || "",
-    "사진미리보기": payload["사진미리보기"] || "",
-    "전체발주수량": Number(payload["전체발주수량"] || payload["발주수량"] || 0),
+    "회송수량": parseNumber_(payload["회송수량"] || 0),
+    "교환수량": parseNumber_(payload["교환수량"] || 0),
+    "비고": payload["비고"] || payload["memo"] || "",
+    "사진링크": firstPhoto,
+    "사진링크목록": photoLinks.join("\n"),
+    "사진미리보기": photoFormula,
+    "총 발주 수량": parseNumber_(payload["전체발주수량"] || payload["totalQty"] || payload["발주수량"] || 0),
   };
 
-  const photo = payload["사진"] || null;
-  if (photo && photo.imageBase64) {
-    const photoInfo = savePhotoToDrive_(photo);
-    record["사진URL"] = photoInfo.viewUrl;
-    record["사진미리보기"] = `=IMAGE("${photoInfo.viewUrl}")`;
-  }
-
-  if (!record["처리유형"]) {
+  if (movementType === "RETURN") {
+    record["처리유형"] = "회송";
+    record["회송수량"] = parseNumber_(payload["qty"] || payload["회송수량"] || 0);
+    record["교환수량"] = 0;
+  } else if (movementType === "EXCHANGE") {
+    record["처리유형"] = "교환";
+    record["센터명"] = "";
+    record["교환수량"] = parseNumber_(payload["qty"] || payload["교환수량"] || 0);
+    record["회송수량"] = 0;
+  } else if (!record["처리유형"]) {
     if (record["회송수량"] > 0) {
       record["처리유형"] = "회송";
     } else if (record["교환수량"] > 0) {
       record["처리유형"] = "교환";
+      record["센터명"] = "";
     }
   }
 
   if (record["처리유형"] === "교환") {
     record["센터명"] = "";
   }
+
+  record["사진URL"] = record["사진링크"];
 
   return record;
 }
@@ -539,22 +767,133 @@ function writeRecordRow_(sheet, targetRow, record) {
     record["센터명"],
     record["협력사명"],
     record["발주수량"],
-    record["행사여부"],
     record["행사명"],
+    record["행사여부"],
     record["처리유형"],
-    record["movementType"],
     record["회송수량"],
     record["교환수량"],
     record["비고"],
-    record["사진URL"],
+    record["사진링크"],
+    record["사진링크목록"],
     record["사진미리보기"],
-    record["전체발주수량"],
+    record["총 발주 수량"],
   ]];
 
   if (targetRow > 0) {
     sheet.getRange(targetRow, 1, 1, values[0].length).setValues(values);
   } else {
     sheet.appendRow(values[0]);
+  }
+}
+
+function buildMovementTotalsMap_(recordsSheet) {
+  const totalsMap = {};
+  if (!recordsSheet || recordsSheet.getLastRow() < 2) {
+    return totalsMap;
+  }
+
+  const values = recordsSheet.getDataRange().getValues();
+  const headers = values[0].map(function (header) {
+    return String(header || "").trim();
+  });
+
+  for (var r = 1; r < values.length; r += 1) {
+    const row = {};
+    for (var c = 0; c < headers.length; c += 1) {
+      const header = headers[c];
+      if (!header) continue;
+      row[header] = values[r][c];
+    }
+
+    const key = makeEntityKey_(row["작업기준일또는CSV식별값"], row["상품코드"], row["협력사명"]);
+    if (!totalsMap[key]) {
+      totalsMap[key] = { returnQty: 0, exchangeQty: 0 };
+    }
+
+    totalsMap[key].returnQty += parseNumber_(row["회송수량"] || 0);
+    totalsMap[key].exchangeQty += parseNumber_(row["교환수량"] || 0);
+  }
+
+  return totalsMap;
+}
+
+function syncInspectionMovementTotals_(inspectionSheet, recordsSheet) {
+  if (!inspectionSheet || inspectionSheet.getLastRow() < 2) {
+    return;
+  }
+
+  const totalsMap = buildMovementTotalsMap_(recordsSheet);
+  const range = inspectionSheet.getRange(2, 1, inspectionSheet.getLastRow() - 1, inspectionSheet.getLastColumn());
+  const values = range.getValues();
+
+  for (var i = 0; i < values.length; i += 1) {
+    const jobKey = String(values[i][1] || "").trim();
+    const productCode = normalizeCode_(values[i][2] || "");
+    const partnerName = String(values[i][4] || "").trim();
+    const key = makeEntityKey_(jobKey, productCode, partnerName);
+    const totals = totalsMap[key] || { returnQty: 0, exchangeQty: 0 };
+    values[i][8] = totals.returnQty;
+    values[i][9] = totals.exchangeQty;
+  }
+
+  range.setValues(values);
+}
+
+function migrateRecordSheetIfNeeded_(sheet) {
+  if (!sheet || sheet.getLastRow() === 0) {
+    return;
+  }
+
+  const currentHeaders = sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), recordHeaders_().length)).getValues()[0];
+  const current = currentHeaders.map(function (item) {
+    return String(item || "").trim();
+  });
+  const next = recordHeaders_();
+
+  const isNewFormat =
+    current[9] === "처리유형" &&
+    current[10] === "회송수량" &&
+    current[11] === "교환수량" &&
+    current[12] === "비고" &&
+    current[13] === "사진링크" &&
+    current[16] === "총 발주 수량";
+
+  if (isNewFormat || sheet.getLastRow() < 2) {
+    return;
+  }
+
+  const dataRange = sheet.getRange(2, 1, sheet.getLastRow() - 1, Math.max(sheet.getLastColumn(), 17));
+  const rows = dataRange.getValues();
+  const migrated = rows.map(function (row) {
+    const typeValue = String(row[9] || "").trim() || (String(row[10] || "").trim() === "EXCHANGE" ? "교환" : String(row[10] || "").trim() === "RETURN" ? "회송" : "");
+    const returnQty = parseNumber_(row[11] || 0);
+    const exchangeQty = parseNumber_(row[12] || 0);
+    const photoLink = String(row[14] || "").trim();
+
+    return [
+      row[0] || "",
+      row[1] || "",
+      row[2] || "",
+      row[3] || "",
+      row[4] || "",
+      row[5] || "",
+      row[6] || "",
+      row[8] || "",
+      row[7] || "",
+      typeValue,
+      returnQty,
+      exchangeQty,
+      row[13] || "",
+      photoLink,
+      photoLink,
+      row[15] || (photoLink ? `=IMAGE("${photoLink}")` : ""),
+      row[16] || 0,
+    ];
+  });
+
+  ensureHeaderRow_(sheet, next);
+  if (migrated.length) {
+    sheet.getRange(2, 1, migrated.length, next.length).setValues(migrated);
   }
 }
 
@@ -582,17 +921,30 @@ function recordHeaders_() {
     "센터명",
     "협력사명",
     "발주수량",
-    "행사여부",
     "행사명",
+    "행사여부",
     "처리유형",
-    "movementType",
     "회송수량",
     "교환수량",
     "비고",
-    "사진URL",
+    "사진링크",
+    "사진링크목록",
     "사진미리보기",
-    "전체발주수량",
+    "총 발주 수량",
   ];
+}
+
+function savePhotosToDrive_(photos) {
+  const list = Array.isArray(photos) ? photos : [];
+  const saved = [];
+
+  list.forEach(function (photo) {
+    if (photo && photo.imageBase64) {
+      saved.push(savePhotoToDrive_(photo));
+    }
+  });
+
+  return saved;
 }
 
 function savePhotoToDrive_(photo) {
@@ -622,17 +974,33 @@ function savePhotoToDrive_(photo) {
   };
 }
 
-function getOrCreateSheet_(ss, name, headers) {
+function getOrCreateSheet_(ss, name) {
   var sheet = ss.getSheetByName(name);
   if (!sheet) {
     sheet = ss.insertSheet(name);
   }
+  return sheet;
+}
 
-  if (headers && sheet.getLastRow() === 0) {
-    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+function ensureHeaderRow_(sheet, headers) {
+  if (!sheet || !headers || !headers.length) return;
+
+  const width = headers.length;
+  const existing = sheet.getRange(1, 1, 1, width).getValues()[0].map(function (value) {
+    return String(value || "").trim();
+  });
+
+  var changed = false;
+  for (var i = 0; i < width; i += 1) {
+    if (existing[i] !== headers[i]) {
+      changed = true;
+      break;
+    }
   }
 
-  return sheet;
+  if (sheet.getLastRow() === 0 || changed) {
+    sheet.getRange(1, 1, 1, width).setValues([headers]);
+  }
 }
 
 function jsonOutput_(obj) {
