@@ -364,7 +364,37 @@ function App() {
       stopScanner();
     }
   };
-
+  const handleCsvUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+  
+    try {
+      setUploadingCsv(true);
+      setError("");
+  
+      const { text } = await decodeCsvFile(file);
+  
+      const parsed = Papa.parse(text, {
+        header: true,
+        skipEmptyLines: true,
+      });
+  
+      const normalized = buildNormalizedRows(parsed.data);
+  
+      const jobKey = computeJobKey(normalized);
+  
+      setRows(normalized);
+      setCurrentJob({ job_key: jobKey, rows: normalized });
+      setCurrentFileName(file.name);
+      setCurrentFileModifiedAt(file.lastModified);
+  
+      setMessage("CSV 업로드 완료");
+    } catch (err) {
+      setError("CSV 처리 실패");
+    } finally {
+      setUploadingCsv(false);
+    }
+  };
   useEffect(() => {
     if (!isScannerOpen) {
       stopScanner();
