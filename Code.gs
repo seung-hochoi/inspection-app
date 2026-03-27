@@ -8,6 +8,7 @@
   inspection: "inspection_data",
 };
 const ADMIN_RESET_PASSWORD = "0000";
+const JOB_CACHE_MAX_ROWS = 30000;
 
 function doGet(e) {
   try {
@@ -20,6 +21,7 @@ function doGet(e) {
           config: {
             exclude_rows: readObjectsSheet_(SHEET_NAMES.exclude),
             event_rows: readObjectsSheet_(SHEET_NAMES.event),
+            reservation_rows: readObjectsSheet_(SHEET_NAMES.reservation),
           },
           current_job: loadLatestJob_(),
         },
@@ -239,7 +241,10 @@ function cacheCsvJob_(payload) {
 
   const existingJob = findJobByKey_(jobsSheet, jobKey);
   if (existingJob) {
-    return loadJobRowsByKey_(ss, jobKey);
+    var existingLoadedJob = loadJobRowsByKey_(ss, jobKey);
+    syncInspectionRowsFromJob_(ss, existingLoadedJob);
+    updateInspectionDashboard_(ss);
+    return existingLoadedJob;
   }
 
   const now = new Date().toISOString();
@@ -254,7 +259,10 @@ function cacheCsvJob_(payload) {
     cacheSheet.getRange(cacheSheet.getLastRow() + 1, 1, values.length, 4).setValues(values);
   }
 
+  pruneJobCacheRows_(cacheSheet, JOB_CACHE_MAX_ROWS);
+
   var job = loadJobRowsByKey_(ss, jobKey);
+  syncInspectionRowsFromJob_(ss, job);
   updateInspectionDashboard_(ss);
   return job;
 }
@@ -1020,6 +1028,20 @@ function ensureHeaderRow_(sheet, headers) {
   }
 }
 
+function pruneJobCacheRows_(cacheSheet, maxDataRows) {
+  if (!cacheSheet || cacheSheet.getLastRow() <= 1) {
+    return;
+  }
+
+  var dataRowCount = cacheSheet.getLastRow() - 1;
+  if (dataRowCount <= maxDataRows) {
+    return;
+  }
+
+  var deleteCount = dataRowCount - maxDataRows;
+  cacheSheet.deleteRows(2, deleteCount);
+}
+
 function createPhotoZip_(payload) {
   var mode = String(payload.mode || "movement").trim();
   var records = loadRecords_();
@@ -1212,7 +1234,7 @@ function resetCurrentJobInputData_(payload) {
   var inspectionSheet = getInspectionSheet_(ss);
   var deletedPhotos = trashPhotosForJob_(recordsSheet, jobKey);
   var deletedRecords = deleteRecordRowsByJobKey_(recordsSheet, jobKey);
-  var resetInspectionCount = resetInspectionRowsByJobKey_(inspectionSheet, jobKey);
+  var resetInspectionCount = deleteInspectionRowsByJobKey_(inspectionSheet, jobKey);
   updateInspectionDashboard_(ss);
 
   return {
@@ -1311,6 +1333,105 @@ function resetInspectionRowsByJobKey_(inspectionSheet, jobKey) {
   return resetCount;
 }
 
+function deleteInspectionRowsByJobKey_(inspectionSheet, jobKey) {
+  if (!inspectionSheet || inspectionSheet.getLastRow() < 2) return 0;
+
+  var rowNumbers = [];
+  var values = inspectionSheet
+    .getRange(2, 1, inspectionSheet.getLastRow() - 1, inspectionSheet.getLastColumn())
+    .getValues();
+
+  for (var i = 0; i < values.length; i += 1) {
+    if (String(values[i][1] || "").trim() === jobKey) {
+      rowNumbers.push(i + 2);
+    }
+  }
+
+  rowNumbers.sort(function (a, b) {
+    return b - a;
+  });
+
+  rowNumbers.forEach(function (rowNumber) {
+    inspectionSheet.deleteRow(rowNumber);
+  });
+
+  return rowNumbers.length;
+}
+
+function syncInspectionRowsFromJob_(ss, job) {
+  if (!job || !Array.isArray(job.rows)) return;
+
+  var inspectionSheet = getInspectionSheet_(ss);
+  var existingRows = loadInspectionRows_();
+  var preservedMap = {};
+
+  existingRows.forEach(function (row) {
+    if (String(row["작업기준일또는CSV식별값"] || "").trim() !== String(job.job_key || "").trim()) return;
+    var key = makeEntityKey_(row["작업기준일또는CSV식별값"], row["상품코드"], row["협력사명"]);
+    preservedMap[key] = row;
+  });
+
+  deleteInspectionRowsByJobKey_(inspectionSheet, job.job_key);
+
+  var aggregatedMap = {};
+  job.rows.forEach(function (row) {
+    var code = normalizeCode_(row.__productCode || getRowFieldValue_(row, ["상품코드", "상품 코드", "코드", "바코드"]));
+    var name = String(row.__productName || getRowFieldValue_(row, ["상품명", "상품 명", "품목명", "품명"]) || "").trim();
+    var partner = String(row.__partner || getRowFieldValue_(row, ["협력사명", "협력사", "거래처명(구매조건명)", "거래처명"]) || "").trim();
+    var qty = parseNumber_(row.__qty || getRowFieldValue_(row, ["총 발주수량", "발주수량", "수량"]));
+    if (!code || !partner) return;
+
+    var key = makeEntityKey_(job.job_key, code, partner);
+    if (!aggregatedMap[key]) {
+      aggregatedMap[key] = {
+        "작성일시": new Date().toISOString(),
+        "작업기준일또는CSV식별값": job.job_key,
+        "상품코드": code,
+        "상품명": name,
+        "협력사명": partner,
+        "전체발주수량": 0,
+        "발주수량": 0,
+        "검품수량": 0,
+        "회송수량": 0,
+        "교환수량": 0,
+      };
+    }
+
+    aggregatedMap[key]["전체발주수량"] += qty;
+    aggregatedMap[key]["발주수량"] += qty;
+  });
+
+  var nextRows = Object.keys(aggregatedMap).map(function (key) {
+    var record = aggregatedMap[key];
+    var preserved = preservedMap[key] || {};
+    record["검품수량"] = parseNumber_(preserved["검품수량"] || 0);
+    record["회송수량"] = parseNumber_(preserved["회송수량"] || 0);
+    record["교환수량"] = parseNumber_(preserved["교환수량"] || 0);
+    return record;
+  });
+
+  if (!nextRows.length) return;
+
+  var values = nextRows.map(function (record) {
+    return [
+      record["작성일시"],
+      record["작업기준일또는CSV식별값"],
+      record["상품코드"],
+      record["상품명"],
+      record["협력사명"],
+      record["전체발주수량"],
+      record["발주수량"],
+      record["검품수량"],
+      record["회송수량"],
+      record["교환수량"],
+    ];
+  });
+
+  inspectionSheet
+    .getRange(inspectionSheet.getLastRow() + 1, 1, values.length, values[0].length)
+    .setValues(values);
+}
+
 function getRowFieldValue_(row, candidates) {
   for (var i = 0; i < candidates.length; i += 1) {
     var key = candidates[i];
@@ -1363,6 +1484,7 @@ function updateInspectionDashboard_(ss) {
   var returnQtyTotal = 0;
   var exchangeQtyTotal = 0;
   var eventCodeMap = {};
+  var reservationQtyMap = {};
 
   eventRows.forEach(function (row) {
     var code = normalizeCode_(row["상품코드"] || row["상품 코드"] || row["코드"] || row["바코드"]);
@@ -1371,17 +1493,29 @@ function updateInspectionDashboard_(ss) {
     }
   });
 
+  readObjectsSheet_(SHEET_NAMES.reservation).forEach(function (row) {
+    var code = normalizeCode_(row["상품코드"] || row["상품 코드"] || row["코드"] || row["바코드"]);
+    var partner = String(row["협력사명"] || row["협력사"] || "").trim();
+    var center = String(row["센터명"] || "").trim();
+    var qty = parseNumber_(row["발주수량"] || row["수량"] || 0);
+    if (!code) return;
+    reservationQtyMap[[center, partner, code].join("||")] = qty;
+  });
+
   latestRows.forEach(function (row) {
     var code = normalizeCode_(row.__productCode || getRowFieldValue_(row, ["상품코드", "상품 코드", "코드", "바코드"]));
     var partner = String(row.__partner || getRowFieldValue_(row, ["거래처명(구매조건명)", "거래처명", "협력사", "협력사명"]) || "").trim();
+    var center = String(row.__center || getRowFieldValue_(row, ["센터명", "센터"]) || "").trim();
     var qty = parseNumber_(row.__qty || getRowFieldValue_(row, ["총 발주수량", "발주수량", "수량"]));
-    var cost = parseNumber_(getRowFieldValue_(row, ["입고원가", "원가"]));
+    var reservationQty = parseNumber_(reservationQtyMap[[center, partner, code].join("||")] || 0);
+    var effectiveQty = reservationQty > 0 ? reservationQty : qty;
+    var cost = parseNumber_(row.__incomingCost || getRowFieldValue_(row, ["입고원가", "원가"]));
     var pairKey = code + "||" + partner;
     var skuKey = getRowSkuKey_(row);
     var excluded = !!excludedCodes[code] || !!excludedPairs[pairKey];
 
-    totalInboundQty += qty;
-    totalInboundAmount += qty * cost;
+    totalInboundQty += effectiveQty;
+    totalInboundAmount += effectiveQty * cost;
 
     if (skuKey) {
       totalSkuMap[skuKey] = true;
@@ -1393,8 +1527,8 @@ function updateInspectionDashboard_(ss) {
 
     if (excluded) return;
 
-    targetInboundQty += qty;
-    targetInboundAmount += qty * cost;
+    targetInboundQty += effectiveQty;
+    targetInboundAmount += effectiveQty * cost;
 
     if (skuKey) {
       targetSkuMap[skuKey] = true;
@@ -1452,7 +1586,7 @@ function updateInspectionDashboard_(ss) {
       targetSkuCount,
       targetSkuCount > 0 ? inspectedSkuCount / targetSkuCount : 0,
     ],
-    ["행사 SKU", "검품 SKU", "검품 입고수량", "회송 수량", "교환 수량", "사진 기록 건수"],
+    ["행사 SKU", "검품입고 SKU", "검품 입고수량", "회송 수량", "교환 수량", "사진 기록 건수"],
     [
       eventSkuCount,
       targetSkuCount,
@@ -1471,6 +1605,11 @@ function updateInspectionDashboard_(ss) {
   inspectionSheet.getRange("L5:Q5").setNumberFormats([["#,##0", "#,##0", "#,##0", "0.0%", "#,##0", "0.0%"]]);
   inspectionSheet.getRange("L7:Q7").setNumberFormats([["#,##0", "#,##0", "#,##0", "#,##0", "#,##0", "#,##0"]]);
   inspectionSheet.autoResizeColumns(12, 6);
+  [12, 13, 14, 15, 16, 17].forEach(function (col) {
+    if (inspectionSheet.getColumnWidth(col) < 110) {
+      inspectionSheet.setColumnWidth(col, 110);
+    }
+  });
 }
 
 function jsonOutput_(obj) {
