@@ -19,6 +19,7 @@
   "scripts": {
     "start": "react-scripts start",
     "build": "node scripts/build.js",
+    "happycall:bridge": "node scripts/happycall-bridge.js",
     "import:happycall": "powershell -ExecutionPolicy Bypass -File scripts/import-happycall-outlook.ps1",
     "test": "react-scripts test",
     "eject": "react-scripts eject"

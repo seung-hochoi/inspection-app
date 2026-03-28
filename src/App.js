@@ -2,7 +2,8 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import Papa from "papaparse";
 import { BrowserCodeReader, BrowserMultiFormatReader } from "@zxing/browser";
 
-const SCRIPT_URL = process.env.REACT_APP_GOOGLE_SCRIPT_URL || "https://script.google.com/macros/s/AKfycbzleO66XG3qFEJ0t56rPc2vmv11ZVuNydGdpcxvtRMDo35Gmst7FQ-Y0y1xpA5-VChg/exec";
+const SCRIPT_URL = process.env.REACT_APP_GOOGLE_SCRIPT_URL || "https://script.google.com/macros/s/AKfycbyoSn2ZmvmV8gFfNEJo3wn8SV0XG0I2Hno9F2xBOsOBF0Ye715kShQPGL4ZTfnz8hLxWA/exec";
+const HAPPYCALL_BRIDGE_URL = "http://127.0.0.1:32147";
 
 const normalizeKey = (key) => String(key || "").replace(/\uFEFF/g, "").trim();
 
@@ -53,8 +54,8 @@ const HAPPYCALL_PERIOD_OPTIONS = [
   { key: "30d", label: "1달" },
 ];
 
-const getHappycallProductStats = (analytics, product) => {
-  const ranks = analytics?.productRanks || {};
+const getHappycallProductMetrics = (analytics, product) => {
+  const periods = analytics?.periods || {};
   const keys = [
     `sku::${makeSkuKey(product?.productCode, product?.partner)}`,
     `name::${normalizeHappycallLookupText(product?.productName)}||${normalizeHappycallLookupText(product?.partner)}`,
@@ -62,13 +63,19 @@ const getHappycallProductStats = (analytics, product) => {
     `nameOnly::${normalizeHappycallLookupText(product?.productName)}`,
   ];
 
-  for (const key of keys) {
-    if (key && ranks[key]) {
-      return ranks[key];
+  const result = {};
+
+  for (const [periodKey, periodValue] of Object.entries(periods)) {
+    const metricsMap = periodValue?.productMetrics || {};
+    for (const key of keys) {
+      if (key && metricsMap[key]) {
+        result[periodKey] = metricsMap[key];
+        break;
+      }
     }
   }
 
-  return {};
+  return result;
 };
 
 const formatPercent = (value) => {
@@ -517,6 +524,7 @@ function App() {
   const [showAdminReset, setShowAdminReset] = useState(false);
   const [adminPassword, setAdminPassword] = useState("");
   const [adminResetting, setAdminResetting] = useState(false);
+  const [happycallImporting, setHappycallImporting] = useState(false);
 
   const [isScannerOpen, setIsScannerOpen] = useState(false);
   const [scannerError, setScannerError] = useState("");
@@ -1006,6 +1014,11 @@ function App() {
           totalQty: 0,
           centers: [],
           eventInfo: eventMap[productCode] || null,
+          happycallMetrics: getHappycallProductMetrics(happycallAnalytics, {
+            productCode,
+            productName,
+            partner,
+          }),
         };
         partnerProducts.push(product);
       }
@@ -1026,13 +1039,43 @@ function App() {
       centerInfo.rows.push(row);
     });
 
+    const allProducts = Array.from(map.values()).flat();
+    const rankMaps = {
+      "1d": {},
+      "7d": {},
+      "30d": {},
+    };
+
+    Object.keys(rankMaps).forEach((periodKey) => {
+      allProducts
+        .filter((product) => parseQty(product.happycallMetrics?.[periodKey]?.count) > 0)
+        .sort((a, b) => {
+          const countDiff =
+            parseQty(b.happycallMetrics?.[periodKey]?.count) - parseQty(a.happycallMetrics?.[periodKey]?.count);
+          if (countDiff !== 0) return countDiff;
+          return String(a.productName || "").localeCompare(String(b.productName || ""), "ko");
+        })
+        .slice(0, 5)
+        .forEach((product, index) => {
+          rankMaps[periodKey][`${product.partner}||${product.productCode}`] = {
+            rank: index + 1,
+            count: parseQty(product.happycallMetrics?.[periodKey]?.count),
+            share: Number(product.happycallMetrics?.[periodKey]?.share || 0),
+          };
+        });
+    });
+
     return Array.from(map.entries())
       .sort((a, b) => a[0].localeCompare(b[0], "ko"))
       .map(([partner, products]) => ({
         partner,
         products: products.map((product) => ({
           ...product,
-          happycallStats: getHappycallProductStats(happycallAnalytics, product),
+          happycallStats: {
+            "1d": rankMaps["1d"][`${product.partner}||${product.productCode}`] || null,
+            "7d": rankMaps["7d"][`${product.partner}||${product.productCode}`] || null,
+            "30d": rankMaps["30d"][`${product.partner}||${product.productCode}`] || null,
+          },
           centers: product.centers.sort((a, b) => (b.totalQty || 0) - (a.totalQty || 0)),
         })),
       }));
@@ -1476,6 +1519,35 @@ function App() {
     }
   };
 
+  const importHappycallFromOutlook = async () => {
+    try {
+      setHappycallImporting(true);
+      setError("");
+      setMessage("");
+
+      const response = await fetch(`${HAPPYCALL_BRIDGE_URL}/import-happycall`, {
+        method: "POST",
+      });
+      const result = await response.json();
+
+      if (!response.ok || result.ok === false) {
+        throw new Error(result.message || "해피콜 메일 가져오기에 실패했습니다.");
+      }
+
+      await loadBootstrap();
+      setToast("해피콜 메일 가져오기 완료");
+    } catch (err) {
+      const messageText = String((err && err.message) || "");
+      if (messageText.includes("Failed to fetch")) {
+        setError("해피콜 브리지가 실행 중이 아닙니다. 터미널에서 npm run happycall:bridge 를 먼저 실행해 주세요.");
+      } else {
+        setError(messageText || "해피콜 메일 가져오기에 실패했습니다.");
+      }
+    } finally {
+      setHappycallImporting(false);
+    }
+  };
+
   return (
     <div style={styles.app}>
       <input
@@ -1508,6 +1580,18 @@ function App() {
                 style={styles.copyButton}
               >
                 복사
+              </button>
+              <button
+                type="button"
+                onClick={importHappycallFromOutlook}
+                disabled={happycallImporting}
+                style={{
+                  ...styles.copyButton,
+                  minWidth: 124,
+                  opacity: happycallImporting ? 0.7 : 1,
+                }}
+              >
+                {happycallImporting ? "가져오는 중..." : "해피콜 가져오기"}
               </button>
             </div>
           </div>

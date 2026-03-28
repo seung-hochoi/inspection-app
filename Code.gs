@@ -1560,6 +1560,7 @@ function getHappycallAnalytics_() {
       return receivedAt >= startAt && receivedAt <= now;
     });
     var aggregates = buildHappycallAggregates_(filtered);
+    var productMetrics = {};
     periodMap[period.key] = {
       label: period.label,
       totalCount: aggregates.totalCount,
@@ -1568,7 +1569,19 @@ function getHappycallAnalytics_() {
       topMidCategories: aggregates.midCategories.slice(0, 5),
       topSubCategories: aggregates.subCategories.slice(0, 5),
       topReasons: aggregates.reasons.slice(0, 5),
+      productMetrics: productMetrics,
     };
+
+    aggregates.products.forEach(function (item) {
+      buildHappycallLookupKeys_(item).forEach(function (key) {
+        if (!key) return;
+        productMetrics[key] = {
+          count: item.count,
+          share: item.share,
+          topReason: item.topReason || "",
+        };
+      });
+    });
 
     aggregates.products.slice(0, 5).forEach(function (item, index) {
       var keys = buildHappycallLookupKeys_(item);
