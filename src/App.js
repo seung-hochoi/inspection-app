@@ -3,7 +3,7 @@ import Papa from "papaparse";
 import { BrowserCodeReader, BrowserMultiFormatReader } from "@zxing/browser";
 import * as XLSX from "xlsx";
 
-const SCRIPT_URL = process.env.REACT_APP_GOOGLE_SCRIPT_URL || "https://script.google.com/macros/s/AKfycby-NbTHgRC51tsfl1Qgyw5N77skoicnfAXDgrtZ9g9fv21iOL99BcZQ0flYfNIfbE1Cjw/exec";
+const SCRIPT_URL = process.env.REACT_APP_GOOGLE_SCRIPT_URL || "https://script.google.com/macros/s/AKfycbzrPgqH8RoyY-7q2ZaDOZJqJo4aIJumTLtwmGSm-NgFnUzWyHavTi__CrwWbnwa5763wA/exec";
 
 const normalizeKey = (key) => String(key || "").replace(/\uFEFF/g, "").trim();
 
@@ -78,8 +78,45 @@ const getHappycallProductMetrics = (analytics, product) => {
   return result;
 };
 
-const getHappycallProductRanks = (analytics, product) => {
-  const rankMap = analytics?.productRanks || {};
+const isClassifiedHappycallProduct = (item) => {
+  const name = String(item?.productName || "").trim();
+  return !!name && name !== "미분류상품";
+};
+
+const buildVisibleHappycallRanks = (analytics) => {
+  const periods = analytics?.periods || {};
+  const rankMap = {};
+
+  Object.entries(periods).forEach(([periodKey, periodValue]) => {
+    (periodValue?.topProducts || [])
+      .filter(isClassifiedHappycallProduct)
+      .slice(0, 10)
+      .forEach((item, index) => {
+        const payload = {
+          rank: index + 1,
+          count: parseQty(item?.count || 0),
+          share: Number(item?.share || 0),
+          reason: item?.topReason || "",
+        };
+
+        [
+          `sku::${makeSkuKey(item?.productCode, item?.partnerName)}`,
+          `name::${normalizeHappycallLookupText(item?.productName)}||${normalizeHappycallLookupText(item?.partnerName)}`,
+          `code::${normalizeProductCode(item?.productCode || "")}`,
+          `nameOnly::${normalizeHappycallLookupText(item?.productName)}`,
+        ]
+          .filter(Boolean)
+          .forEach((key) => {
+            if (!rankMap[key]) rankMap[key] = {};
+            rankMap[key][periodKey] = payload;
+          });
+      });
+  });
+
+  return rankMap;
+};
+
+const getHappycallProductRanks = (rankMap, product) => {
   const keys = [
     `sku::${makeSkuKey(product?.productCode, product?.partner)}`,
     `name::${normalizeHappycallLookupText(product?.productName)}||${normalizeHappycallLookupText(product?.partner)}`,
@@ -89,9 +126,13 @@ const getHappycallProductRanks = (analytics, product) => {
 
   const result = {};
 
-  keys.forEach((key) => {
-    if (!key || !rankMap[key]) return;
-    Object.assign(result, rankMap[key]);
+  ["1d", "7d", "30d"].forEach((periodKey) => {
+    for (const key of keys) {
+      if (key && rankMap[key]?.[periodKey]) {
+        result[periodKey] = rankMap[key][periodKey];
+        break;
+      }
+    }
   });
 
   return result;
@@ -1019,6 +1060,8 @@ function App() {
     });
   }, [rows, excludedProductCodes, excludedPairKeys]);
 
+  const visibleHappycallRankMap = useMemo(() => buildVisibleHappycallRanks(happycallAnalytics), [happycallAnalytics]);
+
   const groupedPartners = useMemo(() => {
     const keyword = normalizeText(search);
     const map = new Map();
@@ -1084,11 +1127,11 @@ function App() {
         partner,
         products: products.map((product) => ({
           ...product,
-          happycallStats: getHappycallProductRanks(happycallAnalytics, product),
+          happycallStats: getHappycallProductRanks(visibleHappycallRankMap, product),
           centers: product.centers.sort((a, b) => (b.totalQty || 0) - (a.totalQty || 0)),
         })),
       }));
-  }, [filteredRows, search, eventMap, happycallAnalytics]);
+  }, [filteredRows, search, eventMap, happycallAnalytics, visibleHappycallRankMap]);
 
   const historyCountMap = useMemo(() => {
     const map = {};
@@ -1114,10 +1157,7 @@ function App() {
   const previousDayHappycallTopList = useMemo(
     () =>
       (happycallAnalytics?.periods?.["1d"]?.topProducts || [])
-        .filter((item) => {
-          const name = String(item?.productName || "").trim();
-          return name && name !== "미분류상품";
-        })
+        .filter(isClassifiedHappycallProduct)
         .slice(0, 10)
         .map((item, index) => ({
           rank: index + 1,
