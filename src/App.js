@@ -3,7 +3,7 @@ import Papa from "papaparse";
 import { BrowserCodeReader, BrowserMultiFormatReader } from "@zxing/browser";
 import * as XLSX from "xlsx";
 
-const SCRIPT_URL = process.env.REACT_APP_GOOGLE_SCRIPT_URL || "https://script.google.com/macros/s/AKfycby948HeJS1gm_OIrPUnEQzhhnAG-fGpUxctuIfFHVjkArYLCShxGMwav9l7xLLdo86cNQ/exec";
+const SCRIPT_URL = process.env.REACT_APP_GOOGLE_SCRIPT_URL || "https://script.google.com/macros/s/AKfycby-NbTHgRC51tsfl1Qgyw5N77skoicnfAXDgrtZ9g9fv21iOL99BcZQ0flYfNIfbE1Cjw/exec";
 
 const normalizeKey = (key) => String(key || "").replace(/\uFEFF/g, "").trim();
 
@@ -1924,15 +1924,6 @@ function App() {
                           <div style={styles.cardInlineInspection}>
                             <div style={styles.cardInlineInfo}>
                               <div style={styles.cardTopRowInline}>
-                                {happycallBadges.length ? (
-                                  <div style={styles.happycallBadgeRow}>
-                                    {happycallBadges.map((badge) => (
-                                      <span key={badge.key} style={{ ...styles.happycallBadge, ...getHappycallRankStyle(badge.rank) }}>
-                                        {badge.label}
-                                      </span>
-                                    ))}
-                                  </div>
-                                ) : null}
                                 <div style={styles.cardTitle}>{product.productName || "상품명 없음"}</div>
                                 {product.eventInfo?.행사여부 ? (
                                   <span style={styles.eventBadge}>
@@ -1941,7 +1932,15 @@ function App() {
                                 ) : null}
                               </div>
                               <div style={styles.cardMeta}>코드 {product.productCode}</div>
-                              <div style={styles.cardMeta}>협력사 {product.partner}</div>
+                              {happycallBadges.length ? (
+                                <div style={styles.happycallBadgeRow}>
+                                  {happycallBadges.map((badge) => (
+                                    <span key={badge.key} style={{ ...styles.happycallBadge, ...getHappycallRankStyle(badge.rank) }}>
+                                      {badge.label}
+                                    </span>
+                                  ))}
+                                </div>
+                              ) : null}
                               <div style={styles.qtyRow}>
                                 <span style={styles.qtyChip}>총 발주 {product.totalQty}개</span>
                                 {historySummary ? <span style={styles.qtyChip}>{historySummary}</span> : null}
@@ -2050,15 +2049,6 @@ function App() {
                               }}
                             >
                               <div style={styles.cardTopRow}>
-                                {happycallBadges.length ? (
-                                  <div style={styles.happycallBadgeRow}>
-                                    {happycallBadges.map((badge) => (
-                                      <span key={badge.key} style={{ ...styles.happycallBadge, ...getHappycallRankStyle(badge.rank) }}>
-                                        {badge.label}
-                                      </span>
-                                    ))}
-                                  </div>
-                                ) : null}
                                 <div style={styles.cardTitle}>{product.productName || "상품명 없음"}</div>
                                 {product.eventInfo?.행사여부 ? (
                                   <span style={styles.eventBadge}>
@@ -2067,7 +2057,15 @@ function App() {
                                 ) : null}
                               </div>
                               <div style={styles.cardMeta}>코드 {product.productCode}</div>
-                              <div style={styles.cardMeta}>협력사 {product.partner}</div>
+                              {happycallBadges.length ? (
+                                <div style={styles.happycallBadgeRow}>
+                                  {happycallBadges.map((badge) => (
+                                    <span key={badge.key} style={{ ...styles.happycallBadge, ...getHappycallRankStyle(badge.rank) }}>
+                                      {badge.label}
+                                    </span>
+                                  ))}
+                                </div>
+                              ) : null}
                               <div style={styles.qtyRow}>
                                 <span style={styles.qtyChip}>총 발주 {product.totalQty}개</span>
                                 {historySummary ? <span style={styles.qtyChip}>{historySummary}</span> : null}
@@ -2659,15 +2657,15 @@ const styles = {
     paddingBottom: 2,
     whiteSpace: "nowrap",
   },
-  kpiGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
-    gap: 10,
-    marginBottom: 12,
-  },
   happycallTopGrid: {
     display: "grid",
     gridTemplateColumns: "repeat(5, minmax(0, 1fr))",
+    gap: 10,
+    marginBottom: 12,
+  },
+  kpiGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
     gap: 10,
     marginBottom: 12,
   },
@@ -2696,7 +2694,6 @@ const styles = {
     alignItems: "center",
     gap: 8,
     marginBottom: 10,
-    minHeight: 24,
   },
   topMedal: {
     fontSize: 18,
@@ -2808,12 +2805,15 @@ const styles = {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "flex-start",
-    gap: 8,
+    gap: 12,
   },
   cardTitle: {
+    flex: 1,
+    minWidth: 0,
     fontSize: 17,
     fontWeight: 800,
     lineHeight: 1.45,
+    textAlign: "left",
   },
   cardMeta: {
     marginTop: 6,

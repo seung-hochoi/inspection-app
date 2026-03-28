@@ -689,6 +689,13 @@ function saveBatch_(rows) {
 function upsertInspectionRow_(sheet, payload) {
   const row = buildInspectionPayload_(payload || {});
   const targetRow = findInspectionRow_(sheet, row["작업기준일또는CSV식별값"], row["상품코드"], row["협력사명"]);
+  if (shouldDeleteInspectionRow_(row)) {
+    if (targetRow > 0) {
+      sheet.deleteRow(targetRow);
+      row.__rowNumber = 0;
+    }
+    return row;
+  }
   if (targetRow > 0) {
     const existingValues = sheet.getRange(targetRow, 1, 1, sheet.getLastColumn()).getValues()[0];
     row["사진링크"] = row["사진링크"] || String(existingValues[10] || "").trim();
@@ -718,6 +725,14 @@ function upsertMovementRow_(sheet, payload) {
     row["센터명"],
     row["처리유형"]
   );
+
+  if (shouldDeleteMovementRow_(row)) {
+    if (targetRow > 0) {
+      sheet.deleteRow(targetRow);
+      row.__rowNumber = 0;
+    }
+    return row;
+  }
 
   if (targetRow > 0) {
     const existing = readMovementRow_(sheet, targetRow);
@@ -930,6 +945,24 @@ function buildRecordPayload_(payload) {
   return record;
 }
 
+function shouldDeleteInspectionRow_(row) {
+  if (!row) return false;
+  var inspectionQty = parseNumber_(row["검품수량"] || 0);
+  var returnQty = parseNumber_(row["회송수량"] || 0);
+  var exchangeQty = parseNumber_(row["교환수량"] || 0);
+  var hasPhoto = !!String(row["사진링크"] || row["사진링크목록"] || row["사진파일ID목록"] || "").trim();
+  return inspectionQty <= 0 && returnQty <= 0 && exchangeQty <= 0 && !hasPhoto;
+}
+
+function shouldDeleteMovementRow_(row) {
+  if (!row) return false;
+  var returnQty = parseNumber_(row["회송수량"] || 0);
+  var exchangeQty = parseNumber_(row["교환수량"] || 0);
+  var memo = String(row["비고"] || "").trim();
+  var hasPhoto = !!String(row["사진링크"] || row["사진링크목록"] || row["사진파일ID목록"] || "").trim();
+  return returnQty <= 0 && exchangeQty <= 0 && !memo && !hasPhoto;
+}
+
 function writeInspectionRow_(sheet, targetRow, record) {
   const values = [[
     record["작성일시"],
@@ -1033,6 +1066,39 @@ function syncInspectionMovementTotals_(inspectionSheet, recordsSheet) {
   }
 
   range.setValues(values);
+  purgeEmptyInspectionRows_(inspectionSheet);
+}
+
+function purgeEmptyInspectionRows_(inspectionSheet) {
+  if (!inspectionSheet || inspectionSheet.getLastRow() < 2) return 0;
+
+  const values = inspectionSheet
+    .getRange(2, 1, inspectionSheet.getLastRow() - 1, inspectionSheet.getLastColumn())
+    .getValues();
+  const rowsToDelete = [];
+
+  for (var i = 0; i < values.length; i += 1) {
+    const row = {
+      "검품수량": values[i][7],
+      "회송수량": values[i][8],
+      "교환수량": values[i][9],
+      "사진링크": values[i][10],
+      "사진링크목록": values[i][11],
+      "사진파일ID목록": values[i][12],
+    };
+    if (shouldDeleteInspectionRow_(row)) {
+      rowsToDelete.push(i + 2);
+    }
+  }
+
+  rowsToDelete.sort(function (a, b) {
+    return b - a;
+  });
+  rowsToDelete.forEach(function (rowNumber) {
+    inspectionSheet.deleteRow(rowNumber);
+  });
+
+  return rowsToDelete.length;
 }
 
 function migrateRecordSheetIfNeeded_(sheet) {
@@ -1617,6 +1683,35 @@ function scoreHappycallTextAgainstCandidate_(candidate, normalizedText, textToke
   return score;
 }
 
+function pickBestHappycallCandidate_(candidates, normalizedText, textTokens, hasSpecHint, rawText) {
+  var best = null;
+  var bestScore = -999999;
+  var secondScore = -999999;
+
+  (Array.isArray(candidates) ? candidates : []).forEach(function (candidate) {
+    var score = scoreHappycallTextAgainstCandidate_(candidate, normalizedText, textTokens, hasSpecHint, rawText);
+    if (
+      score > bestScore ||
+      (score === bestScore &&
+        Number(candidate && candidate.info && candidate.info.totalQty || 0) > Number(best && best.info && best.info.totalQty || 0))
+    ) {
+      secondScore = bestScore;
+      bestScore = score;
+      best = candidate;
+      return;
+    }
+    if (score > secondScore) {
+      secondScore = score;
+    }
+  });
+
+  return {
+    best: best,
+    bestScore: bestScore,
+    secondScore: secondScore,
+  };
+}
+
 function normalizeHappycallReason_(value) {
   var text = normalizeHappycallMatchText_(value);
   if (!text) return "";
@@ -1818,27 +1913,24 @@ function findPartnerScopedHappycallMatch_(index, record) {
     var productNameText = normalizeHappycallMatchText_(productName);
     var productNameTokens = extractHappycallNameTokens_(productName);
     var productHasSpecHint = /\d+\s*(입|개|g|kg|ml|l|봉|팩|박스|송이|망|단|줄기|통|판)/i.test(productName);
-    var bestByProductName = null;
-    var bestByProductNameScore = 0;
+    var productNamePick = pickBestHappycallCandidate_(
+      candidates,
+      productNameText,
+      productNameTokens,
+      productHasSpecHint,
+      productName
+    );
 
-    candidates.forEach(function (candidate) {
-      var score = scoreHappycallTextAgainstCandidate_(candidate, productNameText, productNameTokens, productHasSpecHint, productName);
-      if (
-        score > bestByProductNameScore ||
-        (score === bestByProductNameScore &&
-          Number(candidate.info && candidate.info.totalQty || 0) > Number(bestByProductName && bestByProductName.totalQty || 0))
-      ) {
-        bestByProductNameScore = score;
-        bestByProductName = candidate.info;
-      }
-    });
-
-    if (bestByProductNameScore >= 40) {
-      return bestByProductName;
+    if (
+      productNamePick.best &&
+      productNamePick.bestScore >= 70 &&
+      productNamePick.bestScore - productNamePick.secondScore >= 15
+    ) {
+      return productNamePick.best.info;
     }
   }
 
-  // 2차: 상품명/제목/본문에 단위 힌트가 없으면 같은 협력사 후보 중 발주수량이 큰 상품을 우선한다.
+  // 2차: 제목/본문까지 봐도 타당성이 충분히 높을 때만 매칭한다.
   return inferHappycallProductFromText_(index, [productName, subject, body].join(" "), partnerName);
 }
 
@@ -1873,24 +1965,13 @@ function inferHappycallProductFromText_(index, text, partnerName) {
     : Array.isArray(index && index.productCandidates)
     ? index.productCandidates
     : [];
-  var best = null;
-  var bestScore = 0;
+  var picked = pickBestHappycallCandidate_(candidates, normalizedText, textTokens, hasSpecHint, text);
 
-  candidates.forEach(function (candidate) {
-    var score = scoreHappycallTextAgainstCandidate_(candidate, normalizedText, textTokens, hasSpecHint, text);
-
-    if (
-      score > bestScore ||
-      (score === bestScore &&
-        Number(candidate.info && candidate.info.totalQty || 0) > Number(best && best.totalQty || 0))
-    ) {
-      bestScore = score;
-      best = candidate.info;
-    }
-  });
-
-  // 3차: 협력사가 있는데도 의미 있는 점수가 안 나오면 전역 후보로 확장하지 않고 미분류로 넘긴다.
-  return bestScore > 0 ? best : null;
+  // 애매하면 미분류로 남긴다.
+  if (!picked.best) return null;
+  if (picked.bestScore < 90) return null;
+  if (picked.bestScore - picked.secondScore < 20) return null;
+  return picked.best.info;
 }
 
 function findHappycallRow_(sheet, collectKey, mailId) {
@@ -2989,7 +3070,7 @@ function compareRowsByPartnerAndName_(a, b) {
 
 function clearSheetBody_(sheet, width) {
   if (!sheet || sheet.getLastRow() < 2) return;
-  sheet.getRange(2, 1, sheet.getLastRow() - 1, width).clearContent();
+  sheet.deleteRows(2, sheet.getLastRow() - 1);
 }
 
 function formatSheetDate_(value) {
