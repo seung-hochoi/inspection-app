@@ -239,6 +239,22 @@ const formatDateTime = (value) => {
   return date.toLocaleString("ko-KR");
 };
 
+const formatDashboardValue = (label, value) => {
+  if (value == null || value === "") return "-";
+  if (String(label).includes("율") || String(label).includes("커버리지")) {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? `${(numeric * 100).toFixed(1)}%` : String(value);
+  }
+  if (typeof value === "number") {
+    return value.toLocaleString("ko-KR");
+  }
+  const numeric = Number(value);
+  if (Number.isFinite(numeric) && String(value).trim() !== "") {
+    return numeric.toLocaleString("ko-KR");
+  }
+  return String(value);
+};
+
 const getRecordType = (record) => {
   const type = String(record.처리유형 || "").trim();
   if (type) return type;
@@ -261,28 +277,6 @@ const getRecordQtyText = (record) => {
 };
 
 const formatDateForFileName = () => new Date().toLocaleDateString("sv-SE");
-
-const sanitizeFileName = (name) =>
-  String(name || "상품")
-    .replace(/[\\/:*?"<>|]/g, "")
-    .replace(/\s+/g, "_")
-    .trim() || "상품";
-
-const getFileExtension = (url, blobType) => {
-  if (blobType) {
-    if (blobType.includes("png")) return "png";
-    if (blobType.includes("gif")) return "gif";
-    if (blobType.includes("webp")) return "webp";
-    if (blobType.includes("bmp")) return "bmp";
-    if (blobType.includes("heic")) return "heic";
-  }
-
-  const target = String(url || "").toLowerCase();
-  if (target.includes(".png")) return "png";
-  if (target.includes(".gif")) return "gif";
-  if (target.includes(".webp")) return "webp";
-  return "jpg";
-};
 
 const base64ToBlob = (base64, mimeType = "application/octet-stream") => {
   const binary = window.atob(String(base64 || ""));
@@ -380,12 +374,6 @@ const getPhotoCandidatesFromRecord = (record) => {
   return candidates;
 };
 
-const hasMovementRecord = (record) => {
-  const type = String(getRecordType(record) || "").trim().toUpperCase();
-  if (["회송", "교환", "RETURN", "EXCHANGE"].includes(type)) return true;
-  return parseQty(record?.회송수량) > 0 || parseQty(record?.교환수량) > 0;
-};
-
 function HistoryPhotoItem({ candidate, index, onOpen, styles }) {
   const [failed, setFailed] = useState(false);
 
@@ -451,6 +439,7 @@ function App() {
   const [excludedPairKeys, setExcludedPairKeys] = useState(new Set());
   const [eventMap, setEventMap] = useState({});
   const [reservationRows, setReservationRows] = useState([]);
+  const [dashboardSummary, setDashboardSummary] = useState({});
 
   const [showHistory, setShowHistory] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -545,7 +534,10 @@ function App() {
           merged.교환수량 = prevEntry.교환수량 || 0;
           merged.센터명 = prevEntry.센터명 || merged.센터명 || "";
           merged.비고 = prevEntry.비고 || merged.비고 || "";
-          merged.photoFiles = prevEntry.photoFiles || merged.photoFiles || [];
+          merged.photoFiles =
+            (Array.isArray(entry.photoFiles) && entry.photoFiles.length
+              ? entry.photoFiles
+              : prevEntry.photoFiles) || [];
         }
 
         if (entry.type === "return" || entry.type === "exchange") {
@@ -582,7 +574,7 @@ function App() {
     return "";
   };
 
-  const stopScanner = () => {
+  const stopScanner = useCallback(() => {
     if (scannerStatusTimerRef.current) {
       clearInterval(scannerStatusTimerRef.current);
       scannerStatusTimerRef.current = null;
@@ -601,12 +593,12 @@ function App() {
     setScannerReady(false);
     setTorchSupported(false);
     setTorchOn(false);
-  };
+  }, []);
 
-  const closeScanner = () => {
+  const closeScanner = useCallback(() => {
     stopScanner();
     setIsScannerOpen(false);
-  };
+  }, [stopScanner]);
 
   const focusSearchInput = () => {
     requestAnimationFrame(() => {
@@ -628,8 +620,6 @@ function App() {
     }
   };
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   const startScanner = useCallback(async () => {
     try {
       setScannerError("");
@@ -680,9 +670,8 @@ function App() {
           return;
         }
 
-        if (!scannerReady) setScannerReady(true);
-
         if (!err || err.name === "NotFoundException") {
+          setScannerReady((prev) => prev || true);
           return;
         }
 
@@ -723,7 +712,7 @@ function App() {
       setScannerStatus("카메라를 사용할 수 없습니다.");
       stopScanner();
     }
-  }, []);
+  }, [closeScanner, stopScanner]);
   const handleCsvUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -774,6 +763,7 @@ function App() {
       setCurrentJob(nextJob);
       setCurrentFileName(file.name);
       setCurrentFileModifiedAt(new Date(file.lastModified).toISOString());
+      setDashboardSummary(result.summary || {});
   
       setMessage("CSV 업로드 완료");
     } catch (err) {
@@ -796,7 +786,7 @@ function App() {
     return () => stopScanner();
   }, [isScannerOpen, startScanner]);
 
-  const loadBootstrap = async () => {
+  const loadBootstrap = useCallback(async () => {
     if (!SCRIPT_URL.trim()) {
       setBootLoading(false);
       setError("REACT_APP_GOOGLE_SCRIPT_URL 환경변수가 필요합니다.");
@@ -864,15 +854,16 @@ function App() {
       setRows(Array.isArray(job?.rows) ? job.rows : []);
       setCurrentFileName(job?.source_file_name || "");
       setCurrentFileModifiedAt(job?.source_file_modified || "");
+      setDashboardSummary(data.summary || {});
       setMessage(job ? "최근 작업을 불러왔습니다." : "CSV를 업로드해주세요.");
     } catch (err) {
       setError(err.message || "초기 데이터 불러오기 실패");
     } finally {
       setBootLoading(false);
     }
-  };
+  }, []);
 
-  const fetchHistoryRowsData = async () => {
+  const fetchHistoryRowsData = useCallback(async () => {
     const response = await fetch(`${SCRIPT_URL}?action=getRecords`);
     const result = await response.json();
 
@@ -883,9 +874,9 @@ function App() {
     return (Array.isArray(result.records) ? result.records : []).sort((a, b) =>
       String(b.작성일시 || "").localeCompare(String(a.작성일시 || ""), "ko")
     );
-  };
+  }, []);
 
-  const loadHistoryRows = async () => {
+  const loadHistoryRows = useCallback(async () => {
     try {
       setHistoryLoading(true);
       setError("");
@@ -899,11 +890,12 @@ function App() {
     } finally {
       setHistoryLoading(false);
     }
-  };
+  }, [fetchHistoryRowsData]);
 
   useEffect(() => {
     loadBootstrap();
-  }, []);
+    loadHistoryRows();
+  }, [loadBootstrap, loadHistoryRows]);
 
   const filteredRows = useMemo(() => {
     return rows.filter((row) => {
@@ -982,6 +974,41 @@ function App() {
         })),
       }));
   }, [filteredRows, search, eventMap]);
+
+  const historyCountMap = useMemo(() => {
+    const map = {};
+
+    (historyRows || []).forEach((record) => {
+      const key = `${record.협력사명 || ""}||${record.상품코드 || ""}`;
+      if (!map[key]) {
+        map[key] = { returnCount: 0, exchangeCount: 0 };
+      }
+
+      if (parseQty(record.회송수량) > 0) {
+        map[key].returnCount += 1;
+      }
+
+      if (parseQty(record.교환수량) > 0) {
+        map[key].exchangeCount += 1;
+      }
+    });
+
+    return map;
+  }, [historyRows]);
+
+  const dashboardCards = useMemo(
+    () => [
+      { label: "총 입고금액", value: dashboardSummary["총 입고금액"] },
+      { label: "총 입고수량", value: dashboardSummary["총 입고수량"] },
+      { label: "검품 입고금액", value: dashboardSummary["검품 입고금액"] },
+      { label: "검품 입고수량", value: dashboardSummary["검품 입고수량"] },
+      { label: "검품 수량", value: dashboardSummary["검품 수량"] },
+      { label: "검품율", value: dashboardSummary["검품율"] },
+      { label: "실 검품률", value: dashboardSummary["실 검품률"] },
+      { label: "실제 SKU 커버리지", value: dashboardSummary["실제 SKU 커버리지"] },
+    ],
+    [dashboardSummary]
+  );
 
   const updateDraft = (key, field, value) => {
     setDrafts((prev) => ({
@@ -1064,6 +1091,10 @@ function App() {
         setHistoryRows(nextRows);
       }
 
+      if (result.summary) {
+        setDashboardSummary(result.summary);
+      }
+
       setToast("저장 완료");
     } catch (err) {
       setItemStatuses(targetKeys, "failed");
@@ -1103,8 +1134,9 @@ function App() {
   }, [pendingMap, saving]);
 
   const saveInspectionQtySimple = async (product) => {
-    const draftKey = `inspection||${product.productCode}`;
+    const draftKey = `inspection||${product.partner}||${product.productCode}`;
     const qty = parseQty(drafts[draftKey]?.inspectionQty);
+    const photoFiles = Array.isArray(drafts[draftKey]?.photoFiles) ? drafts[draftKey].photoFiles : [];
     const entityKey = makeEntityKey(currentJob?.job_key, product.productCode, product.partner);
 
     if (qty <= 0) {
@@ -1132,7 +1164,7 @@ function App() {
         비고: pendingMap[entityKey]?.비고 || "",
         행사여부: product.eventInfo?.행사여부 || "",
         행사명: product.eventInfo?.행사명 || "",
-        photoFiles: pendingMap[entityKey]?.photoFiles || [],
+        photoFiles: photoFiles.length ? photoFiles : pendingMap[entityKey]?.photoFiles || [],
       },
     ]);
     setToast("저장 대기중");
@@ -1145,7 +1177,7 @@ function App() {
       return;
     }
 
-    const draftKey = `return||${product.productCode}||${centerName}`;
+    const draftKey = `return||${product.partner}||${product.productCode}||${centerName}`;
     const draft = drafts[draftKey] || {};
     const returnQty = parseQty(draft.returnQty);
     const exchangeQty = parseQty(draft.exchangeQty);
@@ -1269,21 +1301,6 @@ function App() {
       setError("");
       setMessage("");
 
-      const records = historyRows.length ? historyRows : await loadHistoryRows();
-      const targetRecords = records.filter((record) => {
-        const hasPhotos = getPhotoCandidatesFromRecord(record).length > 0;
-        if (!hasPhotos) return false;
-
-        const hasMovement = hasMovementRecord(record);
-        if (mode === "movement") return hasMovement;
-        return !hasMovement;
-      });
-
-      if (!targetRecords.length) {
-        setToast("다운로드할 사진이 없습니다");
-        return;
-      }
-
       const response = await fetch(SCRIPT_URL, {
         method: "POST",
         headers: { "Content-Type": "text/plain;charset=utf-8" },
@@ -1309,6 +1326,8 @@ function App() {
       const fileName = result.fileName ||
         (mode === "movement"
           ? `회송_교환_사진_${formatDateForFileName()}.zip`
+          : mode === "inspection"
+          ? `검품사진_${formatDateForFileName()}.zip`
           : `사진만있는상품_${formatDateForFileName()}.zip`);
 
       link.href = href;
@@ -1369,6 +1388,9 @@ function App() {
       setShowAdminReset(false);
       setAdminPassword("");
       await loadBootstrap();
+      if (result.summary) {
+        setDashboardSummary(result.summary);
+      }
       setToast("현재 작업 입력 데이터 초기화 완료");
     } catch (err) {
       setError(err.message || "초기화 실패");
@@ -1388,8 +1410,50 @@ function App() {
       />
 
       <div style={styles.headerCard}>
-        <h1 style={styles.title}>GS신선강화지원팀</h1>
-        <p style={styles.subtitle}>승호</p>
+        <div style={styles.headerTopRow}>
+          <div>
+            <h1 style={styles.title}>GS신선강화지원팀</h1>
+            <p style={styles.subtitle}>승호</p>
+          </div>
+          <div style={styles.headerModeBadge}>{mode === "inspection" ? "검품 모드" : "회송/교환 모드"}</div>
+        </div>
+        <div style={styles.quickActionGrid}>
+          <button
+            type="button"
+            onClick={() => setMode("inspection")}
+            style={{ ...styles.quickActionCard, ...(mode === "inspection" ? styles.quickActionCardActive : {}) }}
+          >
+            <span style={styles.quickActionIcon}>#</span>
+            <span style={styles.quickActionText}>검품</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode("return")}
+            style={{ ...styles.quickActionCard, ...(mode === "return" ? styles.quickActionCardActive : {}) }}
+          >
+            <span style={styles.quickActionIcon}>!</span>
+            <span style={styles.quickActionText}>회송</span>
+          </button>
+          <button
+            type="button"
+            onClick={async () => {
+              setShowHistory(true);
+              await loadHistoryRows();
+            }}
+            style={styles.quickActionCard}
+          >
+            <span style={styles.quickActionIcon}>=</span>
+            <span style={styles.quickActionText}>내역</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            style={styles.quickActionCard}
+          >
+            <span style={styles.quickActionIcon}>+</span>
+            <span style={styles.quickActionText}>CSV</span>
+          </button>
+        </div>
       </div>
 
       <div style={styles.tabRow}>
@@ -1439,8 +1503,8 @@ function App() {
             placeholder="상품명 / 상품코드 / 협력사 검색"
             style={styles.searchInput}
           />
-          <button type="button" onClick={() => setIsScannerOpen(true)} style={styles.scanButton}>
-            바코드
+          <button type="button" onClick={() => setIsScannerOpen(true)} style={styles.scanButton} aria-label="바코드 스캔">
+            <span style={styles.scanIcon}>⌁</span>
           </button>
         </div>
       </div>
@@ -1454,6 +1518,15 @@ function App() {
             : error || message}
         </div>
       )}
+
+      <div style={styles.kpiGrid}>
+        {dashboardCards.map((card) => (
+          <div key={card.label} style={styles.kpiCard}>
+            <div style={styles.kpiLabel}>{card.label}</div>
+            <div style={styles.kpiValue}>{formatDashboardValue(card.label, card.value)}</div>
+          </div>
+        ))}
+      </div>
 
       <div style={styles.countRow}>
         <div style={styles.countText}>총 {groupedPartners.reduce((sum, item) => sum + item.products.length, 0)}건</div>
@@ -1474,14 +1547,21 @@ function App() {
             onClick={() => downloadPhotoZip("movement")}
             style={styles.historyButton}
           >
-            {zipDownloading === "movement" ? "ZIP 생성중..." : "회송/교환 사진 ZIP"}
+            {zipDownloading === "movement" ? "ZIP 생성중..." : "불량사진 저장"}
+          </button>
+          <button
+            type="button"
+            onClick={() => downloadPhotoZip("inspection")}
+            style={styles.historyButton}
+          >
+            {zipDownloading === "inspection" ? "ZIP 생성중..." : "검품사진 저장"}
           </button>
           <button
             type="button"
             onClick={() => downloadPhotoZip("photoOnly")}
             style={styles.historyButton}
           >
-            {zipDownloading === "photoOnly" ? "ZIP 생성중..." : "사진만 있는 상품 ZIP"}
+            {zipDownloading === "photoOnly" ? "ZIP 생성중..." : "참고사진 저장"}
           </button>
           <button
             type="button"
@@ -1494,7 +1574,7 @@ function App() {
             }}
             style={styles.historyButton}
           >
-            {showHistory ? "내역 닫기" : "내역 보기"}
+            {showHistory ? "내역 닫기" : "내역"}
           </button>
         </div>
       </div>
@@ -1519,16 +1599,27 @@ function App() {
               {expandedPartner === partnerGroup.partner && (
                 <div style={styles.partnerBody}>
                   {partnerGroup.products.map((product) => {
-                    const isOpen = expandedProductCode === `${partnerGroup.partner}__${product.productCode}`;
+                    const productStateKey = `${product.partner}||${product.productCode}`;
+                    const historyCounts = historyCountMap[`${product.partner}||${product.productCode}`] || {
+                      returnCount: 0,
+                      exchangeCount: 0,
+                    };
+                    const historySummary = [
+                      historyCounts.returnCount > 0 ? `회송 ${historyCounts.returnCount}` : "",
+                      historyCounts.exchangeCount > 0 ? `교환 ${historyCounts.exchangeCount}` : "",
+                    ]
+                      .filter(Boolean)
+                      .join(" / ");
+                    const isOpen = expandedProductCode === productStateKey;
                     const selectedCenter =
-                      selectedCenterByProduct[product.productCode] || product.centers[0]?.center || "";
+                      selectedCenterByProduct[productStateKey] || product.centers[0]?.center || "";
                     const selectedCenterInfo =
                       product.centers.find((item) => item.center === selectedCenter) || null;
 
                     const draftKey =
                       mode === "inspection"
-                        ? `inspection||${product.productCode}`
-                        : `return||${product.productCode}||${selectedCenter}`;
+                        ? `inspection||${product.partner}||${product.productCode}`
+                        : `return||${product.partner}||${product.productCode}||${selectedCenter}`;
                     const draft = drafts[draftKey] || {};
                     const entityKey = makeEntityKey(currentJob?.job_key, product.productCode, product.partner);
                     const inspectionStatus = itemStatusMap[entityKey];
@@ -1555,6 +1646,7 @@ function App() {
                               <div style={styles.cardMeta}>협력사 {product.partner}</div>
                               <div style={styles.qtyRow}>
                                 <span style={styles.qtyChip}>총 발주 {product.totalQty}개</span>
+                                {historySummary ? <span style={styles.qtyChip}>{historySummary}</span> : null}
                               </div>
                             </div>
 
@@ -1600,6 +1692,49 @@ function App() {
                                 {inspectionStatus === "saving" ? "..." : "저장"}
                               </button>
                             </div>
+                            <div style={styles.formGroup}>
+                              <label style={styles.label}>검품 사진</label>
+                              <input
+                                type="file"
+                                accept="image/*"
+                                multiple
+                                onChange={(e) => {
+                                  const files = Array.from(e.target.files || []);
+                                  updateDraft(draftKey, "photoFiles", files);
+                                  updateDraft(
+                                    draftKey,
+                                    "photoNames",
+                                    files.map((file) => file.name)
+                                  );
+
+                                  if (files.length) {
+                                    upsertPendingEntries([
+                                      {
+                                        key: entityKey,
+                                        type: "inspection",
+                                        작업기준일또는CSV식별값: currentJob?.job_key || "",
+                                        작성일시: new Date().toISOString(),
+                                        상품코드: product.productCode,
+                                        상품명: product.productName,
+                                        협력사명: product.partner,
+                                        전체발주수량: product.totalQty || 0,
+                                        발주수량: product.totalQty || 0,
+                                        검품수량: parseQty(draft.inspectionQty),
+                                        회송수량: 0,
+                                        교환수량: 0,
+                                        photoFiles: files,
+                                      },
+                                    ]);
+                                  }
+                                }}
+                                style={styles.fileInput}
+                              />
+                              <div style={styles.metaText}>
+                                {Array.isArray(draft.photoNames) && draft.photoNames.length
+                                  ? draft.photoNames.join(", ")
+                                  : "선택된 사진 없음"}
+                              </div>
+                            </div>
                             {inspectionStatus ? (
                               <div style={styles.itemStatusText}>{getStatusText(inspectionStatus)}</div>
                             ) : null}
@@ -1610,12 +1745,12 @@ function App() {
                               type="button"
                               style={styles.cardButton}
                               onClick={() => {
-                                const nextKey = `${partnerGroup.partner}__${product.productCode}`;
+                                const nextKey = productStateKey;
                                 setExpandedProductCode((prev) => (prev === nextKey ? "" : nextKey));
                                 setSelectedCenterByProduct((prev) => ({
                                   ...prev,
-                                  [product.productCode]:
-                                    prev[product.productCode] || product.centers[0]?.center || "",
+                                  [productStateKey]:
+                                    prev[productStateKey] || product.centers[0]?.center || "",
                                 }));
                               }}
                             >
@@ -1631,6 +1766,7 @@ function App() {
                               <div style={styles.cardMeta}>협력사 {product.partner}</div>
                               <div style={styles.qtyRow}>
                                 <span style={styles.qtyChip}>총 발주 {product.totalQty}개</span>
+                                {historySummary ? <span style={styles.qtyChip}>{historySummary}</span> : null}
                               </div>
                             </button>
 
@@ -1643,7 +1779,7 @@ function App() {
                                 onChange={(e) =>
                                   setSelectedCenterByProduct((prev) => ({
                                     ...prev,
-                                    [product.productCode]: e.target.value,
+                                    [productStateKey]: e.target.value,
                                   }))
                                 }
                                 style={styles.input}
@@ -1934,6 +2070,13 @@ const styles = {
     marginBottom: 12,
     border: "1px solid #e5e7eb",
   },
+  headerTopRow: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: 12,
+    marginBottom: 14,
+  },
   title: {
     margin: 0,
     fontSize: 24,
@@ -1944,6 +2087,46 @@ const styles = {
     marginBottom: 0,
     color: "#6b7280",
     fontSize: 14,
+  },
+  headerModeBadge: {
+    background: "#e0e7ff",
+    color: "#3730a3",
+    borderRadius: 999,
+    padding: "8px 12px",
+    fontSize: 12,
+    fontWeight: 800,
+    flexShrink: 0,
+  },
+  quickActionGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+    gap: 10,
+  },
+  quickActionCard: {
+    minHeight: 74,
+    borderRadius: 16,
+    border: "1px solid #dbe3f0",
+    background: "#f8fafc",
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    cursor: "pointer",
+    color: "#0f172a",
+    fontWeight: 800,
+  },
+  quickActionCardActive: {
+    background: "#111827",
+    color: "#fff",
+    borderColor: "#111827",
+  },
+  quickActionIcon: {
+    fontSize: 20,
+    lineHeight: 1,
+  },
+  quickActionText: {
+    fontSize: 13,
   },
   tabRow: {
     display: "flex",
@@ -2052,17 +2235,25 @@ const styles = {
     alignItems: "center",
   },
   scanButton: {
-    minWidth: 88,
+    minWidth: 56,
     minHeight: 48,
-    padding: "0 14px",
+    padding: 0,
     borderRadius: 12,
     border: "1px solid #111827",
     background: "#111827",
     color: "#fff",
-    fontSize: 14,
+    fontSize: 18,
     fontWeight: 800,
     cursor: "pointer",
     flexShrink: 0,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  scanIcon: {
+    fontSize: 22,
+    lineHeight: 1,
+    transform: "rotate(90deg)",
   },
   formGroup: {
     marginBottom: 12,
@@ -2118,6 +2309,32 @@ const styles = {
     gap: 8,
     flexWrap: "wrap",
     justifyContent: "flex-end",
+  },
+  kpiGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
+    gap: 10,
+    marginBottom: 12,
+  },
+  kpiCard: {
+    background: "#ffffff",
+    border: "1px solid #e5e7eb",
+    borderRadius: 16,
+    padding: 14,
+    boxShadow: "0 4px 14px rgba(15,23,42,0.04)",
+  },
+  kpiLabel: {
+    fontSize: 12,
+    fontWeight: 700,
+    color: "#64748b",
+    marginBottom: 8,
+  },
+  kpiValue: {
+    fontSize: 22,
+    lineHeight: 1.2,
+    fontWeight: 800,
+    color: "#0f172a",
+    wordBreak: "break-word",
   },
   historyButton: {
     border: "1px solid #d1d5db",
