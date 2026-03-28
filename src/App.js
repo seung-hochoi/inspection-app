@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import Papa from "papaparse";
 import { BrowserCodeReader, BrowserMultiFormatReader } from "@zxing/browser";
 
-const SCRIPT_URL = process.env.REACT_APP_GOOGLE_SCRIPT_URL || "https://script.google.com/macros/s/AKfycbxuxvHg1PbOMppO5vzM05qDd3_eLTWChdOQQUxBXWlA7e57Al3MZXp3b1Wyl3Lf9iQ6Gg/exec";
+const SCRIPT_URL = process.env.REACT_APP_GOOGLE_SCRIPT_URL || "https://script.google.com/macros/s/AKfycbwd0PlXVGFpf3q3BZT995-YK1O2S5nAjvFVlhqlIonLI5hWifMqXBQVDnpaFpZEdJ04Nw/exec";
 
 const normalizeKey = (key) => String(key || "").replace(/\uFEFF/g, "").trim();
 
@@ -1531,17 +1531,25 @@ function App() {
       });
 
       const rows = Array.from(dedupedMap.values());
+      const skippedCount = Math.max(0, rawRows.length - rows.length);
 
       if (!rows.length) {
         throw new Error("해피콜 CSV에서 가져올 수 있는 행이 없습니다.");
       }
 
       const batchSize = rows.length >= 1500 ? 500 : 300;
+      const totalBatches = Math.ceil(rows.length / batchSize);
       let lastResult = null;
+      let insertedTotal = 0;
+      let updatedTotal = 0;
 
       for (let index = 0; index < rows.length; index += batchSize) {
         const batchRows = rows.slice(index, index + batchSize);
-        setMessage(`해피콜 CSV 처리 중... ${Math.min(index + batchRows.length, rows.length)} / ${rows.length}`);
+        const batchNumber = Math.floor(index / batchSize) + 1;
+        const processedCount = Math.min(index + batchRows.length, rows.length);
+        setMessage(
+          `해피콜 CSV 처리 중... ${batchNumber}/${totalBatches} 배치 (${processedCount} / ${rows.length})`
+        );
 
         const response = await fetch(SCRIPT_URL, {
           method: "POST",
@@ -1554,17 +1562,27 @@ function App() {
 
         const result = await response.json();
         if (!response.ok || result.ok === false) {
-          throw new Error(result.message || "해피콜 CSV 가져오기에 실패했습니다.");
+          throw new Error(
+            result.message || `해피콜 CSV 가져오기에 실패했습니다. (${batchNumber}/${totalBatches} 배치)`
+          );
         }
 
         lastResult = result;
+        insertedTotal += Number(result?.data?.inserted || 0);
+        updatedTotal += Number(result?.data?.updated || 0);
       }
 
       setHappycallAnalytics(lastResult?.happycall || {});
       setMessage("");
-      setToast("해피콜 CSV 가져오기 완료");
+      setToast(
+        `해피콜 CSV 반영 완료 · 신규 ${insertedTotal}건 · 갱신 ${updatedTotal}건${
+          skippedCount > 0 ? ` · 중복 제외 ${skippedCount}건` : ""
+        }`
+      );
     } catch (err) {
-      setError(err.message || "해피콜 CSV 가져오기에 실패했습니다.");
+      setError(
+        `${err.message || "해피콜 CSV 가져오기에 실패했습니다."} 같은 CSV를 다시 올리면 이어서 반영됩니다.`
+      );
     } finally {
       setUploadingHappycallCsv(false);
       if (e.target) {

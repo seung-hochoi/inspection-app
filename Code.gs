@@ -1340,6 +1340,20 @@ function normalizeHappycallRecord_(payload, categoryIndex) {
     partnerName: partnerName,
   });
   var finalReason = titleReason || normalizeHappycallReason_(bodyReason) || "기타";
+  var originalSnapshot = {
+    제목: subject,
+    메일ID: mailId,
+    접수일시: receivedAt,
+    대분류: explicitMajor || categoryInfo.majorCategory || "",
+    중분류: explicitMid || categoryInfo.midCategory || "",
+    소분류: explicitSub || categoryInfo.subCategory || productName || categoryInfo.productName || "",
+    상품명: productName || categoryInfo.productName || explicitSub || "",
+    상품코드: productCode || categoryInfo.productCode || "",
+    파트너사: partnerName || categoryInfo.partnerName || "",
+    본문장애유형: bodyReason,
+    제목감지사유: titleReason,
+    최종사유: finalReason,
+  };
   var keyBasis = [
     mailId,
     receivedAt,
@@ -1354,21 +1368,21 @@ function normalizeHappycallRecord_(payload, categoryIndex) {
 
   return {
     "수집키": mailId || createDigestString_(keyBasis),
-    "메일ID": mailId,
-    "제목": subject,
-    "본문": body,
-    "접수일시": receivedAt,
-    "대분류": explicitMajor || categoryInfo.majorCategory || "",
-    "중분류": explicitMid || categoryInfo.midCategory || "",
-    "소분류": explicitSub || categoryInfo.subCategory || productName || categoryInfo.productName || "",
-    "상품명": productName || categoryInfo.productName || explicitSub || "",
-    "상품코드": productCode || categoryInfo.productCode || "",
-    "파트너사": partnerName || categoryInfo.partnerName || "",
-    "본문장애유형": bodyReason,
-    "제목감지사유": titleReason,
-    "최종사유": finalReason,
+    "메일ID": truncateSheetCell_(mailId, 5000),
+    "제목": truncateSheetCell_(subject, 5000),
+    "본문": truncateSheetCell_(body, 45000),
+    "접수일시": truncateSheetCell_(receivedAt, 5000),
+    "대분류": truncateSheetCell_(explicitMajor || categoryInfo.majorCategory || "", 5000),
+    "중분류": truncateSheetCell_(explicitMid || categoryInfo.midCategory || "", 5000),
+    "소분류": truncateSheetCell_(explicitSub || categoryInfo.subCategory || productName || categoryInfo.productName || "", 5000),
+    "상품명": truncateSheetCell_(productName || categoryInfo.productName || explicitSub || "", 5000),
+    "상품코드": truncateSheetCell_(productCode || categoryInfo.productCode || "", 5000),
+    "파트너사": truncateSheetCell_(partnerName || categoryInfo.partnerName || "", 5000),
+    "본문장애유형": truncateSheetCell_(bodyReason, 5000),
+    "제목감지사유": truncateSheetCell_(titleReason, 5000),
+    "최종사유": truncateSheetCell_(finalReason, 5000),
     "건수": 1,
-    "원본JSON": JSON.stringify(payload || {}),
+    "원본JSON": truncateSheetCell_(JSON.stringify(originalSnapshot), 45000),
     "생성일시": new Date().toISOString(),
   };
 }
@@ -1561,6 +1575,13 @@ function createDigestString_(text) {
   return Utilities.base64EncodeWebSafe(
     Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, String(text || ""))
   ).replace(/=+$/, "");
+}
+
+function truncateSheetCell_(value, maxLength) {
+  var text = String(value || "");
+  var limit = Math.max(100, Number(maxLength || 0) || 50000);
+  if (text.length <= limit) return text;
+  return text.slice(0, Math.max(0, limit - 12)) + " ...(생략)";
 }
 
 function isHappycallWithinDays_(value, days) {
