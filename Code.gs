@@ -1467,7 +1467,89 @@ function isGenericHappycallToken_(token) {
   }[text] === true;
 }
 
-function scoreHappycallTextAgainstCandidate_(candidate, normalizedText, textTokens, hasSpecHint) {
+function getDistinctiveHappycallTokens_() {
+  return [
+    "프리미엄",
+    "클래식",
+    "스위티오",
+    "고당도",
+    "허니",
+    "골드",
+    "낱개",
+    "송이",
+    "날개용",
+    "점보",
+    "특대",
+    "대과",
+    "소과",
+    "망고",
+    "바나나",
+    "오렌지",
+    "감귤",
+    "참타리",
+    "오이",
+    "포장무"
+  ].map(normalizeHappycallMatchText_);
+}
+
+function extractHappycallUnitHints_(value) {
+  var text = String(value || "");
+  var hints = [];
+  var seen = {};
+
+  function pushHint_(hint) {
+    var key = normalizeHappycallMatchText_(hint);
+    if (!key || seen[key]) return;
+    seen[key] = true;
+    hints.push(key);
+  }
+
+  (text.match(/\d+\s*(입|개|송이|봉|팩|박스|망|단|줄기|통|판|kg|g|ml|l)/gi) || []).forEach(pushHint_);
+  ["낱개", "송이", "박스", "봉", "팩", "망", "단", "줄기", "통", "판", "날개용"].forEach(function (token) {
+    if (text.indexOf(token) >= 0) pushHint_(token);
+  });
+
+  return hints;
+}
+
+function hasMismatchedUnitHint_(textHints, candidateHints) {
+  if (!textHints.length || !candidateHints.length) return false;
+
+  var normalizedTextHints = {};
+  textHints.forEach(function (hint) {
+    normalizedTextHints[normalizeHappycallMatchText_(hint)] = true;
+  });
+
+  var normalizedCandidateHints = {};
+  candidateHints.forEach(function (hint) {
+    normalizedCandidateHints[normalizeHappycallMatchText_(hint)] = true;
+  });
+
+  var groupedKinds = [
+    ["낱개", "송이", "봉", "팩", "박스", "망", "단", "줄기", "통", "판", "날개용"],
+  ];
+
+  for (var i = 0; i < groupedKinds.length; i += 1) {
+    var group = groupedKinds[i];
+    var textMatched = group.filter(function (hint) {
+      return normalizedTextHints[normalizeHappycallMatchText_(hint)];
+    });
+    var candidateMatched = group.filter(function (hint) {
+      return normalizedCandidateHints[normalizeHappycallMatchText_(hint)];
+    });
+
+    if (textMatched.length && candidateMatched.length) {
+      var overlap = textMatched.some(function (hint) {
+        return candidateMatched.indexOf(hint) >= 0;
+      });
+      if (!overlap) return true;
+    }
+  }
+
+  return false;
+}
+
+function scoreHappycallTextAgainstCandidate_(candidate, normalizedText, textTokens, hasSpecHint, rawText) {
   var matchKey = String(candidate && candidate.matchKey || "");
   if (!matchKey) return 0;
 
@@ -1481,6 +1563,8 @@ function scoreHappycallTextAgainstCandidate_(candidate, normalizedText, textToke
   }
 
   var candidateTokens = Array.isArray(candidate && candidate.tokens) ? candidate.tokens : [];
+  var candidateHints = Array.isArray(candidate && candidate.unitHints) ? candidate.unitHints : [];
+  var textHints = extractHappycallUnitHints_(rawText || normalizedText);
   candidateTokens.forEach(function (token) {
     if (!token || token.length < 2 || isGenericHappycallToken_(token)) return;
     if (normalizedText.indexOf(token) >= 0) {
@@ -1498,6 +1582,33 @@ function scoreHappycallTextAgainstCandidate_(candidate, normalizedText, textToke
       }
     }
   });
+
+  var distinctiveTokens = getDistinctiveHappycallTokens_();
+  distinctiveTokens.forEach(function (token) {
+    if (!token || token.length < 2) return;
+    var textHas = normalizedText.indexOf(token) >= 0 || textTokens.indexOf(token) >= 0;
+    var candidateHas = matchKey.indexOf(token) >= 0 || candidateTokens.indexOf(token) >= 0;
+
+    if (textHas && candidateHas) {
+      score += token.length * 40;
+    } else if (textHas && !candidateHas) {
+      score -= token.length * 25;
+    }
+  });
+
+  if (textHints.length && candidateHints.length) {
+    var matchedHintCount = 0;
+    textHints.forEach(function (hint) {
+      if (candidateHints.indexOf(hint) >= 0) {
+        matchedHintCount += 1;
+        score += Math.max(20, hint.length * 18);
+      }
+    });
+
+    if (matchedHintCount === 0 && hasMismatchedUnitHint_(textHints, candidateHints)) {
+      score -= 180;
+    }
+  }
 
   if (!hasSpecHint) {
     score += Math.min(Number(candidate && candidate.info && candidate.info.totalQty || 0), 9999) / 1000;
@@ -1616,6 +1727,7 @@ function buildHappycallCategoryIndex_() {
           info: info,
           partnerKey: normalizeHappycallMatchText_(partnerName),
           tokens: extractHappycallNameTokens_(productName + " " + info.subCategory),
+          unitHints: extractHappycallUnitHints_(productName + " " + info.subCategory),
         };
         index.candidateByKey[candidateKey] = candidate;
         index.productCandidates.push(candidate);
@@ -1702,6 +1814,30 @@ function findPartnerScopedHappycallMatch_(index, record) {
     }
   }
 
+  if (productName) {
+    var productNameText = normalizeHappycallMatchText_(productName);
+    var productNameTokens = extractHappycallNameTokens_(productName);
+    var productHasSpecHint = /\d+\s*(입|개|g|kg|ml|l|봉|팩|박스|송이|망|단|줄기|통|판)/i.test(productName);
+    var bestByProductName = null;
+    var bestByProductNameScore = 0;
+
+    candidates.forEach(function (candidate) {
+      var score = scoreHappycallTextAgainstCandidate_(candidate, productNameText, productNameTokens, productHasSpecHint, productName);
+      if (
+        score > bestByProductNameScore ||
+        (score === bestByProductNameScore &&
+          Number(candidate.info && candidate.info.totalQty || 0) > Number(bestByProductName && bestByProductName.totalQty || 0))
+      ) {
+        bestByProductNameScore = score;
+        bestByProductName = candidate.info;
+      }
+    });
+
+    if (bestByProductNameScore >= 40) {
+      return bestByProductName;
+    }
+  }
+
   // 2차: 상품명/제목/본문에 단위 힌트가 없으면 같은 협력사 후보 중 발주수량이 큰 상품을 우선한다.
   return inferHappycallProductFromText_(index, [productName, subject, body].join(" "), partnerName);
 }
@@ -1741,7 +1877,7 @@ function inferHappycallProductFromText_(index, text, partnerName) {
   var bestScore = 0;
 
   candidates.forEach(function (candidate) {
-    var score = scoreHappycallTextAgainstCandidate_(candidate, normalizedText, textTokens, hasSpecHint);
+    var score = scoreHappycallTextAgainstCandidate_(candidate, normalizedText, textTokens, hasSpecHint, text);
 
     if (
       score > bestScore ||

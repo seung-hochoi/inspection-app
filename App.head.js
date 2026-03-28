@@ -1,9 +1,9 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+﻿import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Papa from "papaparse";
 import { BrowserCodeReader, BrowserMultiFormatReader } from "@zxing/browser";
 import * as XLSX from "xlsx";
 
-const SCRIPT_URL = process.env.REACT_APP_GOOGLE_SCRIPT_URL || "https://script.google.com/macros/s/AKfycby948HeJS1gm_OIrPUnEQzhhnAG-fGpUxctuIfFHVjkArYLCShxGMwav9l7xLLdo86cNQ/exec";
+const SCRIPT_URL = process.env.REACT_APP_GOOGLE_SCRIPT_URL || "https://script.google.com/macros/s/AKfycbzrPgqH8RoyY-7q2ZaDOZJqJo4aIJumTLtwmGSm-NgFnUzWyHavTi__CrwWbnwa5763wA/exec";
 
 const normalizeKey = (key) => String(key || "").replace(/\uFEFF/g, "").trim();
 
@@ -1778,7 +1778,7 @@ function App() {
         {previousDayHappycallTopList.length === 0 ? (
           <div style={styles.emptyBox}>전일 해피콜 데이터가 없습니다.</div>
         ) : (
-          <div style={styles.happycallTopGrid}>
+          <div style={styles.kpiGrid}>
             {previousDayHappycallTopList.map((card) => (
               <div
                 key={`happycall-top-${card.rank}`}
@@ -1803,7 +1803,7 @@ function App() {
                         card.rank === 1 ? "#b91c1c" : card.rank === 2 ? "#1d4ed8" : card.rank === 3 ? "#15803d" : "#64748b",
                     }}
                   >
-                    {card.rank <= 3 ? `TOP.${card.rank}` : ""}
+                    {`TOP.${card.rank}`}
                   </div>
                 </div>
                 <div
@@ -1913,7 +1913,7 @@ function App() {
                         return {
                           key: periodKey,
                           rank: stats.rank,
-                          label: stats.rank <= 3 ? `${label} 해피콜 TOP${stats.rank}` : `${label} 해피콜`,
+                          label: `${label} 해피콜 TOP${stats.rank}`,
                         };
                       })
                       .filter(Boolean);
@@ -2665,12 +2665,6 @@ const styles = {
     gap: 10,
     marginBottom: 12,
   },
-  happycallTopGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(5, minmax(0, 1fr))",
-    gap: 10,
-    marginBottom: 12,
-  },
   kpiCard: {
     background: "#ffffff",
     border: "1px solid #e5e7eb",
@@ -2696,7 +2690,6 @@ const styles = {
     alignItems: "center",
     gap: 8,
     marginBottom: 10,
-    minHeight: 24,
   },
   topMedal: {
     fontSize: 18,
