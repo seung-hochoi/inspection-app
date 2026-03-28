@@ -1409,7 +1409,11 @@ function parseHappycallBodyFields_(body) {
 }
 
 function normalizeHappycallLabel_(value) {
-  return String(value || "").replace(/\s+/g, "").trim();
+  return String(value || "")
+    .replace(/^[\s\-\*\u2022\u25CF\u25A0\u25B6\u2605\[\]\(\)]+/, "")
+    .replace(/[\]\)]+$/, "")
+    .replace(/\s+/g, "")
+    .trim();
 }
 
 function getHappycallFieldValue_(parsed, candidates) {
@@ -1428,6 +1432,78 @@ function normalizeHappycallMatchText_(value) {
     .replace(/\s+/g, "")
     .replace(/[^\u3131-\uD79Da-z0-9]/gi, "")
     .trim();
+}
+
+function extractHappycallNameTokens_(value) {
+  var rawTokens = String(value || "").match(/[가-힣A-Za-z]+/g) || [];
+  var tokenMap = {};
+
+  rawTokens.forEach(function (token) {
+    var normalized = normalizeHappycallMatchText_(token);
+    if (!normalized || normalized.length < 2) return;
+    tokenMap[normalized] = true;
+  });
+
+  return Object.keys(tokenMap);
+}
+
+function isGenericHappycallToken_(token) {
+  var text = normalizeHappycallMatchText_(token);
+  if (!text) return true;
+  return {
+    상품: true,
+    상품명: true,
+    행사상품: true,
+    예약: true,
+    공동: true,
+    긴급: true,
+    세부내용: true,
+    상태: true,
+    변질: true,
+    판매용: true,
+    클레임: true,
+    접수: true,
+    확인: true,
+  }[text] === true;
+}
+
+function scoreHappycallTextAgainstCandidate_(candidate, normalizedText, textTokens, hasSpecHint) {
+  var matchKey = String(candidate && candidate.matchKey || "");
+  if (!matchKey) return 0;
+
+  var score = 0;
+  if (normalizedText === matchKey) {
+    score += matchKey.length + 1000;
+  } else if (normalizedText.indexOf(matchKey) >= 0) {
+    score += matchKey.length + 500;
+  } else if (matchKey.indexOf(normalizedText) >= 0) {
+    score += normalizedText.length + 120;
+  }
+
+  var candidateTokens = Array.isArray(candidate && candidate.tokens) ? candidate.tokens : [];
+  candidateTokens.forEach(function (token) {
+    if (!token || token.length < 2 || isGenericHappycallToken_(token)) return;
+    if (normalizedText.indexOf(token) >= 0) {
+      score += token.length * 25;
+    } else if (textTokens.indexOf(token) >= 0) {
+      score += token.length * 18;
+    } else {
+      for (var i = 0; i < textTokens.length; i += 1) {
+        var textToken = textTokens[i];
+        if (!textToken || textToken.length < 2 || isGenericHappycallToken_(textToken)) continue;
+        if (token.indexOf(textToken) >= 0 || textToken.indexOf(token) >= 0) {
+          score += Math.min(token.length, textToken.length) * 10;
+          break;
+        }
+      }
+    }
+  });
+
+  if (!hasSpecHint) {
+    score += Math.min(Number(candidate && candidate.info && candidate.info.totalQty || 0), 9999) / 1000;
+  }
+
+  return score;
 }
 
 function normalizeHappycallReason_(value) {
@@ -1473,6 +1549,8 @@ function buildHappycallCategoryIndex_() {
     byName: {},
     productCandidates: [],
     productCandidatesByPartner: {},
+    infoByCanonicalKey: {},
+    candidateByKey: {},
   };
   var latestJob = loadLatestJob_();
   var sourceRows = buildDashboardSourceRows_(latestJob ? latestJob.rows || [] : [], readReservationRows_());
@@ -1500,35 +1578,55 @@ function buildHappycallCategoryIndex_() {
     var productCode = normalizeCode_(row.__productCode || getRowFieldValue_(row, ["상품코드", "상품 코드", "코드", "바코드"]));
     var productName = String(row.__productName || getRowFieldValue_(row, ["상품명", "상품 명", "품목명", "품명"]) || "").trim();
     var partnerName = String(row.__partner || getRowFieldValue_(row, ["협력사명", "협력사", "거래처명"]) || "").trim();
+    var qty = parseNumber_(row.__qty || getRowFieldValue_(row, ["총 발주수량", "발주수량", "입고수량", "수량"]));
     if (isExcludedByRules_(productCode, partnerName, excludedCodes, excludedPairs, excludedPartners)) return;
-    var info = {
-      majorCategory: String(getRowFieldValue_(row, ["대분류", "과채", "카테고리대", "대카테고리"]) || "").trim(),
-      midCategory: String(getRowFieldValue_(row, ["중분류", "카테고리중", "중카테고리"]) || "").trim(),
-      subCategory: String(getRowFieldValue_(row, ["소분류", "카테고리소", "소카테고리"]) || "").trim(),
-      productName: productName,
-      productCode: productCode,
-      partnerName: partnerName,
-    };
     var skuKey = makeSkuKey_(productCode, partnerName);
     var nameKey = normalizeHappycallMatchText_(productName);
     var namePartnerKey = normalizeHappycallMatchText_(productName) + "||" + normalizeHappycallMatchText_(partnerName);
+    var canonicalKey = skuKey || namePartnerKey || nameKey;
+    var info = canonicalKey && index.infoByCanonicalKey[canonicalKey];
+
+    if (!info) {
+      info = {
+        majorCategory: String(getRowFieldValue_(row, ["대분류", "과채", "카테고리대", "대카테고리"]) || "").trim(),
+        midCategory: String(getRowFieldValue_(row, ["중분류", "카테고리중", "중카테고리"]) || "").trim(),
+        subCategory: String(getRowFieldValue_(row, ["소분류", "카테고리소", "소카테고리"]) || "").trim(),
+        productName: productName,
+        productCode: productCode,
+        partnerName: partnerName,
+        totalQty: 0,
+      };
+      if (canonicalKey) {
+        index.infoByCanonicalKey[canonicalKey] = info;
+      }
+    }
+
+    info.totalQty += qty;
 
     if (skuKey) index.bySku[skuKey] = info;
     if (productCode) index.byCode[productCode] = info;
     if (nameKey) index.byName[nameKey] = info;
     if (namePartnerKey !== "||") index.byNamePartner[namePartnerKey] = info;
     if (nameKey) {
-      var candidate = {
-        matchKey: nameKey,
-        info: info,
-        partnerKey: normalizeHappycallMatchText_(partnerName),
-      };
-      index.productCandidates.push(candidate);
-      if (candidate.partnerKey) {
-        if (!index.productCandidatesByPartner[candidate.partnerKey]) {
-          index.productCandidatesByPartner[candidate.partnerKey] = [];
+      var candidateKey = nameKey + "||" + normalizeHappycallMatchText_(partnerName);
+      var candidate = index.candidateByKey[candidateKey];
+      if (!candidate) {
+        candidate = {
+          matchKey: nameKey,
+          info: info,
+          partnerKey: normalizeHappycallMatchText_(partnerName),
+          tokens: extractHappycallNameTokens_(productName + " " + info.subCategory),
+        };
+        index.candidateByKey[candidateKey] = candidate;
+        index.productCandidates.push(candidate);
+        if (candidate.partnerKey) {
+          if (!index.productCandidatesByPartner[candidate.partnerKey]) {
+            index.productCandidatesByPartner[candidate.partnerKey] = [];
+          }
+          index.productCandidatesByPartner[candidate.partnerKey].push(candidate);
         }
-        index.productCandidatesByPartner[candidate.partnerKey].push(candidate);
+      } else {
+        candidate.info = info;
       }
     }
   });
@@ -1541,18 +1639,71 @@ function findHappycallCategoryMatch_(index, record) {
   var productName = String(record.productName || "").trim();
   var partnerName = String(record.partnerName || "").trim();
   var subject = String(record.subject || "").trim();
+  var body = String(record.body || "").trim();
   var skuKey = makeSkuKey_(productCode, partnerName);
   var nameKey = normalizeHappycallMatchText_(productName);
-  var namePartnerKey = nameKey + "||" + normalizeHappycallMatchText_(partnerName);
+  var partnerKey = normalizeHappycallMatchText_(partnerName);
+  var namePartnerKey = nameKey + "||" + partnerKey;
+
+  if (skuKey && index.bySku[skuKey]) {
+    return index.bySku[skuKey];
+  }
+
+  if (productCode && index.byCode[productCode]) {
+    return index.byCode[productCode];
+  }
+
+  // 1차: 협력사 + 상품명 기준으로만 우선 매칭한다.
+  if (partnerKey) {
+    return (
+      (namePartnerKey !== "||" && index.byNamePartner[namePartnerKey]) ||
+      findPartnerScopedHappycallMatch_(index, {
+        productName: productName,
+        subject: subject,
+        body: body,
+        partnerName: partnerName,
+      }) ||
+      null
+    );
+  }
 
   return (
-    (skuKey && index.bySku[skuKey]) ||
-    (productCode && index.byCode[productCode]) ||
-    (namePartnerKey !== "||" && index.byNamePartner[namePartnerKey]) ||
     (nameKey && index.byName[nameKey]) ||
-    inferHappycallProductFromText_(index, subject || productName || "", partnerName) ||
+    inferHappycallProductFromText_(index, [productName, subject, body].join(" "), "") ||
     null
   );
+}
+
+function findPartnerScopedHappycallMatch_(index, record) {
+  var productName = String(record.productName || "").trim();
+  var subject = String(record.subject || "").trim();
+  var body = String(record.body || "").trim();
+  var partnerName = String(record.partnerName || "").trim();
+  var partnerKey = normalizeHappycallMatchText_(partnerName);
+  if (!partnerKey) return null;
+
+  var candidates = index && index.productCandidatesByPartner && index.productCandidatesByPartner[partnerKey];
+  if (!Array.isArray(candidates) || !candidates.length) return null;
+
+  var nameKey = normalizeHappycallMatchText_(productName);
+  if (nameKey) {
+    // 1차 exact: 같은 협력사 안에서 상품명이 직접 맞는 후보를 우선 사용.
+    var exactCandidates = candidates.filter(function (candidate) {
+      return String(candidate.matchKey || "") === nameKey;
+    });
+    if (exactCandidates.length === 1) {
+      return exactCandidates[0].info;
+    }
+    if (exactCandidates.length > 1) {
+      exactCandidates.sort(function (a, b) {
+        return Number(b.info && b.info.totalQty || 0) - Number(a.info && a.info.totalQty || 0);
+      });
+      return exactCandidates[0].info;
+    }
+  }
+
+  // 2차: 상품명/제목/본문에 단위 힌트가 없으면 같은 협력사 후보 중 발주수량이 큰 상품을 우선한다.
+  return inferHappycallProductFromText_(index, [productName, subject, body].join(" "), partnerName);
 }
 
 function lookupHappycallCategoryInfo_(index, record) {
@@ -1574,10 +1725,15 @@ function lookupHappycallCategoryInfo_(index, record) {
 function inferHappycallProductFromText_(index, text, partnerName) {
   var normalizedText = normalizeHappycallMatchText_(text);
   if (!normalizedText) return null;
+  var textTokens = extractHappycallNameTokens_(text);
+  var hasSpecHint = /\d+\s*(입|개|g|kg|ml|l|봉|팩)/i.test(String(text || ""));
 
   var partnerKey = normalizeHappycallMatchText_(partnerName || "");
-  var candidates = partnerKey && index && index.productCandidatesByPartner && index.productCandidatesByPartner[partnerKey]
+  var partnerCandidates = partnerKey && index && index.productCandidatesByPartner && index.productCandidatesByPartner[partnerKey]
     ? index.productCandidatesByPartner[partnerKey]
+    : [];
+  var candidates = partnerKey
+    ? partnerCandidates
     : Array.isArray(index && index.productCandidates)
     ? index.productCandidates
     : [];
@@ -1585,24 +1741,19 @@ function inferHappycallProductFromText_(index, text, partnerName) {
   var bestScore = 0;
 
   candidates.forEach(function (candidate) {
-    var matchKey = String(candidate.matchKey || "");
-    if (!matchKey) return;
+    var score = scoreHappycallTextAgainstCandidate_(candidate, normalizedText, textTokens, hasSpecHint);
 
-    var score = 0;
-    if (normalizedText === matchKey) {
-      score = matchKey.length + 1000;
-    } else if (normalizedText.indexOf(matchKey) >= 0) {
-      score = matchKey.length + 500;
-    } else if (matchKey.indexOf(normalizedText) >= 0) {
-      score = normalizedText.length + 100;
-    }
-
-    if (score > bestScore) {
+    if (
+      score > bestScore ||
+      (score === bestScore &&
+        Number(candidate.info && candidate.info.totalQty || 0) > Number(best && best.totalQty || 0))
+    ) {
       bestScore = score;
       best = candidate.info;
     }
   });
 
+  // 3차: 협력사가 있는데도 의미 있는 점수가 안 나오면 전역 후보로 확장하지 않고 미분류로 넘긴다.
   return bestScore > 0 ? best : null;
 }
 
@@ -1705,6 +1856,7 @@ function getHappycallAnalytics_() {
       productName: row["상품명"] || row["소분류"] || "",
       partnerName: row["파트너사"] || "",
       subject: row["제목"] || "",
+      body: row["본문"] || "",
     });
   });
   var now = new Date();
