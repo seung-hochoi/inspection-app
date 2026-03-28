@@ -443,7 +443,16 @@ function autoResizeOperationalSheets_(ss) {
 
   sheets.forEach(function (sheet) {
     if (!sheet || sheet.getLastColumn() <= 0) return;
+    var dataRange = sheet.getDataRange();
+    if (dataRange && dataRange.getNumRows() > 0 && dataRange.getNumColumns() > 0) {
+      dataRange.setWrapStrategy(SpreadsheetApp.WrapStrategy.CLIP);
+    }
     sheet.autoResizeColumns(1, sheet.getLastColumn());
+    for (var col = 1; col <= sheet.getLastColumn(); col += 1) {
+      if (sheet.getColumnWidth(col) < 90) {
+        sheet.setColumnWidth(col, 90);
+      }
+    }
   });
 }
 
@@ -1619,11 +1628,16 @@ function updateInspectionDashboard_(ss) {
   if (!inspectionSheet || !summarySheet) return;
 
   var latestJob = loadLatestJob_();
+  var currentJobKey = latestJob && latestJob.job_key ? String(latestJob.job_key).trim() : "";
   var latestRows = latestJob && Array.isArray(latestJob.rows) ? latestJob.rows : [];
   var reservationRows = readReservationRows_();
   var sourceRows = buildDashboardSourceRows_(latestRows, reservationRows);
-  var inspectionRows = loadInspectionRows_();
-  var recordRows = loadRecords_();
+  var inspectionRows = loadInspectionRows_().filter(function (row) {
+    return String(row["작업기준일또는CSV식별값"] || "").trim() === currentJobKey;
+  });
+  var recordRows = loadRecords_().filter(function (row) {
+    return String(row["작업기준일또는CSV식별값"] || "").trim() === currentJobKey;
+  });
   var excludeRows = readObjectsSheet_(SHEET_NAMES.exclude);
   var eventRows = readObjectsSheet_(SHEET_NAMES.event);
 
@@ -1781,8 +1795,14 @@ function updateInspectionDashboard_(ss) {
 function syncReturnSheets_(ss) {
   var centerSheet = getOrCreateSheet_(ss, SHEET_NAMES.returnCenter);
   var summarySheet = getOrCreateSheet_(ss, SHEET_NAMES.returnSummary);
-  var records = loadRecords_();
-  var inspectionRows = loadInspectionRows_();
+  var latestJob = loadLatestJob_();
+  var currentJobKey = latestJob && latestJob.job_key ? String(latestJob.job_key).trim() : "";
+  var records = loadRecords_().filter(function (row) {
+    return String(row["작업기준일또는CSV식별값"] || "").trim() === currentJobKey;
+  });
+  var inspectionRows = loadInspectionRows_().filter(function (row) {
+    return String(row["작업기준일또는CSV식별값"] || "").trim() === currentJobKey;
+  });
   var memoMap = {};
 
   records.forEach(function (row) {
