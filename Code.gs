@@ -1203,27 +1203,63 @@ function importHappycallBatch_(payloadRows) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = getHappycallSheet_(ss);
   var categoryIndex = buildHappycallCategoryIndex_();
+  var headerCount = happycallHeaders_().length;
   var saved = [];
   var inserted = 0;
   var updated = 0;
+  var existingLastRow = sheet.getLastRow();
+  var existingValues = existingLastRow >= 2 ? sheet.getRange(2, 1, existingLastRow - 1, 2).getValues() : [];
+  var keyRowMap = {};
+  var mailRowMap = {};
+  var normalizedMap = {};
+  var updates = [];
+  var appendRows = [];
+
+  existingValues.forEach(function (valueRow, index) {
+    var rowNumber = index + 2;
+    var rowKey = String(valueRow[0] || "").trim();
+    var rowMail = String(valueRow[1] || "").trim();
+    if (rowKey) keyRowMap[rowKey] = rowNumber;
+    if (rowMail) mailRowMap[rowMail] = rowNumber;
+  });
 
   list.forEach(function (payload) {
     var row = normalizeHappycallRecord_(payload || {}, categoryIndex);
     if (!row["수집키"]) return;
+    normalizedMap[row["수집키"]] = row;
+  });
 
-    var targetRow = findHappycallRow_(sheet, row["수집키"], row["메일ID"]);
-    writeHappycallRow_(sheet, targetRow, row);
+  Object.keys(normalizedMap).forEach(function (collectKey) {
+    var row = normalizedMap[collectKey];
+    var targetRow = keyRowMap[row["수집키"]] || (row["메일ID"] ? mailRowMap[row["메일ID"]] : 0) || 0;
 
     if (targetRow > 0) {
       row.__rowNumber = targetRow;
       updated += 1;
+      updates.push({
+        rowNumber: targetRow,
+        values: happycallRowValues_(row),
+      });
     } else {
-      row.__rowNumber = sheet.getLastRow();
       inserted += 1;
+      appendRows.push(row);
     }
 
     saved.push(row);
   });
+
+  updates.forEach(function (item) {
+    sheet.getRange(item.rowNumber, 1, 1, headerCount).setValues([item.values]);
+  });
+
+  if (appendRows.length) {
+    var appendStartRow = sheet.getLastRow() + 1;
+    var appendValues = appendRows.map(function (row, index) {
+      row.__rowNumber = appendStartRow + index;
+      return happycallRowValues_(row);
+    });
+    sheet.getRange(appendStartRow, 1, appendValues.length, headerCount).setValues(appendValues);
+  }
 
   purgeOldHappycallRows_(sheet, 30);
 
@@ -1490,7 +1526,17 @@ function findHappycallRow_(sheet, collectKey, mailId) {
 }
 
 function writeHappycallRow_(sheet, targetRow, row) {
-  var values = [[
+  var values = [happycallRowValues_(row)];
+
+  if (targetRow > 0) {
+    sheet.getRange(targetRow, 1, 1, values[0].length).setValues(values);
+  } else {
+    sheet.appendRow(values[0]);
+  }
+}
+
+function happycallRowValues_(row) {
+  return [
     row["수집키"],
     row["메일ID"],
     row["제목"],
@@ -1508,13 +1554,7 @@ function writeHappycallRow_(sheet, targetRow, row) {
     row["건수"],
     row["원본JSON"],
     row["생성일시"],
-  ]];
-
-  if (targetRow > 0) {
-    sheet.getRange(targetRow, 1, 1, values[0].length).setValues(values);
-  } else {
-    sheet.appendRow(values[0]);
-  }
+  ];
 }
 
 function createDigestString_(text) {

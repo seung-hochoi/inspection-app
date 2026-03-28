@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import Papa from "papaparse";
 import { BrowserCodeReader, BrowserMultiFormatReader } from "@zxing/browser";
 
-const SCRIPT_URL = process.env.REACT_APP_GOOGLE_SCRIPT_URL || "https://script.google.com/macros/s/AKfycbxneYtHeSRjYRqxP6W-CeMl-ZHDHOGKJuxpYQ55TcINTz0C7jd_MPgE47tQl9t4eCtO6A/exec";
+const SCRIPT_URL = process.env.REACT_APP_GOOGLE_SCRIPT_URL || "https://script.google.com/macros/s/AKfycbxuxvHg1PbOMppO5vzM05qDd3_eLTWChdOQQUxBXWlA7e57Al3MZXp3b1Wyl3Lf9iQ6Gg/exec";
 
 const normalizeKey = (key) => String(key || "").replace(/\uFEFF/g, "").trim();
 
@@ -87,6 +87,13 @@ const getHappycallRankStyle = (rank) => {
     return { background: "#dcfce7", color: "#15803d" };
   }
   return { background: "#f3f4f6", color: "#374151" };
+};
+
+const getTopMedal = (rank) => {
+  if (rank === 1) return "🥇";
+  if (rank === 2) return "🥈";
+  if (rank === 3) return "🥉";
+  return null;
 };
 
 const getValue = (row, candidates) => {
@@ -1504,7 +1511,7 @@ function App() {
         skipEmptyLines: true,
       });
 
-      const rows = (Array.isArray(parsed.data) ? parsed.data : [])
+      const rawRows = (Array.isArray(parsed.data) ? parsed.data : [])
         .map((row) => ({
           제목: row["제목"] || row["subject"] || "",
           본문: row["본문"] || row["body"] || "",
@@ -1513,11 +1520,23 @@ function App() {
         }))
         .filter((row) => String(row.제목 || "").trim() || String(row.본문 || "").trim());
 
+      const dedupedMap = new Map();
+      rawRows.forEach((row) => {
+        const dedupeKey = [
+          String(row.메일ID || "").trim(),
+          String(row.제목 || "").trim(),
+          String(row.본문 || "").trim(),
+        ].join("||");
+        dedupedMap.set(dedupeKey, row);
+      });
+
+      const rows = Array.from(dedupedMap.values());
+
       if (!rows.length) {
         throw new Error("해피콜 CSV에서 가져올 수 있는 행이 없습니다.");
       }
 
-      const batchSize = 100;
+      const batchSize = rows.length >= 1500 ? 500 : 300;
       let lastResult = null;
 
       for (let index = 0; index < rows.length; index += batchSize) {
@@ -1543,7 +1562,6 @@ function App() {
 
       setHappycallAnalytics(lastResult?.happycall || {});
       setMessage("");
-      await loadBootstrap();
       setToast("해피콜 CSV 가져오기 완료");
     } catch (err) {
       setError(err.message || "해피콜 CSV 가져오기에 실패했습니다.");
@@ -1721,19 +1739,29 @@ function App() {
                     card.rank === 1 ? "#fca5a5" : card.rank === 2 ? "#93c5fd" : card.rank === 3 ? "#86efac" : "#e5e7eb",
                 }}
               >
-                <div
-                  style={{
-                    ...styles.kpiLabel,
-                    color:
-                      card.rank === 1 ? "#b91c1c" : card.rank === 2 ? "#1d4ed8" : card.rank === 3 ? "#15803d" : "#64748b",
-                  }}
-                >
-                  {`TOP.${card.rank}`}
+                <div style={styles.topRankRow}>
+                  {getTopMedal(card.rank) ? (
+                    <span style={styles.topMedal}>{getTopMedal(card.rank)}</span>
+                  ) : (
+                    <span style={styles.topMedalPlaceholder} />
+                  )}
+                  <div
+                    style={{
+                      ...styles.kpiLabel,
+                      marginBottom: 0,
+                      fontWeight: 900,
+                      color:
+                        card.rank === 1 ? "#b91c1c" : card.rank === 2 ? "#1d4ed8" : card.rank === 3 ? "#15803d" : "#64748b",
+                    }}
+                  >
+                    {`TOP.${card.rank}`}
+                  </div>
                 </div>
                 <div
                   style={{
                     ...styles.kpiValue,
                     fontSize: 18,
+                    fontWeight: 900,
                     color:
                       card.rank === 1 ? "#b91c1c" : card.rank === 2 ? "#1d4ed8" : card.rank === 3 ? "#15803d" : "#0f172a",
                   }}
@@ -2607,6 +2635,27 @@ const styles = {
     fontWeight: 800,
     color: "#0f172a",
     wordBreak: "break-word",
+  },
+  topRankRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 10,
+  },
+  topMedal: {
+    fontSize: 18,
+    lineHeight: 1,
+  },
+  topMedalPlaceholder: {
+    width: 18,
+    height: 18,
+    display: "inline-block",
+  },
+  topCardMeta: {
+    marginTop: 8,
+    fontSize: 12,
+    fontWeight: 700,
+    color: "#64748b",
   },
   historyButton: {
     border: "1px solid #d1d5db",
