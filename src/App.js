@@ -78,6 +78,25 @@ const getHappycallProductMetrics = (analytics, product) => {
   return result;
 };
 
+const getHappycallProductRanks = (analytics, product) => {
+  const rankMap = analytics?.productRanks || {};
+  const keys = [
+    `sku::${makeSkuKey(product?.productCode, product?.partner)}`,
+    `name::${normalizeHappycallLookupText(product?.productName)}||${normalizeHappycallLookupText(product?.partner)}`,
+    `code::${normalizeProductCode(product?.productCode || "")}`,
+    `nameOnly::${normalizeHappycallLookupText(product?.productName)}`,
+  ];
+
+  const result = {};
+
+  keys.forEach((key) => {
+    if (!key || !rankMap[key]) return;
+    Object.assign(result, rankMap[key]);
+  });
+
+  return result;
+};
+
 const formatPercent = (value) => {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? `${(numeric * 100).toFixed(1)}%` : "-";
@@ -1059,43 +1078,13 @@ function App() {
       centerInfo.rows.push(row);
     });
 
-    const allProducts = Array.from(map.values()).flat();
-    const rankMaps = {
-      "1d": {},
-      "7d": {},
-      "30d": {},
-    };
-
-    Object.keys(rankMaps).forEach((periodKey) => {
-      allProducts
-        .filter((product) => parseQty(product.happycallMetrics?.[periodKey]?.count) > 0)
-        .sort((a, b) => {
-          const countDiff =
-            parseQty(b.happycallMetrics?.[periodKey]?.count) - parseQty(a.happycallMetrics?.[periodKey]?.count);
-          if (countDiff !== 0) return countDiff;
-          return String(a.productName || "").localeCompare(String(b.productName || ""), "ko");
-        })
-        .slice(0, 5)
-        .forEach((product, index) => {
-          rankMaps[periodKey][`${product.partner}||${product.productCode}`] = {
-            rank: index + 1,
-            count: parseQty(product.happycallMetrics?.[periodKey]?.count),
-            share: Number(product.happycallMetrics?.[periodKey]?.share || 0),
-          };
-        });
-    });
-
     return Array.from(map.entries())
       .sort((a, b) => a[0].localeCompare(b[0], "ko"))
       .map(([partner, products]) => ({
         partner,
         products: products.map((product) => ({
           ...product,
-          happycallStats: {
-            "1d": rankMaps["1d"][`${product.partner}||${product.productCode}`] || null,
-            "7d": rankMaps["7d"][`${product.partner}||${product.productCode}`] || null,
-            "30d": rankMaps["30d"][`${product.partner}||${product.productCode}`] || null,
-          },
+          happycallStats: getHappycallProductRanks(happycallAnalytics, product),
           centers: product.centers.sort((a, b) => (b.totalQty || 0) - (a.totalQty || 0)),
         })),
       }));
