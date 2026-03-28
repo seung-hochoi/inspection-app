@@ -3,7 +3,6 @@ import Papa from "papaparse";
 import { BrowserCodeReader, BrowserMultiFormatReader } from "@zxing/browser";
 
 const SCRIPT_URL = process.env.REACT_APP_GOOGLE_SCRIPT_URL || "https://script.google.com/macros/s/AKfycbxneYtHeSRjYRqxP6W-CeMl-ZHDHOGKJuxpYQ55TcINTz0C7jd_MPgE47tQl9t4eCtO6A/exec";
-const HAPPYCALL_BRIDGE_URL = "http://127.0.0.1:32147";
 
 const normalizeKey = (key) => String(key || "").replace(/\uFEFF/g, "").trim();
 
@@ -47,12 +46,6 @@ const parseQty = (value) => {
 
 const makeSkuKey = (productCode, partnerName) =>
   `${normalizeProductCode(productCode || "")}||${String(partnerName || "").trim()}`;
-
-const HAPPYCALL_PERIOD_OPTIONS = [
-  { key: "1d", label: "1일" },
-  { key: "7d", label: "7일" },
-  { key: "30d", label: "1달" },
-];
 
 const getHappycallProductMetrics = (analytics, product) => {
   const periods = analytics?.periods || {};
@@ -114,7 +107,7 @@ const isTruthyUsage = (value) => {
 const isExplicitFalseUsage = (value) => {
   if (value === false) return true;
   const text = normalizeText(value);
-  return ["false", "n", "no", "0", "미사용"].includes(text);
+  return ["false", "n", "no", "0"].includes(text);
 };
 
 const decodeCsvFile = async (file) => {
@@ -147,7 +140,7 @@ const buildNormalizedRows = (parsedRows) =>
       getValue(row, ["상품명", "상품 명", "품목명", "품명"]) || ""
     ).trim();
     const partner = String(
-      getValue(row, ["거래처명(구매조건명)", "거래처명", "협력사"]) || ""
+      getValue(row, ["거래처명(구매조건명)", "거래처명", "협력사명", "협력사"]) || ""
     ).trim();
     const center = String(getValue(row, ["센터명", "센터"]) || "").trim();
     const qty = parseQty(getValue(row, ["총 발주수량", "발주수량", "수량"]));
@@ -206,7 +199,7 @@ const mergeRowsWithReservation = (baseRows, reservationRows) => {
     const key = [row.__center || "", row.__partner || "", row.__productCode || ""].join("||");
     mergedMap.set(key, {
       ...row,
-      __incomingCost: parseQty(row.__incomingCost || row.입고원가 || 0),
+      __incomingCost: parseQty(row.__incomingCost || 0),
     });
   });
 
@@ -222,14 +215,13 @@ const mergeRowsWithReservation = (baseRows, reservationRows) => {
         __index: existing.__index,
         __qty: parseQty(existing.__qty) + parseQty(row.__qty),
         __incomingCost: parseQty(row.__incomingCost || existing.__incomingCost || 0),
-        입고원가: parseQty(row.__incomingCost || existing.__incomingCost || 0),
       });
       return;
     }
 
     mergedMap.set(key, {
       ...row,
-      입고원가: parseQty(row.__incomingCost || 0),
+      __incomingCost: parseQty(row.__incomingCost || 0),
     });
   });
 
@@ -254,11 +246,11 @@ const computeJobKey = (rows) =>
   `job_${hashString(
     JSON.stringify(
       (rows || []).map((row) => ({
-        상품코드: row.__productCode,
-        상품명: row.__productName,
-        센터: row.__center,
-        협력사: row.__partner,
-        수량: row.__qty,
+        productCode: row.__productCode,
+        productName: row.__productName,
+        center: row.__center,
+        partner: row.__partner,
+        qty: row.__qty,
       }))
     )
   )}`;
@@ -307,11 +299,7 @@ const formatDateTime = (value) => {
 
 const formatDashboardValue = (label, value) => {
   if (value == null || value === "") return "-";
-  if (
-    String(label).includes("율") ||
-    String(label).includes("률") ||
-    String(label).includes("커버리지")
-  ) {
+  if (String(label).includes("율") || String(label).includes("률") || String(label).includes("커버리지")) {
     const numeric = Number(value);
     return Number.isFinite(numeric) ? `${(numeric * 100).toFixed(1)}%` : String(value);
   }
@@ -456,7 +444,7 @@ function HistoryPhotoItem({ candidate, index, onOpen, styles }) {
   return (
     <img
       src={candidate.previewUrl}
-      alt={`첨부사진 ${index + 1}`}
+      alt={`첨부 사진 ${index + 1}`}
       style={styles.photoThumb}
       onClick={() => onOpen(candidate.previewUrl)}
       onError={() => setFailed(true)}
@@ -514,7 +502,6 @@ function App() {
   const [reservationRows, setReservationRows] = useState([]);
   const [, setDashboardSummary] = useState({});
   const [happycallAnalytics, setHappycallAnalytics] = useState({});
-  const [selectedHappycallPeriod, setSelectedHappycallPeriod] = useState("1d");
 
   const [showHistory, setShowHistory] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -524,7 +511,6 @@ function App() {
   const [showAdminReset, setShowAdminReset] = useState(false);
   const [adminPassword, setAdminPassword] = useState("");
   const [adminResetting, setAdminResetting] = useState(false);
-  const [happycallImporting, setHappycallImporting] = useState(false);
   const [uploadingHappycallCsv, setUploadingHappycallCsv] = useState(false);
 
   const [isScannerOpen, setIsScannerOpen] = useState(false);
@@ -699,9 +685,7 @@ function App() {
       const reader = new BrowserMultiFormatReader();
       const devices = await BrowserCodeReader.listVideoInputDevices();
       const backCamera =
-        devices.find((device) =>
-          /back|rear|environment|후면|외부/i.test(String(device.label || ""))
-        ) || devices[0];
+        devices.find((device) => /back|rear|environment/i.test(String(device.label || ""))) || devices[0];
 
       const callback = (result, err, controls) => {
         if (controls) {
@@ -771,7 +755,7 @@ function App() {
       scannerStatusTimerRef.current = setInterval(() => {
         setScannerStatus((prev) =>
           prev === "바코드 인식 중..."
-            ? "바코드를 화면 중앙에 맞춰주세요"
+            ? "바코드를 화면 중앙에 맞춰주세요."
             : "바코드 인식 중..."
         );
       }, 2200);
@@ -871,7 +855,7 @@ function App() {
       const result = await response.json();
 
       if (!response.ok || result.ok === false) {
-        throw new Error(result.message || "초기 데이터 불러오기 실패");
+        throw new Error(result.message || "초기 데이터를 불러오지 못했습니다.");
       }
 
       const data = result.data || {};
@@ -887,7 +871,7 @@ function App() {
         const productCode = normalizeProductCode(
           getValue(row, ["상품코드", "상품 코드", "코드", "바코드"])
         );
-        const partner = String(getValue(row, ["협력사"]) || "").trim();
+        const partner = String(getValue(row, ["협력사", "협력사명"]) || "").trim();
         const useFlag = getValue(row, ["사용여부"]);
 
         if (!isTruthyUsage(useFlag)) return;
@@ -927,9 +911,9 @@ function App() {
       setCurrentFileModifiedAt(job?.source_file_modified || "");
       setDashboardSummary(data.summary || {});
       setHappycallAnalytics(data.happycall || {});
-      setMessage(job ? "최근 작업을 불러왔습니다." : "CSV를 업로드해주세요.");
+      setMessage(job ? "최근 작업을 불러왔습니다." : "CSV를 업로드해 주세요.");
     } catch (err) {
-      setError(err.message || "초기 데이터 불러오기 실패");
+      setError(err.message || "초기 데이터를 불러오지 못했습니다.");
     } finally {
       setBootLoading(false);
     }
@@ -956,7 +940,7 @@ function App() {
       setHistoryRows(nextRows);
       return nextRows;
     } catch (err) {
-      setError(err.message || "내역 불러오기 실패");
+      setError(err.message || "내역을 불러오지 못했습니다.");
       setHistoryRows([]);
       return [];
     } finally {
@@ -989,8 +973,8 @@ function App() {
     filteredRows.forEach((row) => {
       const productCode = row.__productCode;
       const productName = row.__productName || "상품명 없음";
-      const partner = row.__partner || "협력사없음";
-      const center = row.__center || "센터없음";
+      const partner = row.__partner || "협력사 없음";
+      const center = row.__center || "센터 없음";
       const qty = row.__qty || 0;
 
       const matched =
@@ -1104,33 +1088,17 @@ function App() {
     return map;
   }, [historyRows]);
 
-  const selectedHappycallSummary = useMemo(() => {
-    const periods = happycallAnalytics?.periods || {};
-    return (
-      periods[selectedHappycallPeriod] || {
-        label: "",
-        totalCount: 0,
-        topProducts: [],
-        topMajorCategories: [],
-        topMidCategories: [],
-        topSubCategories: [],
-        topReasons: [],
-      }
-    );
-  }, [happycallAnalytics, selectedHappycallPeriod]);
-
-  const happycallTopCards = useMemo(
+  const previousDayHappycallTopList = useMemo(
     () =>
-      [0, 1, 2, 3, 4].map((index) => {
-        const item = selectedHappycallSummary.topProducts?.[index] || null;
-        return {
+      (happycallAnalytics?.periods?.["1d"]?.topProducts || [])
+        .slice(0, 10)
+        .map((item, index) => ({
           rank: index + 1,
           productName: item?.productName || "-",
           count: parseQty(item?.count || 0),
           share: Number(item?.share || 0),
-        };
-      }),
-    [selectedHappycallSummary]
+        })),
+    [happycallAnalytics]
   );
 
   const updateDraft = (key, field, value) => {
@@ -1262,7 +1230,7 @@ function App() {
     const entityKey = makeEntityKey(currentJob?.job_key, product.productCode, product.partner);
 
     if (qty <= 0) {
-      setError("검품수량을 입력해줘.");
+      setError("검품수량을 입력해 주세요.");
       return;
     }
 
@@ -1289,13 +1257,13 @@ function App() {
         photoFiles: photoFiles.length ? photoFiles : pendingMap[entityKey]?.photoFiles || [],
       },
     ]);
-    setToast("저장 대기중");
+    setToast("저장되었습니다.");
   };
 
   const saveReturnExchange = async (product, centerName) => {
     const centerInfo = product.centers.find((item) => item.center === centerName);
     if (!centerInfo) {
-      setError("센터를 선택해줘.");
+      setError("센터를 선택해 주세요.");
       return;
     }
 
@@ -1312,7 +1280,7 @@ function App() {
     }
 
     if (returnQty <= 0 && exchangeQty <= 0 && !memo && photoFiles.length === 0) {
-      setError("회송수량, 교환수량, 비고, 사진 중 하나 이상 입력해줘.");
+      setError("회송수량, 교환수량, 비고, 사진 중 하나 이상 입력해 주세요.");
       return;
     }
 
@@ -1392,7 +1360,7 @@ function App() {
         photoNames: [],
       },
     }));
-    setToast("저장 대기중");
+    setToast("저장되었습니다.");
   };
 
   const deleteHistoryRecord = async (record) => {
@@ -1438,7 +1406,7 @@ function App() {
       }
 
       if (!result.zipBase64) {
-        setToast("다운로드 가능한 사진이 없습니다");
+        setToast("다운로드 가능한 사진이 없습니다.");
         return;
       }
 
@@ -1450,7 +1418,7 @@ function App() {
           ? `회송_교환_사진_${formatDateForFileName()}.zip`
           : mode === "inspection"
           ? `검품사진_${formatDateForFileName()}.zip`
-          : `사진만있는상품_${formatDateForFileName()}.zip`);
+          : `참고사진_${formatDateForFileName()}.zip`);
 
       link.href = href;
       link.download = fileName;
@@ -1473,7 +1441,7 @@ function App() {
     }
 
     if (!adminPassword.trim()) {
-      setError("관리자 비밀번호를 입력해줘.");
+      setError("관리자 비밀번호를 입력해 주세요.");
       return;
     }
 
@@ -1521,35 +1489,6 @@ function App() {
     }
   };
 
-  const importHappycallFromOutlook = async () => {
-    try {
-      setHappycallImporting(true);
-      setError("");
-      setMessage("");
-
-      const response = await fetch(`${HAPPYCALL_BRIDGE_URL}/import-happycall`, {
-        method: "POST",
-      });
-      const result = await response.json();
-
-      if (!response.ok || result.ok === false) {
-        throw new Error(result.message || "해피콜 메일 가져오기에 실패했습니다.");
-      }
-
-      await loadBootstrap();
-      setToast("해피콜 메일 가져오기 완료");
-    } catch (err) {
-      const messageText = String((err && err.message) || "");
-      if (messageText.includes("Failed to fetch")) {
-        setError("해피콜 브리지가 실행 중이 아닙니다. 터미널에서 npm run happycall:bridge 를 먼저 실행해 주세요.");
-      } else {
-        setError(messageText || "해피콜 메일 가져오기에 실패했습니다.");
-      }
-    } finally {
-      setHappycallImporting(false);
-    }
-  };
-
   const handleHappycallCsvUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -1578,21 +1517,32 @@ function App() {
         throw new Error("해피콜 CSV에서 가져올 수 있는 행이 없습니다.");
       }
 
-      const response = await fetch(SCRIPT_URL, {
-        method: "POST",
-        headers: { "Content-Type": "text/plain;charset=utf-8" },
-        body: JSON.stringify({
-          action: "importHappycallCsv",
-          rows,
-        }),
-      });
+      const batchSize = 100;
+      let lastResult = null;
 
-      const result = await response.json();
-      if (!response.ok || result.ok === false) {
-        throw new Error(result.message || "해피콜 CSV 가져오기에 실패했습니다.");
+      for (let index = 0; index < rows.length; index += batchSize) {
+        const batchRows = rows.slice(index, index + batchSize);
+        setMessage(`해피콜 CSV 처리 중... ${Math.min(index + batchRows.length, rows.length)} / ${rows.length}`);
+
+        const response = await fetch(SCRIPT_URL, {
+          method: "POST",
+          headers: { "Content-Type": "text/plain;charset=utf-8" },
+          body: JSON.stringify({
+            action: "importHappycallCsv",
+            rows: batchRows,
+          }),
+        });
+
+        const result = await response.json();
+        if (!response.ok || result.ok === false) {
+          throw new Error(result.message || "해피콜 CSV 가져오기에 실패했습니다.");
+        }
+
+        lastResult = result;
       }
 
-      setHappycallAnalytics(result.happycall || {});
+      setHappycallAnalytics(lastResult?.happycall || {});
+      setMessage("");
       await loadBootstrap();
       setToast("해피콜 CSV 가져오기 완료");
     } catch (err) {
@@ -1645,30 +1595,6 @@ function App() {
               >
                 복사
               </button>
-              <button
-                type="button"
-                onClick={importHappycallFromOutlook}
-                disabled={happycallImporting}
-                style={{
-                  ...styles.copyButton,
-                  minWidth: 124,
-                  opacity: happycallImporting ? 0.7 : 1,
-                }}
-              >
-                {happycallImporting ? "가져오는 중..." : "해피콜 가져오기"}
-              </button>
-              <button
-                type="button"
-                onClick={() => happycallFileInputRef.current?.click()}
-                disabled={uploadingHappycallCsv}
-                style={{
-                  ...styles.copyButton,
-                  minWidth: 132,
-                  opacity: uploadingHappycallCsv ? 0.7 : 1,
-                }}
-              >
-                {uploadingHappycallCsv ? "CSV 처리 중..." : "해피콜 CSV 선택"}
-              </button>
             </div>
           </div>
           <div style={styles.headerModeBadge}>{mode === "inspection" ? "검품 모드" : "회송/교환 모드"}</div>
@@ -1679,7 +1605,7 @@ function App() {
             onClick={() => setMode("inspection")}
             style={{ ...styles.quickActionCard, ...(mode === "inspection" ? styles.quickActionCardActive : {}) }}
           >
-            <span style={styles.quickActionIcon}>🔍</span>
+            <span style={styles.quickActionIcon}>🔎</span>
             <span style={styles.quickActionText}>검품</span>
           </button>
           <button
@@ -1721,7 +1647,18 @@ function App() {
               onClick={() => fileInputRef.current?.click()}
               style={styles.primaryButton}
             >
-              {uploadingCsv ? "처리 중..." : "CSV 선택"}
+              {uploadingCsv ? "처리 중..." : "검품 CSV 선택"}
+            </button>
+            <button
+              type="button"
+              onClick={() => happycallFileInputRef.current?.click()}
+              disabled={uploadingHappycallCsv}
+              style={{
+                ...styles.secondaryButton,
+                opacity: uploadingHappycallCsv ? 0.7 : 1,
+              }}
+            >
+              {uploadingHappycallCsv ? "처리 중..." : "해피콜 CSV 선택"}
             </button>
             <button
               type="button"
@@ -1748,7 +1685,7 @@ function App() {
             style={styles.searchInput}
           />
           <button type="button" onClick={() => setIsScannerOpen(true)} style={styles.scanButton} aria-label="바코드 스캔">
-            <span style={styles.scanIcon}>📷</span>
+            <span style={styles.scanIcon}>스캔</span>
           </button>
         </div>
       </div>
@@ -1756,130 +1693,60 @@ function App() {
       {(bootLoading || uploadingCsv || error || message) && (
         <div style={error ? styles.errorBox : styles.infoBox}>
           {bootLoading
-            ? "초기 데이터 불러오는 중..."
+            ? "초기 데이터를 불러오는 중..."
             : uploadingCsv
             ? "CSV 처리 중..."
             : error || message}
         </div>
       )}
 
-      <div style={{ ...styles.panel, display: "none" }}>
+      <div style={styles.panel}>
         <div style={styles.happycallHeader}>
           <div>
-            <div style={styles.sectionTitle}>전일 해피콜 TOP5</div>
+            <div style={styles.sectionTitle}>전일 해피콜 최다 TOP10</div>
             <div style={styles.metaText}>전일 접수 해피콜 기준</div>
           </div>
-          <div style={{ ...styles.happycallTabRow, display: "none" }}>
-            {HAPPYCALL_PERIOD_OPTIONS.map((option) => (
-              <button
-                key={option.key}
-                type="button"
-                onClick={() => setSelectedHappycallPeriod(option.key)}
+        </div>
+
+        {previousDayHappycallTopList.length === 0 ? (
+          <div style={styles.emptyBox}>전일 해피콜 데이터가 없습니다.</div>
+        ) : (
+          <div style={styles.kpiGrid}>
+            {previousDayHappycallTopList.map((card) => (
+              <div
+                key={`happycall-top-${card.rank}`}
                 style={{
-                  ...styles.happycallTabButton,
-                  ...(selectedHappycallPeriod === option.key ? styles.happycallTabButtonActive : {}),
+                  ...styles.kpiCard,
+                  borderColor:
+                    card.rank === 1 ? "#fca5a5" : card.rank === 2 ? "#93c5fd" : card.rank === 3 ? "#86efac" : "#e5e7eb",
                 }}
               >
-                {option.label}
-              </button>
+                <div
+                  style={{
+                    ...styles.kpiLabel,
+                    color:
+                      card.rank === 1 ? "#b91c1c" : card.rank === 2 ? "#1d4ed8" : card.rank === 3 ? "#15803d" : "#64748b",
+                  }}
+                >
+                  {`TOP.${card.rank}`}
+                </div>
+                <div
+                  style={{
+                    ...styles.kpiValue,
+                    fontSize: 18,
+                    color:
+                      card.rank === 1 ? "#b91c1c" : card.rank === 2 ? "#1d4ed8" : card.rank === 3 ? "#15803d" : "#0f172a",
+                  }}
+                >
+                  {card.productName}
+                </div>
+                <div style={styles.topCardMeta}>
+                  {card.count.toLocaleString("ko-KR")}건 · {formatPercent(card.share)}
+                </div>
+              </div>
             ))}
           </div>
-        </div>
-
-        <div style={styles.kpiGrid}>
-          {happycallTopCards.map((card) => (
-            <div
-              key={`happycall-top-${card.rank}`}
-              style={{
-                ...styles.kpiCard,
-                borderColor:
-                  card.rank === 1 ? "#fca5a5" : card.rank === 2 ? "#93c5fd" : card.rank === 3 ? "#86efac" : "#e5e7eb",
-              }}
-            >
-              <div
-                style={{
-                  ...styles.kpiLabel,
-                  color:
-                    card.rank === 1 ? "#b91c1c" : card.rank === 2 ? "#1d4ed8" : card.rank === 3 ? "#15803d" : "#64748b",
-                }}
-              >
-                {`TOP.${card.rank}`}
-              </div>
-              <div
-                style={{
-                  ...styles.kpiValue,
-                  fontSize: 18,
-                  color:
-                    card.rank === 1 ? "#b91c1c" : card.rank === 2 ? "#1d4ed8" : card.rank === 3 ? "#15803d" : "#0f172a",
-                }}
-              >
-                {card.productName}
-              </div>
-              <div style={styles.topCardMeta}>
-                {card.count.toLocaleString("ko-KR")}건 · {formatPercent(card.share)}
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <div style={{ ...styles.panel, display: "none" }}>
-        <div style={styles.happycallHeader}>
-          <div>
-            <div style={styles.sectionTitle}>해피콜 TOP</div>
-            <div style={styles.metaText}>
-              메일에서 추출한 해피콜 빈도입니다. 제목에 구체 사유가 있으면 본문 사유보다 우선합니다.
-            </div>
-          </div>
-          <div style={styles.happycallTotalBox}>
-            <div style={styles.happycallTotalLabel}>누적 해피콜</div>
-            <div style={styles.happycallTotalValue}>
-              {parseQty(happycallAnalytics?.totalCount || 0).toLocaleString("ko-KR")}건
-            </div>
-          </div>
-        </div>
-
-        <div style={styles.happycallTabRow}>
-          {HAPPYCALL_PERIOD_OPTIONS.map((option) => (
-            <button
-              key={option.key}
-              type="button"
-              onClick={() => setSelectedHappycallPeriod(option.key)}
-              style={{
-                ...styles.happycallTabButton,
-                ...(selectedHappycallPeriod === option.key ? styles.happycallTabButtonActive : {}),
-              }}
-            >
-              {option.label}
-            </button>
-          ))}
-        </div>
-
-        <div style={styles.happycallGrid}>
-          <div style={styles.happycallCard}>
-            <div style={styles.happycallCardTitle}>상품 TOP5</div>
-            {(selectedHappycallSummary.topProducts || []).length ? (
-              selectedHappycallSummary.topProducts.map((item, index) => (
-                <div key={`${item.key || item.productName}-${index}`} style={styles.happycallRow}>
-                  <div>
-                    <div style={styles.happycallRowTitle}>
-                      TOP{index + 1} {item.productName || item.name || "미분류"}
-                    </div>
-                    <div style={styles.happycallRowMeta}>
-                      {item.topReason || "기타"}
-                    </div>
-                  </div>
-                  <div style={styles.happycallRowValue}>
-                    <div>{parseQty(item.count).toLocaleString("ko-KR")}건</div>
-                    <div style={styles.happycallRowPercent}>{formatPercent(item.share)}</div>
-                  </div>
-                </div>
-              ))
-            ) : (
-              <div style={styles.emptyBox}>표시할 해피콜 집계가 없습니다.</div>
-            )}
-          </div>
-        </div>
+        )}
       </div>
 
       <div style={styles.countRow}>
@@ -1890,21 +1757,21 @@ function App() {
             onClick={() => downloadPhotoZip("movement")}
             style={styles.historyButton}
           >
-            {zipDownloading === "movement" ? "ZIP 생성중..." : "불량사진 저장"}
+            {zipDownloading === "movement" ? "ZIP 생성 중..." : "불량사진 저장"}
           </button>
           <button
             type="button"
             onClick={() => downloadPhotoZip("inspection")}
             style={styles.historyButton}
           >
-            {zipDownloading === "inspection" ? "ZIP 생성중..." : "검품사진 저장"}
+            {zipDownloading === "inspection" ? "ZIP 생성 중..." : "검품사진 저장"}
           </button>
           <button
             type="button"
             onClick={() => downloadPhotoZip("photoOnly")}
             style={styles.historyButton}
           >
-            {zipDownloading === "photoOnly" ? "ZIP 생성중..." : "참고사진 저장"}
+            {zipDownloading === "photoOnly" ? "ZIP 생성 중..." : "참고사진 저장"}
           </button>
         </div>
       </div>
@@ -2087,7 +1954,7 @@ function App() {
                               onClick={() => saveInspectionQtySimple(product)}
                               style={styles.saveButton}
                             >
-                              {inspectionStatus === "saving" ? "저장 중..." : "저장"}
+                              {inspectionStatus === "saving" ? "저장중..." : "저장"}
                             </button>
                           </div>
                         ) : (
@@ -2232,7 +2099,7 @@ function App() {
                                   onClick={() => saveReturnExchange(product, selectedCenter)}
                                   style={styles.saveButton}
                                 >
-                                  {actionStatus === "saving" ? "저장 중..." : "저장"}
+                                  {actionStatus === "saving" ? "저장중..." : "저장"}
                                 </button>
                               </>
                           </div>
@@ -2263,7 +2130,7 @@ function App() {
             {historyLoading ? (
               <div style={styles.infoBox}>내역 불러오는 중...</div>
             ) : historyRows.length === 0 ? (
-              <div style={styles.emptyBox}>저장된 내역이 없습니다.</div>
+              <div style={styles.emptyBox}>표시할 내역이 없습니다.</div>
             ) : (
               <div style={styles.sheetList}>
                 {historyRows.map((record, index) => (
@@ -2310,7 +2177,7 @@ function App() {
 
       {zoomPhotoUrl && (
         <div style={styles.photoOverlay} onClick={() => setZoomPhotoUrl("")}>
-          <img src={zoomPhotoUrl} alt="확대사진" style={styles.photoZoom} />
+          <img src={zoomPhotoUrl} alt="확대 사진" style={styles.photoZoom} />
         </div>
       )}
 
@@ -2365,7 +2232,7 @@ function App() {
         <div style={styles.scannerOverlay} onClick={closeScanner}>
           <div style={styles.scannerModal} onClick={(e) => e.stopPropagation()}>
             <button type="button" onClick={closeScanner} style={styles.scannerCloseBtn}>
-              ×
+              횞
             </button>
 
             <div style={styles.scannerTopText}>{scannerReady ? scannerStatus : "바코드 인식 중..."}</div>
@@ -2375,7 +2242,7 @@ function App() {
               <div style={styles.scannerGuideBox} />
             </div>
 
-            <div style={styles.scannerHelperText}>바코드를 화면 중앙에 맞춰주세요</div>
+            <div style={styles.scannerHelperText}>바코드를 화면 중앙에 맞춰주세요.</div>
 
             {scannerError ? <div style={styles.errorBox}>{scannerError}</div> : null}
 
@@ -2543,91 +2410,6 @@ const styles = {
     flexWrap: "wrap",
     marginBottom: 12,
   },
-  happycallTotalBox: {
-    minWidth: 132,
-    borderRadius: 14,
-    background: "#f8fafc",
-    border: "1px solid #dbe3f0",
-    padding: 12,
-  },
-  happycallTotalLabel: {
-    fontSize: 12,
-    color: "#64748b",
-    marginBottom: 6,
-    fontWeight: 700,
-  },
-  happycallTotalValue: {
-    fontSize: 22,
-    fontWeight: 800,
-    color: "#0f172a",
-  },
-  happycallTabRow: {
-    display: "flex",
-    gap: 8,
-    marginBottom: 12,
-  },
-  happycallTabButton: {
-    flex: 1,
-    minHeight: 40,
-    borderRadius: 12,
-    border: "1px solid #d1d5db",
-    background: "#fff",
-    fontWeight: 800,
-    cursor: "pointer",
-    color: "#475569",
-  },
-  happycallTabButtonActive: {
-    background: "#111827",
-    color: "#fff",
-    borderColor: "#111827",
-  },
-  happycallGrid: {
-    display: "grid",
-    gridTemplateColumns: "minmax(0, 1fr)",
-    gap: 10,
-  },
-  happycallCard: {
-    border: "1px solid #e5e7eb",
-    borderRadius: 16,
-    padding: 14,
-    background: "#fff",
-  },
-  happycallCardTitle: {
-    fontSize: 14,
-    fontWeight: 800,
-    color: "#0f172a",
-    marginBottom: 10,
-  },
-  happycallRow: {
-    display: "flex",
-    justifyContent: "space-between",
-    gap: 12,
-    alignItems: "center",
-    padding: "10px 0",
-    borderTop: "1px solid #f1f5f9",
-  },
-  happycallRowTitle: {
-    fontSize: 14,
-    fontWeight: 700,
-    color: "#111827",
-  },
-  happycallRowMeta: {
-    fontSize: 12,
-    color: "#64748b",
-    marginTop: 4,
-  },
-  happycallRowValue: {
-    textAlign: "right",
-    fontSize: 13,
-    fontWeight: 700,
-    color: "#0f172a",
-    whiteSpace: "nowrap",
-  },
-  happycallRowPercent: {
-    fontSize: 12,
-    color: "#2563eb",
-    marginTop: 4,
-  },
   happycallBadge: {
     borderRadius: 999,
     padding: "6px 10px",
@@ -2641,14 +2423,6 @@ const styles = {
     display: "flex",
     gap: 6,
     flexWrap: "wrap",
-  },
-  happycallChip: {
-    borderRadius: 999,
-    padding: "6px 10px",
-    background: "#eff6ff",
-    color: "#1d4ed8",
-    fontSize: 12,
-    fontWeight: 700,
   },
   csvHeaderRow: {
     display: "flex",
@@ -3251,3 +3025,4 @@ const styles = {
 };
 
 export default App;
+
