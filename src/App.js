@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import Papa from "papaparse";
 import { BrowserCodeReader, BrowserMultiFormatReader } from "@zxing/browser";
 
-const SCRIPT_URL = process.env.REACT_APP_GOOGLE_SCRIPT_URL || "https://script.google.com/macros/s/AKfycbyoSn2ZmvmV8gFfNEJo3wn8SV0XG0I2Hno9F2xBOsOBF0Ye715kShQPGL4ZTfnz8hLxWA/exec";
+const SCRIPT_URL = process.env.REACT_APP_GOOGLE_SCRIPT_URL || "https://script.google.com/macros/s/AKfycbxneYtHeSRjYRqxP6W-CeMl-ZHDHOGKJuxpYQ55TcINTz0C7jd_MPgE47tQl9t4eCtO6A/exec";
 const HAPPYCALL_BRIDGE_URL = "http://127.0.0.1:32147";
 
 const normalizeKey = (key) => String(key || "").replace(/\uFEFF/g, "").trim();
@@ -525,6 +525,7 @@ function App() {
   const [adminPassword, setAdminPassword] = useState("");
   const [adminResetting, setAdminResetting] = useState(false);
   const [happycallImporting, setHappycallImporting] = useState(false);
+  const [uploadingHappycallCsv, setUploadingHappycallCsv] = useState(false);
 
   const [isScannerOpen, setIsScannerOpen] = useState(false);
   const [scannerError, setScannerError] = useState("");
@@ -534,6 +535,7 @@ function App() {
   const [torchOn, setTorchOn] = useState(false);
 
   const fileInputRef = useRef(null);
+  const happycallFileInputRef = useRef(null);
   const searchInputRef = useRef(null);
   const scannerVideoRef = useRef(null);
   const scannerControlsRef = useRef(null);
@@ -1548,6 +1550,61 @@ function App() {
     }
   };
 
+  const handleHappycallCsvUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      setUploadingHappycallCsv(true);
+      setError("");
+      setMessage("");
+
+      const { text } = await decodeCsvFile(file);
+      const parsed = Papa.parse(text, {
+        header: true,
+        skipEmptyLines: true,
+      });
+
+      const rows = (Array.isArray(parsed.data) ? parsed.data : [])
+        .map((row) => ({
+          제목: row["제목"] || row["subject"] || "",
+          본문: row["본문"] || row["body"] || "",
+          메일ID: row["인터넷 메시지 ID"] || row["메일ID"] || "",
+          보낸사람: row["보낸사람:(이름)"] || row["senderName"] || "",
+        }))
+        .filter((row) => String(row.제목 || "").trim() || String(row.본문 || "").trim());
+
+      if (!rows.length) {
+        throw new Error("해피콜 CSV에서 가져올 수 있는 행이 없습니다.");
+      }
+
+      const response = await fetch(SCRIPT_URL, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
+        body: JSON.stringify({
+          action: "importHappycallCsv",
+          rows,
+        }),
+      });
+
+      const result = await response.json();
+      if (!response.ok || result.ok === false) {
+        throw new Error(result.message || "해피콜 CSV 가져오기에 실패했습니다.");
+      }
+
+      setHappycallAnalytics(result.happycall || {});
+      await loadBootstrap();
+      setToast("해피콜 CSV 가져오기 완료");
+    } catch (err) {
+      setError(err.message || "해피콜 CSV 가져오기에 실패했습니다.");
+    } finally {
+      setUploadingHappycallCsv(false);
+      if (e.target) {
+        e.target.value = "";
+      }
+    }
+  };
+
   return (
     <div style={styles.app}>
       <input
@@ -1555,6 +1612,13 @@ function App() {
         type="file"
         accept=".csv"
         onChange={handleCsvUpload}
+        style={styles.hiddenInput}
+      />
+      <input
+        ref={happycallFileInputRef}
+        type="file"
+        accept=".csv"
+        onChange={handleHappycallCsvUpload}
         style={styles.hiddenInput}
       />
 
@@ -1592,6 +1656,18 @@ function App() {
                 }}
               >
                 {happycallImporting ? "가져오는 중..." : "해피콜 가져오기"}
+              </button>
+              <button
+                type="button"
+                onClick={() => happycallFileInputRef.current?.click()}
+                disabled={uploadingHappycallCsv}
+                style={{
+                  ...styles.copyButton,
+                  minWidth: 132,
+                  opacity: uploadingHappycallCsv ? 0.7 : 1,
+                }}
+              >
+                {uploadingHappycallCsv ? "CSV 처리 중..." : "해피콜 CSV 선택"}
               </button>
             </div>
           </div>

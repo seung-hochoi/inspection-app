@@ -163,6 +163,14 @@ function doPost(e) {
       });
     }
 
+    if (action === "importHappycallCsv") {
+      return jsonOutput_({
+        ok: true,
+        data: importHappycallCsvRows_(body.rows || body.payload || []),
+        happycall: getHappycallAnalytics_(),
+      });
+    }
+
     return jsonOutput_({
       ok: false,
       message: "지원하지 않는 action입니다.",
@@ -1224,6 +1232,10 @@ function importHappycallBatch_(payloadRows) {
     updated: updated,
     rows: saved,
   };
+}
+
+function importHappycallCsvRows_(payloadRows) {
+  return importHappycallBatch_(payloadRows);
 }
 
 function normalizeHappycallRecord_(payload, categoryIndex) {
