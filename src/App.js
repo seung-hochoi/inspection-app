@@ -2,7 +2,7 @@
 import Papa from "papaparse";
 import { BrowserCodeReader, BrowserMultiFormatReader } from "@zxing/browser";
 
-const SCRIPT_URL = process.env.REACT_APP_GOOGLE_SCRIPT_URL || "https://script.google.com/macros/s/AKfycbzKUcHTrUx5RU2bpAqie2VrFOueRzHswno4Ys8P-DFA4mKJFRiFZaPuL_kEk6D5e-24aQ/exec";
+const SCRIPT_URL = process.env.REACT_APP_GOOGLE_SCRIPT_URL || "https://script.google.com/macros/s/AKfycbxubLYj8Jb3wL4Z0bCC6nJ8YXA8cAJScYtpqf-weAHh77udlpDpre5dVvssN0PJaw5muw/exec";
 
 const normalizeKey = (key) => String(key || "").replace(/\uFEFF/g, "").trim();
 
@@ -175,6 +175,12 @@ const mergeRowsWithReservation = (baseRows, reservationRows) => {
 
   return Array.from(mergedMap.values());
 };
+
+const mergeJobRowsWithReservation = (jobRows, reservationRows) =>
+  mergeRowsWithReservation(
+    (jobRows || []).filter((row) => !row.__reservationRow),
+    reservationRows
+  );
 
 const hashString = (text) => {
   let hash = 0;
@@ -419,6 +425,7 @@ function App() {
   const [currentJob, setCurrentJob] = useState(null);
   const [currentFileName, setCurrentFileName] = useState("");
   const [currentFileModifiedAt, setCurrentFileModifiedAt] = useState("");
+  const [worksheetUrl, setWorksheetUrl] = useState("");
   const [mode, setMode] = useState("return");
   const [search, setSearch] = useState("");
   const [expandedProductCode, setExpandedProductCode] = useState("");
@@ -473,14 +480,14 @@ function App() {
     return () => clearTimeout(timer);
   }, [toast]);
 
-  useEffect(() => () => clearFlushTimer(), []);
-
-  const clearFlushTimer = () => {
+  const clearFlushTimer = useCallback(() => {
     if (flushTimerRef.current) {
       clearTimeout(flushTimerRef.current);
       flushTimerRef.current = null;
     }
-  };
+  }, []);
+
+  useEffect(() => () => clearFlushTimer(), [clearFlushTimer]);
 
   const makeEntityKey = (jobKey, productCode, partnerName) =>
     [jobKey || "", productCode || "", partnerName || ""].join("||");
@@ -564,14 +571,6 @@ function App() {
       entries.map((entry) => entry.key),
       "pending"
     );
-  };
-
-  const getStatusText = (status) => {
-    if (status === "saving") return "저장중";
-    if (status === "saved") return "저장됨";
-    if (status === "failed") return "저장실패";
-    if (status === "pending") return "미전송";
-    return "";
   };
 
   const stopScanner = useCallback(() => {
@@ -675,7 +674,7 @@ function App() {
           return;
         }
 
-        setScannerError("바코드 인식 중 오류가 발생했습니다.");
+        return;
       };
 
       if (backCamera?.deviceId) {
@@ -731,7 +730,7 @@ function App() {
   
       const normalized = buildNormalizedRows(parsed.data);
       const mergedRows = mergeRowsWithReservation(normalized, reservationRows);
-      const jobKey = computeJobKey(mergedRows);
+      const jobKey = computeJobKey(normalized);
 
       const response = await fetch(SCRIPT_URL, {
         method: "POST",
@@ -742,7 +741,7 @@ function App() {
             job_key: jobKey,
             source_file_name: file.name,
             source_file_modified: new Date(file.lastModified).toISOString(),
-            parsed_rows: mergedRows,
+            parsed_rows: normalized,
           },
         }),
       });
@@ -754,12 +753,12 @@ function App() {
 
       const nextJob = result.job || {
         job_key: jobKey,
-        rows: mergedRows,
+        rows: normalized,
         source_file_name: file.name,
         source_file_modified: new Date(file.lastModified).toISOString(),
       };
 
-      setRows(Array.isArray(nextJob.rows) ? nextJob.rows : mergedRows);
+      setRows(Array.isArray(nextJob.rows) ? mergeJobRowsWithReservation(nextJob.rows, reservationRows) : mergedRows);
       setCurrentJob(nextJob);
       setCurrentFileName(file.name);
       setCurrentFileModifiedAt(new Date(file.lastModified).toISOString());
@@ -784,7 +783,7 @@ function App() {
 
     startScanner();
     return () => stopScanner();
-  }, [isScannerOpen, startScanner]);
+  }, [isScannerOpen, startScanner, stopScanner]);
 
   const loadBootstrap = useCallback(async () => {
     if (!SCRIPT_URL.trim()) {
@@ -807,6 +806,7 @@ function App() {
       const data = result.data || {};
       const config = data.config || {};
       const job = data.current_job || null;
+      setWorksheetUrl(data.worksheet_url || "");
       const normalizedReservationRows = buildReservationRows(config.reservation_rows || []);
 
       const nextExcludedProductCodes = new Set();
@@ -851,7 +851,7 @@ function App() {
       setEventMap(nextEventMap);
       setReservationRows(normalizedReservationRows);
       setCurrentJob(job);
-      setRows(Array.isArray(job?.rows) ? job.rows : []);
+      setRows(Array.isArray(job?.rows) ? mergeJobRowsWithReservation(job.rows, normalizedReservationRows) : []);
       setCurrentFileName(job?.source_file_name || "");
       setCurrentFileModifiedAt(job?.source_file_modified || "");
       setDashboardSummary(data.summary || {});
@@ -1036,7 +1036,7 @@ function App() {
     }
   };
 
-  const flushPending = async () => {
+  const flushPending = useCallback(async () => {
     const rows = Object.values(pendingRef.current || {});
     if (!rows.length || savingRef.current) return;
 
@@ -1103,13 +1103,12 @@ function App() {
       savingRef.current = false;
       setSaving(false);
     }
-  };
+  }, [clearFlushTimer]);
 
   useEffect(() => {
     pendingRef.current = pendingMap;
   }, [pendingMap]);
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!Object.keys(pendingMap).length) {
       clearFlushTimer();
@@ -1131,7 +1130,7 @@ function App() {
     }, 2000);
 
     return () => clearFlushTimer();
-  }, [pendingMap, saving]);
+  }, [pendingMap, saving, clearFlushTimer, flushPending]);
 
   const saveInspectionQtySimple = async (product) => {
     const draftKey = `inspection||${product.partner}||${product.productCode}`;
@@ -1413,7 +1412,26 @@ function App() {
         <div style={styles.headerTopRow}>
           <div>
             <h1 style={styles.title}>GS신선강화지원팀</h1>
-            <p style={styles.subtitle}>승호</p>
+            <div style={styles.headerLinkRow}>
+              <a href={worksheetUrl || "#"} target="_blank" rel="noreferrer" style={styles.headerLink}>
+                {worksheetUrl || "워크시트 URL 없음"}
+              </a>
+              <button
+                type="button"
+                onClick={async () => {
+                  if (!worksheetUrl) return;
+                  try {
+                    await navigator.clipboard.writeText(worksheetUrl);
+                    setToast("워크시트 링크 복사 완료");
+                  } catch (_) {
+                    setError("워크시트 링크 복사 실패");
+                  }
+                }}
+                style={styles.copyButton}
+              >
+                복사
+              </button>
+            </div>
           </div>
           <div style={styles.headerModeBadge}>{mode === "inspection" ? "검품 모드" : "회송/교환 모드"}</div>
         </div>
@@ -1423,7 +1441,7 @@ function App() {
             onClick={() => setMode("inspection")}
             style={{ ...styles.quickActionCard, ...(mode === "inspection" ? styles.quickActionCardActive : {}) }}
           >
-            <span style={styles.quickActionIcon}>#</span>
+            <span style={styles.quickActionIcon}>🔍</span>
             <span style={styles.quickActionText}>검품</span>
           </button>
           <button
@@ -1431,7 +1449,7 @@ function App() {
             onClick={() => setMode("return")}
             style={{ ...styles.quickActionCard, ...(mode === "return" ? styles.quickActionCardActive : {}) }}
           >
-            <span style={styles.quickActionIcon}>!</span>
+            <span style={styles.quickActionIcon}>📦</span>
             <span style={styles.quickActionText}>회송</span>
           </button>
           <button
@@ -1442,35 +1460,10 @@ function App() {
             }}
             style={styles.quickActionCard}
           >
-            <span style={styles.quickActionIcon}>=</span>
+            <span style={styles.quickActionIcon}>📄</span>
             <span style={styles.quickActionText}>내역</span>
           </button>
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            style={styles.quickActionCard}
-          >
-            <span style={styles.quickActionIcon}>+</span>
-            <span style={styles.quickActionText}>CSV</span>
-          </button>
         </div>
-      </div>
-
-      <div style={styles.tabRow}>
-        <button
-          type="button"
-          onClick={() => setMode("return")}
-          style={{ ...styles.tabButton, ...(mode === "return" ? styles.tabButtonActive : {}) }}
-        >
-          회송 / 교환
-        </button>
-        <button
-          type="button"
-          onClick={() => setMode("inspection")}
-          style={{ ...styles.tabButton, ...(mode === "inspection" ? styles.tabButtonActive : {}) }}
-        >
-          검품수량
-        </button>
       </div>
 
       <div style={styles.panel}>
@@ -1504,7 +1497,7 @@ function App() {
             style={styles.searchInput}
           />
           <button type="button" onClick={() => setIsScannerOpen(true)} style={styles.scanButton} aria-label="바코드 스캔">
-            <span style={styles.scanIcon}>⌁</span>
+            <span style={styles.scanIcon}>📷</span>
           </button>
         </div>
       </div>
@@ -1735,9 +1728,6 @@ function App() {
                                   : "선택된 사진 없음"}
                               </div>
                             </div>
-                            {inspectionStatus ? (
-                              <div style={styles.itemStatusText}>{getStatusText(inspectionStatus)}</div>
-                            ) : null}
                           </div>
                         ) : (
                           <>
@@ -1874,9 +1864,6 @@ function App() {
                                 >
                                   {actionStatus === "saving" ? "저장 중..." : "저장"}
                                 </button>
-                                {actionStatus ? (
-                                  <div style={styles.itemStatusText}>{getStatusText(actionStatus)}</div>
-                                ) : null}
                               </>
                           </div>
                             )}
@@ -2088,6 +2075,30 @@ const styles = {
     color: "#6b7280",
     fontSize: 14,
   },
+  headerLinkRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 10,
+    flexWrap: "wrap",
+  },
+  headerLink: {
+    color: "#2563eb",
+    fontSize: 13,
+    textDecoration: "none",
+    wordBreak: "break-all",
+  },
+  copyButton: {
+    minHeight: 32,
+    padding: "0 10px",
+    borderRadius: 999,
+    border: "1px solid #cbd5e1",
+    background: "#fff",
+    color: "#0f172a",
+    fontSize: 12,
+    fontWeight: 800,
+    cursor: "pointer",
+  },
   headerModeBadge: {
     background: "#e0e7ff",
     color: "#3730a3",
@@ -2099,7 +2110,7 @@ const styles = {
   },
   quickActionGrid: {
     display: "grid",
-    gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+    gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
     gap: 10,
   },
   quickActionCard: {
@@ -2253,7 +2264,6 @@ const styles = {
   scanIcon: {
     fontSize: 22,
     lineHeight: 1,
-    transform: "rotate(90deg)",
   },
   formGroup: {
     marginBottom: 12,
@@ -2267,12 +2277,6 @@ const styles = {
     color: "#6b7280",
     wordBreak: "break-all",
     lineHeight: 1.5,
-  },
-  itemStatusText: {
-    marginTop: 8,
-    fontSize: 12,
-    color: "#2563eb",
-    fontWeight: 700,
   },
   infoBox: {
     padding: 12,
@@ -2307,8 +2311,10 @@ const styles = {
   countActions: {
     display: "flex",
     gap: 8,
-    flexWrap: "wrap",
+    flexWrap: "nowrap",
     justifyContent: "flex-end",
+    overflowX: "auto",
+    paddingBottom: 2,
   },
   kpiGrid: {
     display: "grid",

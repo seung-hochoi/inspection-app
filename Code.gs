@@ -11,12 +11,14 @@
   returnSummary: "검품 회송내역 (센터미포함)",
 };
 const ADMIN_RESET_PASSWORD = "0000";
+const JOB_CACHE_MAX_DATA_ROWS = 30000;
 
 function doGet(e) {
   try {
     const action = (e && e.parameter && e.parameter.action) || "bootstrap";
 
     if (action === "bootstrap") {
+      updateInspectionDashboard_(SpreadsheetApp.getActiveSpreadsheet());
       return jsonOutput_({
         ok: true,
         data: {
@@ -26,6 +28,7 @@ function doGet(e) {
             reservation_rows: readReservationRows_(),
           },
           current_job: loadLatestJob_(),
+          worksheet_url: SpreadsheetApp.getActiveSpreadsheet().getUrl(),
           summary: getDashboardSummary_(),
         },
       });
@@ -296,10 +299,12 @@ function cacheCsvJob_(payload) {
     });
 
     cacheSheet.getRange(cacheSheet.getLastRow() + 1, 1, values.length, 4).setValues(values);
+    pruneJobCacheRows_(cacheSheet);
   }
 
   var job = loadJobRowsByKey_(ss, jobKey);
   updateInspectionDashboard_(ss);
+  autoResizeOperationalSheets_(ss);
   return job;
 }
 
@@ -418,19 +423,43 @@ function getInspectionSummarySheet_(ss) {
   return getOrCreateSheet_(ss, SHEET_NAMES.summary);
 }
 
+function pruneJobCacheRows_(cacheSheet) {
+  if (!cacheSheet) return;
+  var dataRowCount = Math.max(cacheSheet.getLastRow() - 1, 0);
+  if (dataRowCount <= JOB_CACHE_MAX_DATA_ROWS) return;
+
+  var deleteCount = dataRowCount - JOB_CACHE_MAX_DATA_ROWS;
+  cacheSheet.deleteRows(2, deleteCount);
+}
+
+function autoResizeOperationalSheets_(ss) {
+  var sheets = [
+    ss.getSheetByName(SHEET_NAMES.inspection),
+    ss.getSheetByName(SHEET_NAMES.records),
+    ss.getSheetByName(SHEET_NAMES.summary),
+    ss.getSheetByName(SHEET_NAMES.returnCenter),
+    ss.getSheetByName(SHEET_NAMES.returnSummary),
+  ];
+
+  sheets.forEach(function (sheet) {
+    if (!sheet || sheet.getLastColumn() <= 0) return;
+    sheet.autoResizeColumns(1, sheet.getLastColumn());
+  });
+}
+
 function getDashboardSummary_() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = getInspectionSummarySheet_(ss);
-  if (!sheet || sheet.getLastRow() < 7) {
+  if (!sheet || sheet.getLastRow() < 6) {
     return {};
   }
 
-  var labelsTop = sheet.getRange("L2:Q2").getValues()[0];
-  var valuesTop = sheet.getRange("L3:Q3").getValues()[0];
-  var labelsMid = sheet.getRange("L4:Q4").getValues()[0];
-  var valuesMid = sheet.getRange("L5:Q5").getValues()[0];
-  var labelsBottom = sheet.getRange("L6:Q6").getValues()[0];
-  var valuesBottom = sheet.getRange("L7:Q7").getValues()[0];
+  var labelsTop = sheet.getRange("A1:F1").getValues()[0];
+  var valuesTop = sheet.getRange("A2:F2").getValues()[0];
+  var labelsMid = sheet.getRange("A3:F3").getValues()[0];
+  var valuesMid = sheet.getRange("A4:F4").getValues()[0];
+  var labelsBottom = sheet.getRange("A5:F5").getValues()[0];
+  var valuesBottom = sheet.getRange("A6:F6").getValues()[0];
   var summary = {};
 
   [labelsTop, labelsMid, labelsBottom].forEach(function (labels, groupIndex) {
@@ -529,6 +558,7 @@ function appendRecord_(payload) {
   syncInspectionMovementTotals_(inspectionSheet, recordsSheet);
   updateInspectionDashboard_(ss);
   syncReturnSheets_(ss);
+  autoResizeOperationalSheets_(ss);
   return record;
 }
 
@@ -549,6 +579,7 @@ function deleteRecord_(payload) {
   syncInspectionMovementTotals_(getInspectionSheet_(ss), sheet);
   updateInspectionDashboard_(ss);
   syncReturnSheets_(ss);
+  autoResizeOperationalSheets_(ss);
 
   return {
     rowNumber: rowNumber,
@@ -567,6 +598,7 @@ function saveInspectionQty_(payload) {
   syncInspectionMovementTotals_(inspectionSheet, recordsSheet);
   updateInspectionDashboard_(ss);
   syncReturnSheets_(ss);
+  autoResizeOperationalSheets_(ss);
   return saved;
 }
 
@@ -584,6 +616,7 @@ function saveInspectionBatch_(rows) {
   syncInspectionMovementTotals_(inspectionSheet, recordsSheet);
   updateInspectionDashboard_(ss);
   syncReturnSheets_(ss);
+  autoResizeOperationalSheets_(ss);
 
   return {
     rows: saved,
@@ -615,6 +648,7 @@ function saveBatch_(rows) {
   syncInspectionMovementTotals_(inspectionSheet, recordsSheet);
   updateInspectionDashboard_(ss);
   syncReturnSheets_(ss);
+  autoResizeOperationalSheets_(ss);
 
   return {
     inspectionRows: inspectionRows,
@@ -1352,6 +1386,7 @@ function resetCurrentJobInputData_(payload) {
   var resetInspectionCount = deleteInspectionRowsByJobKey_(inspectionSheet, jobKey);
   updateInspectionDashboard_(ss);
   syncReturnSheets_(ss);
+  autoResizeOperationalSheets_(ss);
 
   return {
     ok: true,
@@ -1674,15 +1709,16 @@ function updateInspectionDashboard_(ss) {
 
   inspectionSheet.getRange("L2:Q7").clearContent().clearFormat();
 
-  summarySheet.getRange("L2:Q7").setValues(values);
-  summarySheet.getRange("L2:Q2").setBackground("#c6efce").setFontWeight("bold");
-  summarySheet.getRange("L4:Q4").setBackground("#fff2cc").setFontWeight("bold");
-  summarySheet.getRange("L6:Q6").setBackground("#d9ead3").setFontWeight("bold");
-  summarySheet.getRange("L3:Q3").setNumberFormats([["#,##0", "#,##0", "#,##0", "0.0%", "0.0%", "@"]]);
-  summarySheet.getRange("L5:Q5").setNumberFormats([["#,##0", "#,##0", "#,##0", "0.0%", "#,##0", "0.0%"]]);
-  summarySheet.getRange("L7:Q7").setNumberFormats([["#,##0", "#,##0", "#,##0", "#,##0", "#,##0", "#,##0"]]);
-  summarySheet.autoResizeColumns(12, 6);
-  [12, 13, 14, 15, 16, 17].forEach(function (col) {
+  summarySheet.getRange("A1:F6").clearContent().clearFormat();
+  summarySheet.getRange("A1:F6").setValues(values);
+  summarySheet.getRange("A1:F1").setBackground("#c6efce").setFontWeight("bold");
+  summarySheet.getRange("A3:F3").setBackground("#fff2cc").setFontWeight("bold");
+  summarySheet.getRange("A5:F5").setBackground("#d9ead3").setFontWeight("bold");
+  summarySheet.getRange("A2:F2").setNumberFormats([["#,##0", "#,##0", "#,##0", "0.0%", "0.0%", "@"]]);
+  summarySheet.getRange("A4:F4").setNumberFormats([["#,##0", "#,##0", "#,##0", "0.0%", "#,##0", "0.0%"]]);
+  summarySheet.getRange("A6:F6").setNumberFormats([["#,##0", "#,##0", "#,##0", "#,##0", "#,##0", "#,##0"]]);
+  summarySheet.autoResizeColumns(1, 6);
+  [1, 2, 3, 4, 5, 6].forEach(function (col) {
     if (summarySheet.getColumnWidth(col) < 110) {
       summarySheet.setColumnWidth(col, 110);
     }
