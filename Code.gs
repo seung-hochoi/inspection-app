@@ -1724,9 +1724,9 @@ function mergeHappycallBucket_(bucketMap, key, seed, count) {
   if (!bucketMap[key]) {
     bucketMap[key] = {
       key: key,
-      name: seed.name || "",
+      name: seed.name || seed.productName || seed.subCategory || key || "미분류상품",
       productCode: seed.productCode || "",
-      productName: seed.productName || seed.name || "",
+      productName: seed.productName || seed.subCategory || seed.name || key || "미분류상품",
       partnerName: seed.partnerName || "",
       majorCategory: seed.majorCategory || "",
       midCategory: seed.midCategory || "",
@@ -1759,9 +1759,9 @@ function finalizeHappycallBuckets_(bucketMap, totalCount, includeReason) {
 
       return {
         key: item.key,
-        name: item.name || item.productName || item.key,
+        name: item.name || item.productName || item.subCategory || item.key || "미분류상품",
         productCode: item.productCode,
-        productName: item.productName,
+        productName: item.productName || item.subCategory || item.name || item.key || "미분류상품",
         partnerName: item.partnerName,
         majorCategory: item.majorCategory,
         midCategory: item.midCategory,
