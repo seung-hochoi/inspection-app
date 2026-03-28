@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import Papa from "papaparse";
 import { BrowserCodeReader, BrowserMultiFormatReader } from "@zxing/browser";
 
-const SCRIPT_URL = process.env.REACT_APP_GOOGLE_SCRIPT_URL || "https://script.google.com/macros/s/AKfycbxMiFtFJwTzOXtJ3g7q_SMzd_TDpN1rvX6SuitwPf2uxCejijlpGncUwwFlNwoh1389SQ/exec";
+const SCRIPT_URL = process.env.REACT_APP_GOOGLE_SCRIPT_URL || "https://script.google.com/macros/s/AKfycbw2MWysZNi_EAHHfsApLqEOW-CtOx8BSyo-otZejxNQlQkhhCKsoxzSBv1x3-t0F0bGYg/exec";
 
 const normalizeKey = (key) => String(key || "").replace(/\uFEFF/g, "").trim();
 
@@ -13,6 +13,14 @@ const normalizeText = (value) =>
     .replace(/\s+/g, " ")
     .trim()
     .toLowerCase();
+
+const normalizeHappycallLookupText = (value) =>
+  String(value ?? "")
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/\s+/g, "")
+    .replace(/[^\u3131-\uD79Da-z0-9]/gi, "")
+    .trim();
 
 const normalizeProductCode = (value) => {
   if (value == null) return "";
@@ -34,6 +42,51 @@ const normalizeProductCode = (value) => {
 const parseQty = (value) => {
   const num = Number(String(value ?? "").replace(/,/g, "").trim());
   return Number.isNaN(num) ? 0 : num;
+};
+
+const makeSkuKey = (productCode, partnerName) =>
+  `${normalizeProductCode(productCode || "")}||${String(partnerName || "").trim()}`;
+
+const HAPPYCALL_PERIOD_OPTIONS = [
+  { key: "1d", label: "1일" },
+  { key: "7d", label: "7일" },
+  { key: "30d", label: "1달" },
+];
+
+const getHappycallProductStats = (analytics, product) => {
+  const ranks = analytics?.productRanks || {};
+  const keys = [
+    `sku::${makeSkuKey(product?.productCode, product?.partner)}`,
+    `name::${normalizeHappycallLookupText(product?.productName)}||${normalizeHappycallLookupText(product?.partner)}`,
+    `code::${normalizeProductCode(product?.productCode || "")}`,
+    `nameOnly::${normalizeHappycallLookupText(product?.productName)}`,
+  ];
+
+  for (const key of keys) {
+    if (key && ranks[key]) {
+      return ranks[key];
+    }
+  }
+
+  return {};
+};
+
+const formatPercent = (value) => {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? `${(numeric * 100).toFixed(1)}%` : "-";
+};
+
+const getHappycallRankStyle = (rank) => {
+  if (rank === 1) {
+    return { background: "#fee2e2", color: "#b91c1c" };
+  }
+  if (rank === 2) {
+    return { background: "#dbeafe", color: "#1d4ed8" };
+  }
+  if (rank === 3) {
+    return { background: "#dcfce7", color: "#15803d" };
+  }
+  return { background: "#f3f4f6", color: "#374151" };
 };
 
 const getValue = (row, candidates) => {
@@ -265,6 +318,8 @@ const formatDashboardValue = (label, value) => {
   return String(value);
 };
 
+void formatDashboardValue;
+
 const getRecordType = (record) => {
   const type = String(record.처리유형 || "").trim();
   if (type) return type;
@@ -450,7 +505,9 @@ function App() {
   const [excludedPairKeys, setExcludedPairKeys] = useState(new Set());
   const [eventMap, setEventMap] = useState({});
   const [reservationRows, setReservationRows] = useState([]);
-  const [dashboardSummary, setDashboardSummary] = useState({});
+  const [, setDashboardSummary] = useState({});
+  const [happycallAnalytics, setHappycallAnalytics] = useState({});
+  const [selectedHappycallPeriod, setSelectedHappycallPeriod] = useState("1d");
 
   const [showHistory, setShowHistory] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -859,6 +916,7 @@ function App() {
       setCurrentFileName(job?.source_file_name || "");
       setCurrentFileModifiedAt(job?.source_file_modified || "");
       setDashboardSummary(data.summary || {});
+      setHappycallAnalytics(data.happycall || {});
       setMessage(job ? "최근 작업을 불러왔습니다." : "CSV를 업로드해주세요.");
     } catch (err) {
       setError(err.message || "초기 데이터 불러오기 실패");
@@ -974,10 +1032,11 @@ function App() {
         partner,
         products: products.map((product) => ({
           ...product,
+          happycallStats: getHappycallProductStats(happycallAnalytics, product),
           centers: product.centers.sort((a, b) => (b.totalQty || 0) - (a.totalQty || 0)),
         })),
       }));
-  }, [filteredRows, search, eventMap]);
+  }, [filteredRows, search, eventMap, happycallAnalytics]);
 
   const historyCountMap = useMemo(() => {
     const map = {};
@@ -1000,22 +1059,33 @@ function App() {
     return map;
   }, [historyRows]);
 
-  const dashboardCards = useMemo(
-    () => [
-      { label: "총 입고금액", value: dashboardSummary["총 입고금액"] },
-      { label: "총 입고수량", value: dashboardSummary["총 입고수량"] },
-      { label: "입고 SKU", value: dashboardSummary["입고 SKU"] },
-      { label: "검품 입고금액", value: dashboardSummary["검품 입고금액"] },
-      { label: "검품 입고 SKU", value: dashboardSummary["검품입고 SKU"] },
-      { label: "검품 입고수량", value: dashboardSummary["검품 입고수량"] },
-      { label: "검품 SKU", value: dashboardSummary["검품 SKU"] },
-      { label: "검품 수량", value: dashboardSummary["검품 수량"] },
-      { label: "검품률", value: dashboardSummary["검품률"] ?? dashboardSummary["검품율"] },
-      { label: "SKU 커버리지", value: dashboardSummary["SKU 커버리지"] },
-      { label: "실검품률", value: dashboardSummary["실검품률"] ?? dashboardSummary["실 검품률"] },
-      { label: "실제 SKU 커버리지", value: dashboardSummary["실제 SKU 커버리지"] },
-    ],
-    [dashboardSummary]
+  const selectedHappycallSummary = useMemo(() => {
+    const periods = happycallAnalytics?.periods || {};
+    return (
+      periods[selectedHappycallPeriod] || {
+        label: "",
+        totalCount: 0,
+        topProducts: [],
+        topMajorCategories: [],
+        topMidCategories: [],
+        topSubCategories: [],
+        topReasons: [],
+      }
+    );
+  }, [happycallAnalytics, selectedHappycallPeriod]);
+
+  const happycallTopCards = useMemo(
+    () =>
+      [0, 1, 2, 3, 4].map((index) => {
+        const item = selectedHappycallSummary.topProducts?.[index] || null;
+        return {
+          rank: index + 1,
+          productName: item?.productName || "-",
+          count: parseQty(item?.count || 0),
+          share: Number(item?.share || 0),
+        };
+      }),
+    [selectedHappycallSummary]
   );
 
   const updateDraft = (key, field, value) => {
@@ -1533,13 +1603,123 @@ function App() {
         </div>
       )}
 
-      <div style={styles.kpiGrid}>
-        {dashboardCards.map((card) => (
-          <div key={card.label} style={styles.kpiCard}>
-            <div style={styles.kpiLabel}>{card.label}</div>
-            <div style={styles.kpiValue}>{formatDashboardValue(card.label, card.value)}</div>
+      <div style={{ ...styles.panel, display: "none" }}>
+        <div style={styles.happycallHeader}>
+          <div>
+            <div style={styles.sectionTitle}>전일 해피콜 TOP5</div>
+            <div style={styles.metaText}>전일 접수 해피콜 기준</div>
           </div>
-        ))}
+          <div style={{ ...styles.happycallTabRow, display: "none" }}>
+            {HAPPYCALL_PERIOD_OPTIONS.map((option) => (
+              <button
+                key={option.key}
+                type="button"
+                onClick={() => setSelectedHappycallPeriod(option.key)}
+                style={{
+                  ...styles.happycallTabButton,
+                  ...(selectedHappycallPeriod === option.key ? styles.happycallTabButtonActive : {}),
+                }}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div style={styles.kpiGrid}>
+          {happycallTopCards.map((card) => (
+            <div
+              key={`happycall-top-${card.rank}`}
+              style={{
+                ...styles.kpiCard,
+                borderColor:
+                  card.rank === 1 ? "#fca5a5" : card.rank === 2 ? "#93c5fd" : card.rank === 3 ? "#86efac" : "#e5e7eb",
+              }}
+            >
+              <div
+                style={{
+                  ...styles.kpiLabel,
+                  color:
+                    card.rank === 1 ? "#b91c1c" : card.rank === 2 ? "#1d4ed8" : card.rank === 3 ? "#15803d" : "#64748b",
+                }}
+              >
+                {`TOP.${card.rank}`}
+              </div>
+              <div
+                style={{
+                  ...styles.kpiValue,
+                  fontSize: 18,
+                  color:
+                    card.rank === 1 ? "#b91c1c" : card.rank === 2 ? "#1d4ed8" : card.rank === 3 ? "#15803d" : "#0f172a",
+                }}
+              >
+                {card.productName}
+              </div>
+              <div style={styles.topCardMeta}>
+                {card.count.toLocaleString("ko-KR")}건 · {formatPercent(card.share)}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ ...styles.panel, display: "none" }}>
+        <div style={styles.happycallHeader}>
+          <div>
+            <div style={styles.sectionTitle}>해피콜 TOP</div>
+            <div style={styles.metaText}>
+              메일에서 추출한 해피콜 빈도입니다. 제목에 구체 사유가 있으면 본문 사유보다 우선합니다.
+            </div>
+          </div>
+          <div style={styles.happycallTotalBox}>
+            <div style={styles.happycallTotalLabel}>누적 해피콜</div>
+            <div style={styles.happycallTotalValue}>
+              {parseQty(happycallAnalytics?.totalCount || 0).toLocaleString("ko-KR")}건
+            </div>
+          </div>
+        </div>
+
+        <div style={styles.happycallTabRow}>
+          {HAPPYCALL_PERIOD_OPTIONS.map((option) => (
+            <button
+              key={option.key}
+              type="button"
+              onClick={() => setSelectedHappycallPeriod(option.key)}
+              style={{
+                ...styles.happycallTabButton,
+                ...(selectedHappycallPeriod === option.key ? styles.happycallTabButtonActive : {}),
+              }}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+
+        <div style={styles.happycallGrid}>
+          <div style={styles.happycallCard}>
+            <div style={styles.happycallCardTitle}>상품 TOP5</div>
+            {(selectedHappycallSummary.topProducts || []).length ? (
+              selectedHappycallSummary.topProducts.map((item, index) => (
+                <div key={`${item.key || item.productName}-${index}`} style={styles.happycallRow}>
+                  <div>
+                    <div style={styles.happycallRowTitle}>
+                      TOP{index + 1} {item.productName || item.name || "미분류"}
+                    </div>
+                    <div style={styles.happycallRowMeta}>
+                      {item.topReason || "기타"}
+                    </div>
+                  </div>
+                  <div style={styles.happycallRowValue}>
+                    <div>{parseQty(item.count).toLocaleString("ko-KR")}건</div>
+                    <div style={styles.happycallRowPercent}>{formatPercent(item.share)}</div>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div style={styles.emptyBox}>표시할 해피콜 집계가 없습니다.</div>
+            )}
+          </div>
+        </div>
       </div>
 
       <div style={styles.countRow}>
@@ -1618,6 +1798,21 @@ function App() {
                     const actionStatus = mode === "inspection"
                       ? inspectionStatus
                       : returnStatus || exchangeStatus;
+                    const happycallBadges = [
+                      ["1d", "전일"],
+                      ["7d", "일주일"],
+                      ["30d", "한달"],
+                    ]
+                      .map(([periodKey, label]) => {
+                        const stats = product.happycallStats?.[periodKey];
+                        if (!stats?.rank || stats.rank > 5) return null;
+                        return {
+                          key: periodKey,
+                          rank: stats.rank,
+                          label: `${label} 해피콜 TOP${stats.rank}`,
+                        };
+                      })
+                      .filter(Boolean);
 
                     return (
                       <div key={`${partnerGroup.partner}-${product.productCode}`} style={styles.card}>
@@ -1625,6 +1820,15 @@ function App() {
                           <div style={styles.cardInlineInspection}>
                             <div style={styles.cardInlineInfo}>
                               <div style={styles.cardTopRowInline}>
+                                {happycallBadges.length ? (
+                                  <div style={styles.happycallBadgeRow}>
+                                    {happycallBadges.map((badge) => (
+                                      <span key={badge.key} style={{ ...styles.happycallBadge, ...getHappycallRankStyle(badge.rank) }}>
+                                        {badge.label}
+                                      </span>
+                                    ))}
+                                  </div>
+                                ) : null}
                                 <div style={styles.cardTitle}>{product.productName || "상품명 없음"}</div>
                                 {product.eventInfo?.행사여부 ? (
                                   <span style={styles.eventBadge}>
@@ -1742,6 +1946,15 @@ function App() {
                               }}
                             >
                               <div style={styles.cardTopRow}>
+                                {happycallBadges.length ? (
+                                  <div style={styles.happycallBadgeRow}>
+                                    {happycallBadges.map((badge) => (
+                                      <span key={badge.key} style={{ ...styles.happycallBadge, ...getHappycallRankStyle(badge.rank) }}>
+                                        {badge.label}
+                                      </span>
+                                    ))}
+                                  </div>
+                                ) : null}
                                 <div style={styles.cardTitle}>{product.productName || "상품명 없음"}</div>
                                 {product.eventInfo?.행사여부 ? (
                                   <span style={styles.eventBadge}>
@@ -2161,6 +2374,121 @@ const styles = {
     padding: 14,
     marginBottom: 12,
     border: "1px solid #e5e7eb",
+  },
+  happycallHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    gap: 12,
+    alignItems: "flex-start",
+    flexWrap: "wrap",
+    marginBottom: 12,
+  },
+  happycallTotalBox: {
+    minWidth: 132,
+    borderRadius: 14,
+    background: "#f8fafc",
+    border: "1px solid #dbe3f0",
+    padding: 12,
+  },
+  happycallTotalLabel: {
+    fontSize: 12,
+    color: "#64748b",
+    marginBottom: 6,
+    fontWeight: 700,
+  },
+  happycallTotalValue: {
+    fontSize: 22,
+    fontWeight: 800,
+    color: "#0f172a",
+  },
+  happycallTabRow: {
+    display: "flex",
+    gap: 8,
+    marginBottom: 12,
+  },
+  happycallTabButton: {
+    flex: 1,
+    minHeight: 40,
+    borderRadius: 12,
+    border: "1px solid #d1d5db",
+    background: "#fff",
+    fontWeight: 800,
+    cursor: "pointer",
+    color: "#475569",
+  },
+  happycallTabButtonActive: {
+    background: "#111827",
+    color: "#fff",
+    borderColor: "#111827",
+  },
+  happycallGrid: {
+    display: "grid",
+    gridTemplateColumns: "minmax(0, 1fr)",
+    gap: 10,
+  },
+  happycallCard: {
+    border: "1px solid #e5e7eb",
+    borderRadius: 16,
+    padding: 14,
+    background: "#fff",
+  },
+  happycallCardTitle: {
+    fontSize: 14,
+    fontWeight: 800,
+    color: "#0f172a",
+    marginBottom: 10,
+  },
+  happycallRow: {
+    display: "flex",
+    justifyContent: "space-between",
+    gap: 12,
+    alignItems: "center",
+    padding: "10px 0",
+    borderTop: "1px solid #f1f5f9",
+  },
+  happycallRowTitle: {
+    fontSize: 14,
+    fontWeight: 700,
+    color: "#111827",
+  },
+  happycallRowMeta: {
+    fontSize: 12,
+    color: "#64748b",
+    marginTop: 4,
+  },
+  happycallRowValue: {
+    textAlign: "right",
+    fontSize: 13,
+    fontWeight: 700,
+    color: "#0f172a",
+    whiteSpace: "nowrap",
+  },
+  happycallRowPercent: {
+    fontSize: 12,
+    color: "#2563eb",
+    marginTop: 4,
+  },
+  happycallBadge: {
+    borderRadius: 999,
+    padding: "6px 10px",
+    background: "#fee2e2",
+    color: "#b91c1c",
+    fontSize: 11,
+    fontWeight: 800,
+    whiteSpace: "nowrap",
+  },
+  happycallBadgeRow: {
+    display: "flex",
+    gap: 6,
+    flexWrap: "wrap",
+  },
+  happycallChip: {
+    borderRadius: 999,
+    padding: "6px 10px",
+    background: "#eff6ff",
+    color: "#1d4ed8",
+    fontSize: 12,
+    fontWeight: 700,
   },
   csvHeaderRow: {
     display: "flex",
