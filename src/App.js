@@ -45,6 +45,12 @@ const parseQty = (value) => {
   return Number.isNaN(num) ? 0 : num;
 };
 
+const clampText = (value, maxLength = 4000) => {
+  const text = String(value ?? "");
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, Math.max(0, maxLength - 7))}...(생략)`;
+};
+
 const makeSkuKey = (productCode, partnerName) =>
   `${normalizeProductCode(productCode || "")}||${String(partnerName || "").trim()}`;
 
@@ -1530,13 +1536,16 @@ function App() {
 
       const rawRows = (parsedRows || [])
         .map((row) => ({
-          제목: row["제목"] || row["subject"] || "",
-          본문: row["본문"] || row["body"] || row["내용(암호화)"] || "",
-          메일ID: row["인터넷 메시지 ID"] || row["메일ID"] || row["접수번호"] || "",
-          보낸사람: row["보낸사람:(이름)"] || row["senderName"] || "",
-          접수일시: row["접수일시"] || row["receivedAt"] || "",
-          파트너사: row["처리파트너사"] || row["파트너사"] || row["협력사명"] || "",
-          장애유형: row["장애유형(소)"] || row["장애유형(중)"] || row["장애유형(대)"] || row["장애유형"] || "",
+          제목: clampText(row["제목"] || row["subject"] || "", 300),
+          본문: clampText(row["본문"] || row["body"] || row["내용(암호화)"] || "", 8000),
+          메일ID: clampText(row["인터넷 메시지 ID"] || row["메일ID"] || row["접수번호"] || "", 200),
+          보낸사람: clampText(row["보낸사람:(이름)"] || row["senderName"] || "", 200),
+          접수일시: clampText(row["접수일시"] || row["receivedAt"] || "", 100),
+          파트너사: clampText(row["처리파트너사"] || row["파트너사"] || row["협력사명"] || "", 200),
+          장애유형: clampText(
+            row["장애유형(소)"] || row["장애유형(중)"] || row["장애유형(대)"] || row["장애유형"] || "",
+            200
+          ),
         }))
         .filter((row) => String(row.제목 || "").trim() || String(row.본문 || "").trim());
 
@@ -1547,7 +1556,7 @@ function App() {
           String(row.파트너사 || "").trim(),
           String(row.접수일시 || "").trim(),
           String(row.제목 || "").trim(),
-          String(row.본문 || "").trim(),
+          String(row.본문 || "").trim().slice(0, 300),
         ].join("||");
         dedupedMap.set(dedupeKey, row);
       });
