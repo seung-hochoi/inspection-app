@@ -664,8 +664,16 @@ function upsertInspectionRow_(sheet, payload) {
   if (targetRow > 0) {
     const existingValues = sheet.getRange(targetRow, 1, 1, sheet.getLastColumn()).getValues()[0];
     row["사진링크"] = row["사진링크"] || String(existingValues[10] || "").trim();
-    row["사진링크목록"] = row["사진링크목록"] || String(existingValues[11] || "").trim();
-    row["사진파일ID목록"] = row["사진파일ID목록"] || String(existingValues[12] || "").trim();
+    row["사진링크목록"] = mergePhotoLinks_(
+      String(existingValues[11] || "").trim(),
+      row["사진링크목록"],
+      row["사진링크"]
+    );
+    row["사진파일ID목록"] = mergePhotoLinks_(
+      String(existingValues[12] || "").trim(),
+      row["사진파일ID목록"],
+      ""
+    );
   }
   writeInspectionRow_(sheet, targetRow, row);
   row.__rowNumber = targetRow > 0 ? targetRow : sheet.getLastRow();
@@ -1562,6 +1570,49 @@ function getRowSkuKey_(row) {
   return String(getRowFieldValue_(row, ["상품명", "상품 명", "품목명", "품명"]) || "").trim();
 }
 
+function buildDashboardSourceRows_(latestRows, reservationRows) {
+  var merged = Array.isArray(latestRows) ? latestRows.slice() : [];
+
+  (Array.isArray(reservationRows) ? reservationRows : []).forEach(function (row, index) {
+    var productCode = normalizeCode_(
+      getRowFieldValue_(row, ["상품코드", "상품 코드", "코드", "바코드"])
+    );
+    var partnerName = normalizeText_(
+      getRowFieldValue_(row, ["협력사명", "협력사", "거래처명"])
+    );
+    var productName = String(
+      getRowFieldValue_(row, ["상품명", "상품 명", "품목명", "품명"])
+    ).trim();
+    var centerName = String(getRowFieldValue_(row, ["센터", "센터명"])).trim();
+    var qty = parseNumber_(getRowFieldValue_(row, ["발주수량", "입고수량", "수량"]));
+    var cost = parseNumber_(getRowFieldValue_(row, ["상품원가", "입고원가", "원가"]));
+
+    if (!productCode && !partnerName && !productName) {
+      return;
+    }
+
+    merged.push({
+      __id: "reservation-dashboard-" + index,
+      __reservationRow: true,
+      __productCode: productCode,
+      __productName: productName,
+      __partner: partnerName,
+      __center: centerName,
+      __qty: qty,
+      __incomingCost: cost,
+      상품코드: productCode,
+      상품명: productName,
+      협력사명: partnerName,
+      센터명: centerName,
+      발주수량: qty,
+      상품원가: cost,
+      입고원가: cost,
+    });
+  });
+
+  return merged;
+}
+
 function updateInspectionDashboard_(ss) {
   var inspectionSheet = getInspectionSheet_(ss);
   var summarySheet = getInspectionSummarySheet_(ss);
@@ -1569,6 +1620,8 @@ function updateInspectionDashboard_(ss) {
 
   var latestJob = loadLatestJob_();
   var latestRows = latestJob && Array.isArray(latestJob.rows) ? latestJob.rows : [];
+  var reservationRows = readReservationRows_();
+  var sourceRows = buildDashboardSourceRows_(latestRows, reservationRows);
   var inspectionRows = loadInspectionRows_();
   var recordRows = loadRecords_();
   var excludeRows = readObjectsSheet_(SHEET_NAMES.exclude);
@@ -1612,11 +1665,11 @@ function updateInspectionDashboard_(ss) {
     }
   });
 
-  latestRows.forEach(function (row) {
+  sourceRows.forEach(function (row) {
     var code = normalizeCode_(row.__productCode || getRowFieldValue_(row, ["상품코드", "상품 코드", "코드", "바코드"]));
     var partner = normalizeText_(row.__partner || getRowFieldValue_(row, ["거래처명(구매조건명)", "거래처명", "협력사", "협력사명"]) || "");
-    var qty = parseNumber_(row.__qty || getRowFieldValue_(row, ["총 발주수량", "발주수량", "수량"]));
-    var cost = parseNumber_(row.__incomingCost || getRowFieldValue_(row, ["입고원가", "원가"]));
+    var qty = parseNumber_(row.__qty || getRowFieldValue_(row, ["총 발주수량", "발주수량", "입고수량", "수량"]));
+    var cost = parseNumber_(row.__incomingCost || getRowFieldValue_(row, ["상품원가", "입고원가", "원가"]));
     var skuKey = getRowSkuKey_(row);
     var excluded = isExcludedByRules_(code, partner, excludedCodes, excludedPairs, excludedPartners);
 
@@ -1678,7 +1731,7 @@ function updateInspectionDashboard_(ss) {
   var inspectedSkuCount = Object.keys(inspectedSkuMap).length;
   var eventSkuCount = Object.keys(eventSkuMap).length;
   var values = [
-    ["총 입고금액", "총 입고수량", "검품 수량", "검품율", "실 검품률", "최근 갱신"],
+    ["총 입고금액", "총 입고수량", "검품 수량", "검품률", "실검품률", "최근 갱신"],
     [
       totalInboundAmount,
       totalInboundQty,
@@ -1919,7 +1972,7 @@ function autoResetOperationalData_() {
   clearSheetBody_(summarySheet, summarySheet.getLastColumn());
 
   var dashboardSheet = getInspectionSummarySheet_(ss);
-  dashboardSheet.getRange("L2:Q7").clearContent().clearFormat();
+  dashboardSheet.getRange("A1:F6").clearContent().clearFormat();
 }
 
 function backupAndResetDaily_() {

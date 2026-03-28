@@ -1,8 +1,8 @@
-﻿import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Papa from "papaparse";
 import { BrowserCodeReader, BrowserMultiFormatReader } from "@zxing/browser";
 
-const SCRIPT_URL = process.env.REACT_APP_GOOGLE_SCRIPT_URL || "https://script.google.com/macros/s/AKfycbxubLYj8Jb3wL4Z0bCC6nJ8YXA8cAJScYtpqf-weAHh77udlpDpre5dVvssN0PJaw5muw/exec";
+const SCRIPT_URL = process.env.REACT_APP_GOOGLE_SCRIPT_URL || "https://script.google.com/macros/s/AKfycbzmgOjo2UKIhR1VRBi78ZBUdD-Yf70CF4RyAi9Mp9bRzgTE7hTs9gfgyWlBhVK_dgbpcg/exec";
 
 const normalizeKey = (key) => String(key || "").replace(/\uFEFF/g, "").trim();
 
@@ -247,7 +247,11 @@ const formatDateTime = (value) => {
 
 const formatDashboardValue = (label, value) => {
   if (value == null || value === "") return "-";
-  if (String(label).includes("율") || String(label).includes("커버리지")) {
+  if (
+    String(label).includes("율") ||
+    String(label).includes("률") ||
+    String(label).includes("커버리지")
+  ) {
     const numeric = Number(value);
     return Number.isFinite(numeric) ? `${(numeric * 100).toFixed(1)}%` : String(value);
   }
@@ -1000,11 +1004,15 @@ function App() {
     () => [
       { label: "총 입고금액", value: dashboardSummary["총 입고금액"] },
       { label: "총 입고수량", value: dashboardSummary["총 입고수량"] },
+      { label: "입고 SKU", value: dashboardSummary["입고 SKU"] },
       { label: "검품 입고금액", value: dashboardSummary["검품 입고금액"] },
+      { label: "검품 입고 SKU", value: dashboardSummary["검품입고 SKU"] },
       { label: "검품 입고수량", value: dashboardSummary["검품 입고수량"] },
+      { label: "검품 SKU", value: dashboardSummary["검품 SKU"] },
       { label: "검품 수량", value: dashboardSummary["검품 수량"] },
-      { label: "검품율", value: dashboardSummary["검품율"] },
-      { label: "실 검품률", value: dashboardSummary["실 검품률"] },
+      { label: "검품률", value: dashboardSummary["검품률"] ?? dashboardSummary["검품율"] },
+      { label: "SKU 커버리지", value: dashboardSummary["SKU 커버리지"] },
+      { label: "실검품률", value: dashboardSummary["실검품률"] ?? dashboardSummary["실 검품률"] },
       { label: "실제 SKU 커버리지", value: dashboardSummary["실제 SKU 커버리지"] },
     ],
     [dashboardSummary]
@@ -1477,13 +1485,26 @@ function App() {
               파일 수정일자: {currentFileModifiedAt ? formatDateTime(currentFileModifiedAt) : "-"}
             </div>
           </div>
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            style={styles.primaryButton}
-          >
-            {uploadingCsv ? "처리 중..." : "CSV 선택"}
-          </button>
+          <div style={styles.csvActionRow}>
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              style={styles.primaryButton}
+            >
+              {uploadingCsv ? "처리 중..." : "CSV 선택"}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setError("");
+                setAdminPassword("");
+                setShowAdminReset(true);
+              }}
+              style={styles.secondaryButton}
+            >
+              관리자 초기화
+            </button>
+          </div>
         </div>
       </div>
 
@@ -1526,17 +1547,6 @@ function App() {
         <div style={styles.countActions}>
           <button
             type="button"
-            onClick={() => {
-              setError("");
-              setAdminPassword("");
-              setShowAdminReset(true);
-            }}
-            style={styles.historyButton}
-          >
-            관리자 초기화
-          </button>
-          <button
-            type="button"
             onClick={() => downloadPhotoZip("movement")}
             style={styles.historyButton}
           >
@@ -1555,19 +1565,6 @@ function App() {
             style={styles.historyButton}
           >
             {zipDownloading === "photoOnly" ? "ZIP 생성중..." : "참고사진 저장"}
-          </button>
-          <button
-            type="button"
-            onClick={async () => {
-              const next = !showHistory;
-              setShowHistory(next);
-              if (next) {
-                await loadHistoryRows();
-              }
-            }}
-            style={styles.historyButton}
-          >
-            {showHistory ? "내역 닫기" : "내역"}
           </button>
         </div>
       </div>
@@ -1677,13 +1674,6 @@ function App() {
                                 style={styles.inlineQtyInput}
                                 placeholder="검품수량"
                               />
-                              <button
-                                type="button"
-                                onClick={() => saveInspectionQtySimple(product)}
-                                style={styles.inlineSaveButton}
-                              >
-                                {inspectionStatus === "saving" ? "..." : "저장"}
-                              </button>
                             </div>
                             <div style={styles.formGroup}>
                               <label style={styles.label}>검품 사진</label>
@@ -1728,6 +1718,13 @@ function App() {
                                   : "선택된 사진 없음"}
                               </div>
                             </div>
+                            <button
+                              type="button"
+                              onClick={() => saveInspectionQtySimple(product)}
+                              style={styles.saveButton}
+                            >
+                              {inspectionStatus === "saving" ? "저장 중..." : "저장"}
+                            </button>
                           </div>
                         ) : (
                           <>
@@ -2172,6 +2169,12 @@ const styles = {
     alignItems: "center",
     flexWrap: "wrap",
   },
+  csvActionRow: {
+    display: "flex",
+    gap: 8,
+    flexWrap: "wrap",
+    alignItems: "center",
+  },
   sectionTitle: {
     fontSize: 15,
     fontWeight: 800,
@@ -2315,6 +2318,7 @@ const styles = {
     justifyContent: "flex-end",
     overflowX: "auto",
     paddingBottom: 2,
+    whiteSpace: "nowrap",
   },
   kpiGrid: {
     display: "grid",
@@ -2352,6 +2356,8 @@ const styles = {
     cursor: "pointer",
     color: "#374151",
     minHeight: 40,
+    whiteSpace: "nowrap",
+    flexShrink: 0,
   },
   list: {
     display: "flex",
@@ -2423,17 +2429,6 @@ const styles = {
     border: "1px solid #d1d5db",
     fontSize: 15,
     minWidth: 0,
-  },
-  inlineSaveButton: {
-    minWidth: 72,
-    minHeight: 42,
-    padding: "0 14px",
-    border: "none",
-    borderRadius: 12,
-    background: "#2563eb",
-    color: "#fff",
-    fontWeight: 800,
-    cursor: "pointer",
   },
   cardTopRow: {
     display: "flex",
