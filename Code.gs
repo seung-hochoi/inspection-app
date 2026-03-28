@@ -447,13 +447,55 @@ function autoResizeOperationalSheets_(ss) {
     if (dataRange && dataRange.getNumRows() > 0 && dataRange.getNumColumns() > 0) {
       dataRange.setWrapStrategy(SpreadsheetApp.WrapStrategy.CLIP);
     }
-    sheet.autoResizeColumns(1, sheet.getLastColumn());
-    for (var col = 1; col <= sheet.getLastColumn(); col += 1) {
-      if (sheet.getColumnWidth(col) < 90) {
-        sheet.setColumnWidth(col, 90);
-      }
-    }
+    applyFixedColumnWidths_(sheet);
   });
+}
+
+function applyFixedColumnWidths_(sheet) {
+  if (!sheet) return;
+
+  var name = sheet.getName();
+
+  if (name === SHEET_NAMES.returnSummary) {
+    setColumnWidths_(sheet, [
+      64, 120, 130, 250, 64, 82, 82, 82, 180, 82, 72, 72, 96, 96,
+    ]);
+    return;
+  }
+
+  if (name === SHEET_NAMES.returnCenter) {
+    setColumnWidths_(sheet, [
+      96, 130, 120, 240, 82, 82, 82, 140, 110,
+    ]);
+    return;
+  }
+
+  if (name === SHEET_NAMES.inspection) {
+    setColumnWidths_(sheet, [
+      150, 180, 120, 240, 150, 96, 96, 96, 96, 96, 140, 180, 180,
+    ]);
+    return;
+  }
+
+  if (name === SHEET_NAMES.records) {
+    setColumnWidths_(sheet, [
+      150, 180, 240, 120, 140, 150, 96, 110, 96, 96, 96, 96, 180, 180, 220, 180, 110,
+    ]);
+    return;
+  }
+
+  if (name === SHEET_NAMES.summary) {
+    setColumnWidths_(sheet, [130, 130, 130, 130, 130, 160]);
+    return;
+  }
+
+  sheet.autoResizeColumns(1, sheet.getLastColumn());
+}
+
+function setColumnWidths_(sheet, widths) {
+  for (var i = 0; i < widths.length; i += 1) {
+    sheet.setColumnWidth(i + 1, widths[i]);
+  }
 }
 
 function getDashboardSummary_() {
