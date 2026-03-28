@@ -1338,6 +1338,7 @@ function normalizeHappycallRecord_(payload, categoryIndex) {
     productCode: productCode,
     productName: productName,
     partnerName: partnerName,
+    subject: subject,
   });
   var finalReason = titleReason || normalizeHappycallReason_(bodyReason) || "기타";
   var originalSnapshot = {
@@ -1470,14 +1471,36 @@ function buildHappycallCategoryIndex_() {
     byCode: {},
     byNamePartner: {},
     byName: {},
+    productCandidates: [],
+    productCandidatesByPartner: {},
   };
   var latestJob = loadLatestJob_();
   var sourceRows = buildDashboardSourceRows_(latestJob ? latestJob.rows || [] : [], readReservationRows_());
+  var excludeRows = readObjectsSheet_(SHEET_NAMES.exclude);
+  var excludedCodes = {};
+  var excludedPairs = {};
+  var excludedPartners = {};
+
+  excludeRows.forEach(function (row) {
+    var code = normalizeCode_(row["상품코드"] || row["상품 코드"] || row["코드"] || row["바코드"]);
+    var partner = normalizeText_(row["협력사"] || row["협력사명"] || "");
+    if (!code && !partner) return;
+    if (partner) {
+      if (code) {
+        excludedPairs[code + "||" + partner] = true;
+      } else {
+        excludedPartners[partner] = true;
+      }
+    } else {
+      excludedCodes[code] = true;
+    }
+  });
 
   sourceRows.forEach(function (row) {
     var productCode = normalizeCode_(row.__productCode || getRowFieldValue_(row, ["상품코드", "상품 코드", "코드", "바코드"]));
     var productName = String(row.__productName || getRowFieldValue_(row, ["상품명", "상품 명", "품목명", "품명"]) || "").trim();
     var partnerName = String(row.__partner || getRowFieldValue_(row, ["협력사명", "협력사", "거래처명"]) || "").trim();
+    if (isExcludedByRules_(productCode, partnerName, excludedCodes, excludedPairs, excludedPartners)) return;
     var info = {
       majorCategory: String(getRowFieldValue_(row, ["대분류", "과채", "카테고리대", "대카테고리"]) || "").trim(),
       midCategory: String(getRowFieldValue_(row, ["중분류", "카테고리중", "중카테고리"]) || "").trim(),
@@ -1494,15 +1517,30 @@ function buildHappycallCategoryIndex_() {
     if (productCode) index.byCode[productCode] = info;
     if (nameKey) index.byName[nameKey] = info;
     if (namePartnerKey !== "||") index.byNamePartner[namePartnerKey] = info;
+    if (nameKey) {
+      var candidate = {
+        matchKey: nameKey,
+        info: info,
+        partnerKey: normalizeHappycallMatchText_(partnerName),
+      };
+      index.productCandidates.push(candidate);
+      if (candidate.partnerKey) {
+        if (!index.productCandidatesByPartner[candidate.partnerKey]) {
+          index.productCandidatesByPartner[candidate.partnerKey] = [];
+        }
+        index.productCandidatesByPartner[candidate.partnerKey].push(candidate);
+      }
+    }
   });
 
   return index;
 }
 
-function lookupHappycallCategoryInfo_(index, record) {
+function findHappycallCategoryMatch_(index, record) {
   var productCode = normalizeCode_(record.productCode || "");
   var productName = String(record.productName || "").trim();
   var partnerName = String(record.partnerName || "").trim();
+  var subject = String(record.subject || "").trim();
   var skuKey = makeSkuKey_(productCode, partnerName);
   var nameKey = normalizeHappycallMatchText_(productName);
   var namePartnerKey = nameKey + "||" + normalizeHappycallMatchText_(partnerName);
@@ -1511,7 +1549,18 @@ function lookupHappycallCategoryInfo_(index, record) {
     (skuKey && index.bySku[skuKey]) ||
     (productCode && index.byCode[productCode]) ||
     (namePartnerKey !== "||" && index.byNamePartner[namePartnerKey]) ||
-    (nameKey && index.byName[nameKey]) || {
+    (nameKey && index.byName[nameKey]) ||
+    inferHappycallProductFromText_(index, subject || productName || "", partnerName) ||
+    null
+  );
+}
+
+function lookupHappycallCategoryInfo_(index, record) {
+  var productCode = normalizeCode_(record.productCode || "");
+  var productName = String(record.productName || "").trim();
+  var partnerName = String(record.partnerName || "").trim();
+  return (
+    findHappycallCategoryMatch_(index, record) || {
       majorCategory: "",
       midCategory: "",
       subCategory: "",
@@ -1520,6 +1569,41 @@ function lookupHappycallCategoryInfo_(index, record) {
       partnerName: partnerName,
     }
   );
+}
+
+function inferHappycallProductFromText_(index, text, partnerName) {
+  var normalizedText = normalizeHappycallMatchText_(text);
+  if (!normalizedText) return null;
+
+  var partnerKey = normalizeHappycallMatchText_(partnerName || "");
+  var candidates = partnerKey && index && index.productCandidatesByPartner && index.productCandidatesByPartner[partnerKey]
+    ? index.productCandidatesByPartner[partnerKey]
+    : Array.isArray(index && index.productCandidates)
+    ? index.productCandidates
+    : [];
+  var best = null;
+  var bestScore = 0;
+
+  candidates.forEach(function (candidate) {
+    var matchKey = String(candidate.matchKey || "");
+    if (!matchKey) return;
+
+    var score = 0;
+    if (normalizedText === matchKey) {
+      score = matchKey.length + 1000;
+    } else if (normalizedText.indexOf(matchKey) >= 0) {
+      score = matchKey.length + 500;
+    } else if (matchKey.indexOf(normalizedText) >= 0) {
+      score = normalizedText.length + 100;
+    }
+
+    if (score > bestScore) {
+      bestScore = score;
+      best = candidate.info;
+    }
+  });
+
+  return bestScore > 0 ? best : null;
 }
 
 function findHappycallRow_(sheet, collectKey, mailId) {
@@ -1613,8 +1697,15 @@ function purgeOldHappycallRows_(sheet, days) {
 }
 
 function getHappycallAnalytics_() {
+  var categoryIndex = buildHappycallCategoryIndex_();
   var rows = loadHappycallRows_().filter(function (row) {
-    return isHappycallWithinDays_(row["접수일시"] || row["생성일시"], 30);
+    if (!isHappycallWithinDays_(row["접수일시"] || row["생성일시"], 30)) return false;
+    return !!findHappycallCategoryMatch_(categoryIndex, {
+      productCode: row["상품코드"] || "",
+      productName: row["상품명"] || row["소분류"] || "",
+      partnerName: row["파트너사"] || "",
+      subject: row["제목"] || "",
+    });
   });
   var now = new Date();
   var periods = [
@@ -1637,7 +1728,7 @@ function getHappycallAnalytics_() {
     periodMap[period.key] = {
       label: period.label,
       totalCount: aggregates.totalCount,
-      topProducts: aggregates.products.slice(0, 5),
+      topProducts: aggregates.products.slice(0, 10),
       topMajorCategories: aggregates.majorCategories.slice(0, 5),
       topMidCategories: aggregates.midCategories.slice(0, 5),
       topSubCategories: aggregates.subCategories.slice(0, 5),
@@ -1656,7 +1747,7 @@ function getHappycallAnalytics_() {
       });
     });
 
-    aggregates.products.slice(0, 5).forEach(function (item, index) {
+    aggregates.products.slice(0, 10).forEach(function (item, index) {
       var keys = buildHappycallLookupKeys_(item);
       keys.forEach(function (key) {
         if (!productRanks[key]) productRanks[key] = {};

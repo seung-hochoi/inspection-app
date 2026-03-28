@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Papa from "papaparse";
 import { BrowserCodeReader, BrowserMultiFormatReader } from "@zxing/browser";
+import * as XLSX from "xlsx";
 
-const SCRIPT_URL = process.env.REACT_APP_GOOGLE_SCRIPT_URL || "https://script.google.com/macros/s/AKfycbx8HBV2Bp08VcTvMzs-G4AhtD3Sn7_nisw-8dbs_xtc8UJyaOKoTWVvMAdIv61F8nZ6pQ/exec";
+const SCRIPT_URL = process.env.REACT_APP_GOOGLE_SCRIPT_URL || "https://script.google.com/macros/s/AKfycbyqypHDM8Xy7ALr0S3R0yt9GhYCy2CgYUedGbC5zm14ECNemcSdHlE9qHrcYcAr8dupwQ/exec";
 
 const normalizeKey = (key) => String(key || "").replace(/\uFEFF/g, "").trim();
 
@@ -130,6 +131,26 @@ const decodeCsvFile = async (file) => {
   let text = tryDecode("utf-8");
   if (isBrokenText(text)) text = tryDecode("euc-kr");
   return { text };
+};
+
+const parseHappycallSourceFile = async (file) => {
+  const fileName = String(file?.name || "").toLowerCase();
+
+  if (fileName.endsWith(".xls") || fileName.endsWith(".xlsx")) {
+    const buffer = await file.arrayBuffer();
+    const workbook = XLSX.read(buffer, { type: "array" });
+    const firstSheetName = workbook.SheetNames?.[0];
+    if (!firstSheetName) return [];
+    const sheet = workbook.Sheets[firstSheetName];
+    return XLSX.utils.sheet_to_json(sheet, { defval: "" });
+  }
+
+  const { text } = await decodeCsvFile(file);
+  const parsed = Papa.parse(text, {
+    header: true,
+    skipEmptyLines: true,
+  });
+  return Array.isArray(parsed.data) ? parsed.data : [];
 };
 
 const buildNormalizedRows = (parsedRows) =>
@@ -1505,18 +1526,17 @@ function App() {
       setError("");
       setMessage("");
 
-      const { text } = await decodeCsvFile(file);
-      const parsed = Papa.parse(text, {
-        header: true,
-        skipEmptyLines: true,
-      });
+      const parsedRows = await parseHappycallSourceFile(file);
 
-      const rawRows = (Array.isArray(parsed.data) ? parsed.data : [])
+      const rawRows = (parsedRows || [])
         .map((row) => ({
           제목: row["제목"] || row["subject"] || "",
-          본문: row["본문"] || row["body"] || "",
-          메일ID: row["인터넷 메시지 ID"] || row["메일ID"] || "",
+          본문: row["본문"] || row["body"] || row["내용(암호화)"] || "",
+          메일ID: row["인터넷 메시지 ID"] || row["메일ID"] || row["접수번호"] || "",
           보낸사람: row["보낸사람:(이름)"] || row["senderName"] || "",
+          접수일시: row["접수일시"] || row["receivedAt"] || "",
+          파트너사: row["처리파트너사"] || row["파트너사"] || row["협력사명"] || "",
+          장애유형: row["장애유형(소)"] || row["장애유형(중)"] || row["장애유형(대)"] || row["장애유형"] || "",
         }))
         .filter((row) => String(row.제목 || "").trim() || String(row.본문 || "").trim());
 
@@ -1524,6 +1544,8 @@ function App() {
       rawRows.forEach((row) => {
         const dedupeKey = [
           String(row.메일ID || "").trim(),
+          String(row.파트너사 || "").trim(),
+          String(row.접수일시 || "").trim(),
           String(row.제목 || "").trim(),
           String(row.본문 || "").trim(),
         ].join("||");
@@ -1603,7 +1625,7 @@ function App() {
       <input
         ref={happycallFileInputRef}
         type="file"
-        accept=".csv"
+        accept=".csv,.xls,.xlsx"
         onChange={handleHappycallCsvUpload}
         style={styles.hiddenInput}
       />
@@ -1694,7 +1716,7 @@ function App() {
                 opacity: uploadingHappycallCsv ? 0.7 : 1,
               }}
             >
-              {uploadingHappycallCsv ? "처리 중..." : "해피콜 CSV 선택"}
+              {uploadingHappycallCsv ? "처리 중..." : "해피콜 파일 선택"}
             </button>
             <button
               type="button"
