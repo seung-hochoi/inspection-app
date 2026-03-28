@@ -1750,7 +1750,19 @@ function savePhotoToDrive_(photo, baseName, index) {
 function getOrCreateSheet_(ss, name) {
   var sheet = ss.getSheetByName(name);
   if (!sheet) {
-    sheet = ss.insertSheet(name);
+    try {
+      sheet = ss.insertSheet(name);
+    } catch (err) {
+      var message = String((err && err.message) || err || "");
+      if (message.indexOf("already exists") >= 0 || message.indexOf("이미 있습니다") >= 0) {
+        sheet = ss.getSheetByName(name);
+      } else {
+        throw err;
+      }
+    }
+  }
+  if (!sheet) {
+    throw new Error("시트를 찾을 수 없습니다: " + name);
   }
   return sheet;
 }

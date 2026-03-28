@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import Papa from "papaparse";
 import { BrowserCodeReader, BrowserMultiFormatReader } from "@zxing/browser";
 
-const SCRIPT_URL = process.env.REACT_APP_GOOGLE_SCRIPT_URL || "https://script.google.com/macros/s/AKfycbw2MWysZNi_EAHHfsApLqEOW-CtOx8BSyo-otZejxNQlQkhhCKsoxzSBv1x3-t0F0bGYg/exec";
+const SCRIPT_URL = process.env.REACT_APP_GOOGLE_SCRIPT_URL || "https://script.google.com/macros/s/AKfycbzleO66XG3qFEJ0t56rPc2vmv11ZVuNydGdpcxvtRMDo35Gmst7FQ-Y0y1xpA5-VChg/exec";
 
 const normalizeKey = (key) => String(key || "").replace(/\uFEFF/g, "").trim();
 
