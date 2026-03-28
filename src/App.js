@@ -1125,6 +1125,10 @@ function App() {
   const previousDayHappycallTopList = useMemo(
     () =>
       (happycallAnalytics?.periods?.["1d"]?.topProducts || [])
+        .filter((item) => {
+          const name = String(item?.productName || "").trim();
+          return name && name !== "미분류상품";
+        })
         .slice(0, 10)
         .map((item, index) => ({
           rank: index + 1,
