@@ -10,7 +10,6 @@
   returnCenter: "검품 회송내역 (센터포함)",
   returnSummary: "검품 회송내역 (센터미포함)",
   happycall: "happycall_data",
-  happycallView: "해피콜 내역",
   productImages: "product_image_map",
 };
 const ADMIN_RESET_PASSWORD = "0000";
@@ -1256,33 +1255,6 @@ function getHappycallSheet_(ss) {
   return sheet;
 }
 
-function happycallViewHeaders_() {
-  return [
-    "접수일시",
-    "파트너사",
-    "상품코드",
-    "상품명",
-    "대분류",
-    "중분류",
-    "소분류",
-    "최종사유",
-    "본문장애유형",
-    "제목감지사유",
-    "건수",
-    "제목",
-    "본문",
-    "수집키",
-    "메일ID",
-    "생성일시",
-  ];
-}
-
-function getHappycallViewSheet_(ss) {
-  var sheet = getOrCreateSheet_(ss, SHEET_NAMES.happycallView);
-  ensureHeaderRow_(sheet, happycallViewHeaders_());
-  return sheet;
-}
-
 function loadHappycallRows_() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = getHappycallSheet_(ss);
@@ -1330,27 +1302,19 @@ function importHappycallBatch_(payloadRows) {
   var inserted = 0;
   var updated = 0;
   var existingLastRow = sheet.getLastRow();
-  var existingValues = existingLastRow >= 2 ? sheet.getRange(2, 1, existingLastRow - 1, 17).getValues() : [];
+  var existingValues = existingLastRow >= 2 ? sheet.getRange(2, 1, existingLastRow - 1, 2).getValues() : [];
   var keyRowMap = {};
   var mailRowMap = {};
   var normalizedMap = {};
-  var dedupeRowMap = {};
   var updates = [];
   var appendRows = [];
-  var headers = happycallHeaders_();
 
   existingValues.forEach(function (valueRow, index) {
     var rowNumber = index + 2;
     var rowKey = String(valueRow[0] || "").trim();
     var rowMail = String(valueRow[1] || "").trim();
-    var rowObject = {};
-    headers.forEach(function (header, headerIndex) {
-      rowObject[header] = valueRow[headerIndex];
-    });
-    var rowDedupeKey = buildHappycallDedupeKey_(rowObject);
     if (rowKey) keyRowMap[rowKey] = rowNumber;
     if (rowMail) mailRowMap[rowMail] = rowNumber;
-    if (rowDedupeKey) dedupeRowMap[rowDedupeKey] = rowNumber;
   });
 
   list.forEach(function (payload) {
@@ -1361,12 +1325,7 @@ function importHappycallBatch_(payloadRows) {
 
   Object.keys(normalizedMap).forEach(function (collectKey) {
     var row = normalizedMap[collectKey];
-    var rowDedupeKey = buildHappycallDedupeKey_(row);
-    var targetRow =
-      keyRowMap[row["수집키"]] ||
-      (row["메일ID"] ? mailRowMap[row["메일ID"]] : 0) ||
-      (rowDedupeKey ? dedupeRowMap[rowDedupeKey] : 0) ||
-      0;
+    var targetRow = keyRowMap[row["수집키"]] || (row["메일ID"] ? mailRowMap[row["메일ID"]] : 0) || 0;
 
     if (targetRow > 0) {
       row.__rowNumber = targetRow;
@@ -1396,13 +1355,11 @@ function importHappycallBatch_(payloadRows) {
     sheet.getRange(appendStartRow, 1, appendValues.length, headerCount).setValues(appendValues);
   }
 
-  var deduped = dedupeHappycallSheet_(sheet);
-  rebuildHappycallViewSheet_(ss);
+  purgeOldHappycallRows_(sheet, 30);
 
   return {
     inserted: inserted,
     updated: updated,
-    deduped: deduped,
     rows: saved,
   };
 }
@@ -1452,12 +1409,6 @@ function normalizeHappycallRecord_(payload, categoryIndex) {
       getHappycallFieldValue_(parsed, ["장애유형", "이상유형", "클레임유형", "사유"]) ||
       ""
   ).trim();
-  var receiptNo = String(
-    payload.receiptNo ||
-      payload["접수번호"] ||
-      getHappycallFieldValue_(parsed, ["접수번호", "문의번호", "클레임번호", "접수ID"]) ||
-      ""
-  ).trim();
   var explicitMajor = String(
     payload.majorCategory ||
       payload["대분류"] ||
@@ -1494,28 +1445,24 @@ function normalizeHappycallRecord_(payload, categoryIndex) {
     상품명: productName || categoryInfo.productName || explicitSub || "",
     상품코드: productCode || categoryInfo.productCode || "",
     파트너사: partnerName || categoryInfo.partnerName || "",
-    접수번호: receiptNo,
     본문장애유형: bodyReason,
     제목감지사유: titleReason,
     최종사유: finalReason,
   };
-  var dedupeKey = buildHappycallDedupeKey_({
-    메일ID: mailId,
-    접수번호: receiptNo,
-    접수일시: receivedAt,
-    대분류: explicitMajor || categoryInfo.majorCategory || "",
-    중분류: explicitMid || categoryInfo.midCategory || "",
-    소분류: explicitSub || categoryInfo.subCategory || productName || categoryInfo.productName || "",
-    상품명: productName || categoryInfo.productName || explicitSub || "",
-    상품코드: productCode || categoryInfo.productCode || "",
-    파트너사: partnerName || categoryInfo.partnerName || "",
-    제목: subject,
-    본문: body,
-    최종사유: finalReason,
-  });
+  var keyBasis = [
+    mailId,
+    receivedAt,
+    explicitMajor || categoryInfo.majorCategory || "",
+    explicitMid || categoryInfo.midCategory || "",
+    explicitSub || categoryInfo.subCategory || "",
+    productCode,
+    productName,
+    partnerName,
+    finalReason,
+  ].join("||");
 
   return {
-    "수집키": dedupeKey,
+    "수집키": mailId || createDigestString_(keyBasis),
     "메일ID": truncateSheetCell_(mailId, 5000),
     "제목": truncateSheetCell_(subject, 5000),
     "본문": truncateSheetCell_(body, 45000),
@@ -2110,54 +2057,6 @@ function createDigestString_(text) {
   ).replace(/=+$/, "");
 }
 
-function normalizeHappycallDateKey_(value) {
-  var text = String(value || "").trim();
-  if (!text) return "";
-  var date = new Date(text);
-  if (!Number.isNaN(date.getTime())) {
-    return Utilities.formatDate(date, Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm");
-  }
-  var matched = text.match(/(\d{4})[-./년]\s*(\d{1,2})[-./월]\s*(\d{1,2})/);
-  if (!matched) return text;
-  return [
-    matched[1],
-    ("0" + matched[2]).slice(-2),
-    ("0" + matched[3]).slice(-2),
-  ].join("-");
-}
-
-function buildHappycallDedupeKey_(row) {
-  var mailId = String(row["메일ID"] || row.mailId || row.messageId || "").trim();
-  if (mailId) {
-    return "mail::" + mailId;
-  }
-
-  var receiptNo = String(row["접수번호"] || row.receiptNo || "").trim();
-  if (receiptNo) {
-    return "receipt::" + receiptNo;
-  }
-
-  var dateKey = normalizeHappycallDateKey_(row["접수일시"] || row.receivedAt || row.createdAt || row["생성일시"] || "");
-  var partnerKey = normalizeHappycallMatchText_(row["파트너사"] || row.partnerName || "");
-  var productCode = normalizeCode_(row["상품코드"] || row.productCode || "");
-  var productName = normalizeHappycallMatchText_(row["상품명"] || row.productName || row["소분류"] || row.subCategory || "");
-  var subject = normalizeHappycallMatchText_(row["제목"] || row.subject || "");
-  var reason = normalizeHappycallMatchText_(row["최종사유"] || row.finalReason || row["본문장애유형"] || row.reason || "");
-  var body = normalizeHappycallMatchText_(truncateSheetCell_(row["본문"] || row.body || "", 500));
-
-  return createDigestString_(
-    [
-      dateKey,
-      partnerKey,
-      productCode,
-      productName,
-      subject,
-      reason,
-      body,
-    ].join("||")
-  );
-}
-
 function truncateSheetCell_(value, maxLength) {
   var text = String(value || "");
   var limit = Math.max(100, Number(maxLength || 0) || 50000);
@@ -2193,81 +2092,7 @@ function purgeOldHappycallRows_(sheet, days) {
   return rowNumbers.length;
 }
 
-function dedupeHappycallSheet_(sheet) {
-  if (!sheet || sheet.getLastRow() < 3) return 0;
-
-  var range = sheet.getDataRange();
-  var values = range.getValues();
-  var headers = values[0].map(function (header) {
-    return String(header || "").trim();
-  });
-  var latestIndexByKey = {};
-  var keptRows = [values[0]];
-  var removed = 0;
-
-  for (var i = values.length - 1; i >= 1; i -= 1) {
-    var rowObject = {};
-    headers.forEach(function (header, headerIndex) {
-      rowObject[header] = values[i][headerIndex];
-    });
-    var dedupeKey = buildHappycallDedupeKey_(rowObject);
-    if (dedupeKey && latestIndexByKey[dedupeKey]) {
-      removed += 1;
-      continue;
-    }
-    if (dedupeKey) latestIndexByKey[dedupeKey] = true;
-    keptRows.push(values[i]);
-  }
-
-  if (!removed) return 0;
-
-  keptRows = [keptRows[0]].concat(keptRows.slice(1).reverse());
-  sheet.clearContents();
-  sheet.getRange(1, 1, keptRows.length, headers.length).setValues(keptRows);
-  return removed;
-}
-
-function rebuildHappycallViewSheet_(ss) {
-  var spreadsheet = ss || SpreadsheetApp.getActiveSpreadsheet();
-  var sourceRows = loadHappycallRows_();
-  var sheet = getHappycallViewSheet_(spreadsheet);
-  var headers = happycallViewHeaders_();
-  var values = [headers];
-
-  sourceRows.forEach(function (row) {
-    values.push([
-      row["접수일시"] || "",
-      row["파트너사"] || "",
-      row["상품코드"] || "",
-      row["상품명"] || row["소분류"] || "",
-      row["대분류"] || "",
-      row["중분류"] || "",
-      row["소분류"] || "",
-      row["최종사유"] || "",
-      row["본문장애유형"] || "",
-      row["제목감지사유"] || "",
-      row["건수"] || 1,
-      row["제목"] || "",
-      row["본문"] || "",
-      row["수집키"] || "",
-      row["메일ID"] || "",
-      row["생성일시"] || "",
-    ]);
-  });
-
-  sheet.clearContents();
-  sheet.getRange(1, 1, values.length, headers.length).setValues(values);
-  sheet.setFrozenRows(1);
-
-  if (values.length > 1) {
-    var dataRowCount = values.length - 1;
-    sheet.getRange(2, 1, dataRowCount, headers.length).sort([{ column: 1, ascending: false }]);
-    sheet.autoResizeColumns(1, Math.min(headers.length, 12));
-  }
-}
-
 function getHappycallAnalytics_() {
-  rebuildHappycallViewSheet_(SpreadsheetApp.getActiveSpreadsheet());
   var categoryIndex = buildHappycallCategoryIndex_();
   var rows = loadHappycallRows_().filter(function (row) {
     if (!isHappycallWithinDays_(row["접수일시"] || row["생성일시"], 30)) return false;

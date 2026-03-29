@@ -3,7 +3,7 @@ import Papa from "papaparse";
 import { BrowserCodeReader, BrowserMultiFormatReader } from "@zxing/browser";
 import * as XLSX from "xlsx";
 
-const SCRIPT_URL = process.env.REACT_APP_GOOGLE_SCRIPT_URL || "https://script.google.com/macros/s/AKfycbzrPgqH8RoyY-7q2ZaDOZJqJo4aIJumTLtwmGSm-NgFnUzWyHavTi__CrwWbnwa5763wA/exec";
+const SCRIPT_URL = process.env.REACT_APP_GOOGLE_SCRIPT_URL || "https://script.google.com/macros/s/AKfycbz2iQ-ZA0zXfgcXzmBNq1U0fkF-IpdbImDqHnJH1wWQVBc5AKp-GPWmIyafTe9qj6C_pw/exec";
 
 const normalizeKey = (key) => String(key || "").replace(/\uFEFF/g, "").trim();
 
@@ -48,19 +48,19 @@ const parseQty = (value) => {
 const clampText = (value, maxLength = 4000) => {
   const text = String(value ?? "");
   if (text.length <= maxLength) return text;
-  return ${text.slice(0, Math.max(0, maxLength - 7))}...(생략);
+  return `${text.slice(0, Math.max(0, maxLength - 7))}...(생략)`;
 };
 
 const makeSkuKey = (productCode, partnerName) =>
-  ${normalizeProductCode(productCode || "")}||${String(partnerName || "").trim()};
+  `${normalizeProductCode(productCode || "")}||${String(partnerName || "").trim()}`;
 
 const getHappycallProductMetrics = (analytics, product) => {
   const periods = analytics?.periods || {};
   const keys = [
-    sku::${makeSkuKey(product?.productCode, product?.partner)},
-    name::${normalizeHappycallLookupText(product?.productName)}||${normalizeHappycallLookupText(product?.partner)},
-    code::${normalizeProductCode(product?.productCode || "")},
-    nameOnly::${normalizeHappycallLookupText(product?.productName)},
+    `sku::${makeSkuKey(product?.productCode, product?.partner)}`,
+    `name::${normalizeHappycallLookupText(product?.productName)}||${normalizeHappycallLookupText(product?.partner)}`,
+    `code::${normalizeProductCode(product?.productCode || "")}`,
+    `nameOnly::${normalizeHappycallLookupText(product?.productName)}`,
   ];
 
   const result = {};
@@ -80,43 +80,8 @@ const getHappycallProductMetrics = (analytics, product) => {
 
 const formatPercent = (value) => {
   const numeric = Number(value);
-  return Number.isFinite(numeric) ? ${(numeric * 100).toFixed(1)}% : "-";
+  return Number.isFinite(numeric) ? `${(numeric * 100).toFixed(1)}%` : "-";
 };
-
-const BarcodeScanIcon = ({ size = 24, color = "currentColor" }) => (
-  <svg width={size} height={size} viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-    <path
-      d="M8 18C8 12.4772 12.4772 8 18 8H46C51.5228 8 56 12.4772 56 18V22H50V18C50 15.7909 48.2091 14 46 14H18C15.7909 14 14 15.7909 14 18V22H8V18Z"
-      fill={color}
-    />
-    <rect x="16" y="20" width="4" height="22" rx="1.5" fill={color} />
-    <rect x="24" y="20" width="6" height="18" rx="1.5" fill={color} />
-    <rect x="34" y="20" width="3" height="24" rx="1.5" fill={color} />
-    <rect x="41" y="20" width="7" height="16" rx="1.5" fill={color} />
-    <path
-      d="M36.8 44.4C40.6953 44.4 43.8511 47.5557 43.8511 51.4511V53.6C43.8511 54.9255 42.7766 56 41.4511 56H32.1489C30.8234 56 29.7489 54.9255 29.7489 53.6V51.4511C29.7489 47.5557 32.9047 44.4 36.8 44.4Z"
-      fill={color}
-    />
-    <path d="M21 43C26.5228 43 31 47.4772 31 53H25C25 50.7909 23.2091 49 21 49H18V43H21Z" fill={color} />
-    <path
-      d="M10.5 42.5C15.7467 42.5 20 46.7533 20 52H16C16 48.9624 13.5376 46.5 10.5 46.5H8V42.5H10.5Z"
-      fill={color}
-      opacity="0.75"
-    />
-  </svg>
-);
-
-const FlashlightIcon = ({ size = 20, color = "currentColor", active = false }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-    <path
-      d="M9 2H15L13.4 8H17L9.8 22L11.2 13H7L9 2Z"
-      fill={active ? "#f8c84b" : color}
-      stroke={active ? "#f8c84b" : color}
-      strokeWidth="1.2"
-      strokeLinejoin="round"
-    />
-  </svg>
-);
 
 const getHappycallRankStyle = (rank) => {
   if (rank === 1) {
@@ -152,14 +117,14 @@ const buildVisibleHappycallRanks = (analytics) => {
       .filter(isClassifiedHappycallProduct)
       .slice(0, 10)
       .forEach((item, index) => {
-        const key = ${item?.partnerName || ""}||${item?.productCode || ""};
-        rankMap[key] = {
-          ...(rankMap[key] || {}),
-          [periodKey]: {
-            rank: index + 1,
-            count: parseQty(item?.count || 0),
-            share: Number(item?.share || 0),
-          },
+        const payload = {
+          rank: index + 1,
+          count: parseQty(item?.count || 0),
+          share: Number(item?.share || 0),
+        };
+        rankMap[`${item?.partnerName || ""}||${item?.productCode || ""}`] = {
+          ...(rankMap[`${item?.partnerName || ""}||${item?.productCode || ""}`] || {}),
+          [periodKey]: payload,
         };
       });
   });
@@ -173,9 +138,9 @@ const makeProductImageMapKey = ({ productCode, partner, productName }) => {
   const code = normalizeProductCode(productCode || "");
   const partnerText = String(partner || "").trim();
   if (code || partnerText) {
-    return sku::${code}||${partnerText};
+    return `sku::${code}||${partnerText}`;
   }
-  return name::${normalizeImageMapLookupText(productName || "")}||${normalizeImageMapLookupText(partner || "")};
+  return `name::${normalizeImageMapLookupText(productName || "")}||${normalizeImageMapLookupText(partner || "")}`;
 };
 
 const normalizeImageToken = (value) => normalizeHappycallLookupText(value || "");
@@ -188,87 +153,247 @@ const buildImageMatcher = ({ partnerKeywords = [], productKeywords = [], exclude
   return (product) => {
     const partnerText = normalizeImageToken(product?.partner || "");
     const productText = normalizeImageToken(product?.productName || "");
-    const lookupText = ${partnerText} ${productText};
+    const lookupText = `${partnerText} ${productText}`;
 
-    if (normalizedExcludes.some((keyword) => lookupText.includes(keyword))) return false;
+    if (normalizedExcludes.some((keyword) => lookupText.includes(keyword))) {
+      return false;
+    }
+
     if (normalizedPartners.length && !normalizedPartners.some((keyword) => partnerText.includes(keyword))) {
       return false;
     }
+
     return normalizedProducts.every((keyword) => productText.includes(keyword));
   };
 };
 
+// 새 상품 이미지를 추가할 때:
+// 1) public/assets/products 에 파일을 넣고
+// 2) 아래 목록에 partnerKeywords / productKeywords / src 를 한 줄 추가하면 됩니다.
+// 애매한 상품은 억지로 넣지 말고 비워두는 편이 오매칭을 줄입니다.
 const PRODUCT_IMAGE_MAP = [
   {
     match: buildImageMatcher({
-      partnerKeywords: ["델몬트", "delmonte"],
-      productKeywords: ["프리미엄", "바나나"],
-      excludeKeywords: ["파인애플", "클래식", "킹사이즈"],
-    }),
-    src: "/assets/products/delmonte-banana-bag.jpeg",
-  },
-  {
-    match: buildImageMatcher({
-      partnerKeywords: ["델몬트", "delmonte"],
-      productKeywords: ["클래식", "바나나"],
-      excludeKeywords: ["파인애플"],
-    }),
-    src: "/assets/products/delmonte-banana-pack.png",
-  },
-  {
-    match: buildImageMatcher({
-      partnerKeywords: ["델몬트", "delmonte"],
+      partnerKeywords: ["델몬트"],
       productKeywords: ["킹사이즈", "바나나"],
     }),
     src: "/assets/products/delmonte-king-banana.jpeg",
   },
   {
     match: buildImageMatcher({
-      partnerKeywords: ["돌", "dole", "스위티오"],
-      productKeywords: ["바나나", "2입"],
+      partnerKeywords: ["돌코리아", "dole"],
+      productKeywords: ["스위티오", "바나나", "2입"],
       excludeKeywords: ["파인애플"],
     }),
     src: "/assets/products/dole-sweetio-banana-2.jpeg",
   },
   {
     match: buildImageMatcher({
-      partnerKeywords: ["돌", "dole", "스위티오"],
-      productKeywords: ["바나나"],
+      partnerKeywords: ["돌코리아", "dole"],
+      productKeywords: ["스위티오", "바나나"],
       excludeKeywords: ["파인애플", "2입"],
     }),
     src: "/assets/products/dole-sweetio-banana-scene.jpeg",
   },
-  { match: buildImageMatcher({ productKeywords: ["파인애플"] }), src: "" },
-  { match: buildImageMatcher({ productKeywords: ["오이맛고추"] }), src: "/assets/products/cucumber-spicy.jpeg" },
-  { match: buildImageMatcher({ productKeywords: ["청양고추"] }), src: "/assets/products/pepper-hot-pack.jpeg" },
-  { match: buildImageMatcher({ productKeywords: ["고추"] }), src: "/assets/products/green-chili-pack.jpeg" },
-  { match: buildImageMatcher({ productKeywords: ["오이"] }), src: "/assets/products/cucumber-plain.jpeg" },
-  { match: buildImageMatcher({ productKeywords: ["애호박"] }), src: "/assets/products/aehobak-single.jpeg" },
-  { match: buildImageMatcher({ productKeywords: ["마늘"] }), src: "/assets/products/garlic-bowl.jpeg" },
-  { match: buildImageMatcher({ productKeywords: ["양파"] }), src: "/assets/products/onion-single.jpeg" },
-  { match: buildImageMatcher({ productKeywords: ["새송이버섯"] }), src: "/assets/products/mushroom-king-oyster.jpeg" },
-  { match: buildImageMatcher({ productKeywords: ["팽이버섯"] }), src: "/assets/products/enoki-pack.jpeg" },
-  { match: buildImageMatcher({ productKeywords: ["꽃상추"] }), src: "/assets/products/red-lettuce-pack.jpeg" },
-  { match: buildImageMatcher({ productKeywords: ["상추"] }), src: "/assets/products/lettuce-green.jpeg" },
-  { match: buildImageMatcher({ productKeywords: ["부추"] }), src: "/assets/products/chives-bag.jpeg" },
-  { match: buildImageMatcher({ productKeywords: ["시금치"] }), src: "/assets/products/spinach-bag.jpeg" },
-  { match: buildImageMatcher({ productKeywords: ["깻잎"] }), src: "/assets/products/perilla-pack.jpeg" },
-  { match: buildImageMatcher({ productKeywords: ["참나물"] }), src: "/assets/products/chamnamul-bag.jpeg" },
-  { match: buildImageMatcher({ productKeywords: ["달래"] }), src: "/assets/products/dalrae-bag.jpeg" },
-  { match: buildImageMatcher({ productKeywords: ["냉이"] }), src: "/assets/products/shepherds-purse-bag.jpeg" },
-  { match: buildImageMatcher({ productKeywords: ["브로콜리"] }), src: "/assets/products/broccoli.jpeg" },
-  { match: buildImageMatcher({ productKeywords: ["양배추"] }), src: "/assets/products/cabbage-half.jpeg" },
-  { match: buildImageMatcher({ productKeywords: ["고구마"] }), src: "/assets/products/sweetpotato-pink-bag.jpeg" },
-  { match: buildImageMatcher({ productKeywords: ["연어"] }), src: "/assets/products/salmon-pack.jpeg" },
-  { match: buildImageMatcher({ productKeywords: ["목심"] }), src: "/assets/products/pork-neck-pack.jpeg" },
-  { match: buildImageMatcher({ productKeywords: ["삼겹"] }), src: "/assets/products/pork-neck-pack.jpeg" },
-  { match: buildImageMatcher({ productKeywords: ["바나나"] }), src: "/assets/products/banana-generic.jpeg" },
+  {
+    match: buildImageMatcher({
+      partnerKeywords: ["델몬트"],
+      productKeywords: ["프리미엄", "바나나"],
+      excludeKeywords: ["클래식"],
+    }),
+    src: "/assets/products/delmonte-banana-bag.jpeg",
+  },
+  {
+    match: buildImageMatcher({
+      partnerKeywords: ["델몬트"],
+      productKeywords: ["클래식", "바나나"],
+    }),
+    src: "/assets/products/delmonte-banana-pack.png",
+  },
+  {
+    match: buildImageMatcher({
+      productKeywords: ["바나나"],
+      excludeKeywords: ["파인애플"],
+    }),
+    src: "/assets/products/banana-generic.jpeg",
+  },
+  {
+    match: buildImageMatcher({
+      productKeywords: ["오이맛고추"],
+    }),
+    src: "/assets/products/cucumber-spicy.jpeg",
+  },
+  {
+    match: buildImageMatcher({
+      productKeywords: ["청양고추"],
+    }),
+    src: "/assets/products/green-chili-pack.jpeg",
+  },
+  {
+    match: buildImageMatcher({
+      productKeywords: ["매운고추"],
+    }),
+    src: "/assets/products/pepper-hot-pack.jpeg",
+  },
+  {
+    match: (product) => {
+      const productText = normalizeImageToken(product?.productName || "");
+      if (productText.includes(normalizeImageToken("오이맛고추"))) return false;
+      return [
+        "천안오이",
+        "한끼딱오이",
+        "오이1입",
+        "오이2입",
+        "오이",
+      ].some((keyword) => productText.includes(normalizeImageToken(keyword)));
+    },
+    src: "/assets/products/cucumber-plain.jpeg",
+  },
+  {
+    match: buildImageMatcher({
+      productKeywords: ["애호박"],
+      excludeKeywords: ["못난이"],
+    }),
+    src: "/assets/products/aehobak-single.jpeg",
+  },
+  {
+    match: buildImageMatcher({
+      productKeywords: ["손질대파"],
+    }),
+    src: "/assets/products/green-onion-bundle.jpeg",
+  },
+  {
+    match: buildImageMatcher({
+      productKeywords: ["부추"],
+    }),
+    src: "/assets/products/chives-bag.jpeg",
+  },
+  {
+    match: buildImageMatcher({
+      productKeywords: ["달래"],
+    }),
+    src: "/assets/products/dalrae-bag.jpeg",
+  },
+  {
+    match: buildImageMatcher({
+      productKeywords: ["냉이"],
+    }),
+    src: "/assets/products/shepherds-purse-bag.jpeg",
+  },
+  {
+    match: buildImageMatcher({
+      productKeywords: ["참나물"],
+    }),
+    src: "/assets/products/chamnamul-bag.jpeg",
+  },
+  {
+    match: (product) => {
+      const productText = normalizeImageToken(product?.productName || "");
+      return productText.includes(normalizeImageToken("깻잎"));
+    },
+    src: "/assets/products/perilla-pack.jpeg",
+  },
+  {
+    match: (product) => {
+      const productText = normalizeImageToken(product?.productName || "");
+      return productText.includes(normalizeImageToken("쌈채소")) || productText.includes(normalizeImageToken("상추"));
+    },
+    src: "/assets/products/ssam-pack.jpeg",
+  },
+  {
+    match: buildImageMatcher({
+      productKeywords: ["꽃상추"],
+    }),
+    src: "/assets/products/red-lettuce-pack.jpeg",
+  },
+  {
+    match: buildImageMatcher({
+      productKeywords: ["시금치"],
+    }),
+    src: "/assets/products/spinach-bag.jpeg",
+  },
+  {
+    match: buildImageMatcher({
+      productKeywords: ["브로콜리"],
+    }),
+    src: "/assets/products/broccoli.jpeg",
+  },
+  {
+    match: buildImageMatcher({
+      productKeywords: ["양배추"],
+    }),
+    src: "/assets/products/cabbage-half.jpeg",
+  },
+  {
+    match: buildImageMatcher({
+      productKeywords: ["양파"],
+    }),
+    src: "/assets/products/onion-single.jpeg",
+  },
+  {
+    match: (product) => {
+      const productText = normalizeImageToken(product?.productName || "");
+      return productText.includes(normalizeImageToken("깐마늘")) || productText.includes(normalizeImageToken("마늘"));
+    },
+    src: "/assets/products/garlic-bag.jpeg",
+  },
+  {
+    match: buildImageMatcher({
+      productKeywords: ["새송이버섯"],
+    }),
+    src: "/assets/products/mushroom-king-oyster.jpeg",
+  },
+  {
+    match: (product) => {
+      const productText = normalizeImageToken(product?.productName || "");
+      return productText.includes(normalizeImageToken("참타리버섯")) || productText.includes(normalizeImageToken("참타리"));
+    },
+    src: "/assets/products/mushroom-king-oyster-bag.jpeg",
+  },
+  {
+    match: buildImageMatcher({
+      productKeywords: ["팽이버섯"],
+    }),
+    src: "/assets/products/enoki-pack.jpeg",
+  },
+  {
+    match: (product) => {
+      const productText = normalizeImageToken(product?.productName || "");
+      return (
+        productText.includes(normalizeImageToken("고구마")) ||
+        productText.includes(normalizeImageToken("꿀밤고구마")) ||
+        productText.includes(normalizeImageToken("호박고구마"))
+      );
+    },
+    src: "/assets/products/sweetpotato-pink-bag.jpeg",
+  },
+  {
+    match: buildImageMatcher({
+      productKeywords: ["연어"],
+    }),
+    src: "/assets/products/salmon-pack.jpeg",
+  },
+  {
+    match: (product) => {
+      const productText = normalizeImageToken(product?.productName || "");
+      return (
+        productText.includes(normalizeImageToken("목심")) ||
+        productText.includes(normalizeImageToken("삼겹")) ||
+        productText.includes(normalizeImageToken("한돈")) ||
+        productText.includes(normalizeImageToken("돼지"))
+      );
+    },
+    src: "/assets/products/pork-neck-pack.jpeg",
+  },
 ];
 
 const getProductImageSrc = (product, customImageMap = {}) => {
   const productText = normalizeImageToken(product?.productName || "");
   if (!productText) return "";
-  if (productText.includes(normalizeImageToken("미분류상품"))) return "";
+
+  if (productText.includes(normalizeImageToken("파인애플"))) {
+    return "";
+  }
 
   const customKey = makeProductImageMapKey({
     productCode: product?.productCode || "",
@@ -276,7 +401,10 @@ const getProductImageSrc = (product, customImageMap = {}) => {
     productName: product?.productName || "",
   });
 
-  if (customKey && customImageMap[customKey]) return customImageMap[customKey];
+  if (customKey && customImageMap[customKey]) {
+    return customImageMap[customKey];
+  }
+
   const matched = PRODUCT_IMAGE_MAP.find((entry) => entry.match(product || {}));
   return matched?.src || "";
 };
@@ -359,7 +487,7 @@ const buildNormalizedRows = (parsedRows) =>
 
     return {
       ...row,
-      __id: ${productCode || "empty"}-${center || "nocenter"}-${partner || "nopartner"}-${index},
+      __id: `${productCode || "empty"}-${center || "nocenter"}-${partner || "nopartner"}-${index}`,
       __index: index,
       __productCode: productCode,
       __productName: productName,
@@ -390,7 +518,7 @@ const buildReservationRows = (reservationRows) =>
 
     return {
       ...row,
-      __id: reservation-${productCode || "empty"}-${center || "nocenter"}-${partner || "nopartner"}-${index},
+      __id: `reservation-${productCode || "empty"}-${center || "nocenter"}-${partner || "nopartner"}-${index}`,
       __index: index,
       __productCode: productCode,
       __productName: productName,
@@ -455,7 +583,7 @@ const hashString = (text) => {
 };
 
 const computeJobKey = (rows) =>
-  job_${hashString(
+  `job_${hashString(
     JSON.stringify(
       (rows || []).map((row) => ({
         productCode: row.__productCode,
@@ -465,7 +593,7 @@ const computeJobKey = (rows) =>
         qty: row.__qty,
       }))
     )
-  )};
+  )}`;
 
 const fileToBase64 = (file) =>
   new Promise((resolve, reject) => {
@@ -513,7 +641,7 @@ const formatDashboardValue = (label, value) => {
   if (value == null || value === "") return "-";
   if (String(label).includes("율") || String(label).includes("률") || String(label).includes("커버리지")) {
     const numeric = Number(value);
-    return Number.isFinite(numeric) ? ${(numeric * 100).toFixed(1)}% : String(value);
+    return Number.isFinite(numeric) ? `${(numeric * 100).toFixed(1)}%` : String(value);
   }
   if (typeof value === "number") {
     return value.toLocaleString("ko-KR");
@@ -537,15 +665,15 @@ const getRecordType = (record) => {
 
 const getRecordQtyText = (record) => {
   const type = getRecordType(record);
-  if (type === "회송" || type === "RETURN") return ${parseQty(record.회송수량)}개;
-  if (type === "교환" || type === "EXCHANGE") return ${parseQty(record.교환수량)}개;
+  if (type === "회송" || type === "RETURN") return `${parseQty(record.회송수량)}개`;
+  if (type === "교환" || type === "EXCHANGE") return `${parseQty(record.교환수량)}개`;
 
   const returnQty = parseQty(record.회송수량);
   const exchangeQty = parseQty(record.교환수량);
   if (returnQty > 0 && exchangeQty > 0) {
-    return 회송 ${returnQty}개 / 교환 ${exchangeQty}개;
+    return `회송 ${returnQty}개 / 교환 ${exchangeQty}개`;
   }
-  return ${Math.max(returnQty, exchangeQty, 0)}개;
+  return `${Math.max(returnQty, exchangeQty, 0)}개`;
 };
 
 const formatDateForFileName = () => new Date().toLocaleDateString("sv-SE");
@@ -603,8 +731,8 @@ const buildPhotoCandidate = (rawValue) => {
   if (driveId) {
     return {
       key: driveId,
-      previewUrl: https://drive.google.com/thumbnail?id=${driveId}&sz=w1200,
-      downloadUrl: https://drive.google.com/uc?export=download&id=${driveId},
+      previewUrl: `https://drive.google.com/thumbnail?id=${driveId}&sz=w1200`,
+      downloadUrl: `https://drive.google.com/uc?export=download&id=${driveId}`,
     };
   }
 
@@ -656,7 +784,7 @@ function HistoryPhotoItem({ candidate, index, onOpen, styles }) {
   return (
     <img
       src={candidate.previewUrl}
-      alt={첨부 사진 ${index + 1}}
+      alt={`첨부 사진 ${index + 1}`}
       style={styles.photoThumb}
       onClick={() => onOpen(candidate.previewUrl)}
       onError={() => setFailed(true)}
@@ -675,7 +803,7 @@ function HistoryPhotoPreview({ record, onOpen, styles }) {
     <div style={styles.photoGrid}>
       {candidates.map((candidate, index) => (
         <HistoryPhotoItem
-          key={candidate.key || ${record.__rowNumber || "row"}-${index}}
+          key={candidate.key || `${record.__rowNumber || "row"}-${index}`}
           candidate={candidate}
           index={index}
           onOpen={onOpen}
@@ -1069,7 +1197,7 @@ function App() {
       setBootLoading(true);
       setError("");
 
-      const response = await fetch(${SCRIPT_URL}?action=bootstrap);
+      const response = await fetch(`${SCRIPT_URL}?action=bootstrap`);
       const result = await response.json();
 
       if (!response.ok || result.ok === false) {
@@ -1096,7 +1224,7 @@ function App() {
         if (!productCode) return;
 
         if (partner) {
-          nextExcludedPairKeys.add(${productCode}||${partner});
+          nextExcludedPairKeys.add(`${productCode}||${partner}`);
         } else {
           nextExcludedProductCodes.add(productCode);
         }
@@ -1131,11 +1259,8 @@ function App() {
       setHappycallAnalytics(data.happycall || {});
       setProductImageMap(
         (Array.isArray(data.product_images) ? data.product_images : []).reduce((acc, item) => {
-          const key = String(item?.["이미지매핑키"] || "").trim();
-          const fileId = String(item?.["드라이브파일ID"] || "").trim();
-          const url = fileId
-            ? https://drive.google.com/thumbnail?id=${fileId}&sz=w1200
-            : String(item?.["이미지URL"] || "").trim();
+          const key = String(item?.맵키 || "").trim();
+          const url = String(item?.이미지URL || "").trim();
           if (key && url) acc[key] = url;
           return acc;
         }, {})
@@ -1149,7 +1274,7 @@ function App() {
   }, []);
 
   const fetchHistoryRowsData = useCallback(async () => {
-    const response = await fetch(${SCRIPT_URL}?action=getRecords);
+    const response = await fetch(`${SCRIPT_URL}?action=getRecords`);
     const result = await response.json();
 
     if (!response.ok || result.ok === false) {
@@ -1189,7 +1314,7 @@ function App() {
 
       if (!code) return false;
       if (excludedProductCodes.has(code)) return false;
-      if (excludedPairKeys.has(${code}||${partner})) return false;
+      if (excludedPairKeys.has(`${code}||${partner}`)) return false;
 
       return true;
     });
@@ -1254,6 +1379,32 @@ function App() {
       centerInfo.rows.push(row);
     });
 
+    const allProducts = Array.from(map.values()).flat();
+    const rankMaps = {
+      "1d": {},
+      "7d": {},
+      "30d": {},
+    };
+
+    Object.keys(rankMaps).forEach((periodKey) => {
+      allProducts
+        .filter((product) => parseQty(product.happycallMetrics?.[periodKey]?.count) > 0)
+        .sort((a, b) => {
+          const countDiff =
+            parseQty(b.happycallMetrics?.[periodKey]?.count) - parseQty(a.happycallMetrics?.[periodKey]?.count);
+          if (countDiff !== 0) return countDiff;
+          return String(a.productName || "").localeCompare(String(b.productName || ""), "ko");
+        })
+        .slice(0, 5)
+        .forEach((product, index) => {
+          rankMaps[periodKey][`${product.partner}||${product.productCode}`] = {
+            rank: index + 1,
+            count: parseQty(product.happycallMetrics?.[periodKey]?.count),
+            share: Number(product.happycallMetrics?.[periodKey]?.share || 0),
+          };
+        });
+    });
+
     const visibleHappycallRankMap = buildVisibleHappycallRanks(happycallAnalytics);
 
     return Array.from(map.entries())
@@ -1264,9 +1415,9 @@ function App() {
           ...product,
           imageSrc: getProductImageSrc(product, productImageMap),
           happycallStats: {
-            "1d": visibleHappycallRankMap[${product.partner}||${product.productCode}]?.["1d"] || null,
-            "7d": visibleHappycallRankMap[${product.partner}||${product.productCode}]?.["7d"] || null,
-            "30d": visibleHappycallRankMap[${product.partner}||${product.productCode}]?.["30d"] || null,
+            "1d": visibleHappycallRankMap[`${product.partner}||${product.productCode}`]?.["1d"] || null,
+            "7d": visibleHappycallRankMap[`${product.partner}||${product.productCode}`]?.["7d"] || null,
+            "30d": visibleHappycallRankMap[`${product.partner}||${product.productCode}`]?.["30d"] || null,
           },
           centers: product.centers.sort((a, b) => (b.totalQty || 0) - (a.totalQty || 0)),
         })),
@@ -1277,7 +1428,7 @@ function App() {
     const map = {};
 
     (historyRows || []).forEach((record) => {
-      const key = ${record.협력사명 || ""}||${record.상품코드 || ""};
+      const key = `${record.협력사명 || ""}||${record.상품코드 || ""}`;
       if (!map[key]) {
         map[key] = { returnCount: 0, exchangeCount: 0 };
       }
@@ -1306,18 +1457,18 @@ function App() {
           share: Number(item?.share || 0),
           partnerName: item?.partnerName || "",
           productCode: item?.productCode || "",
-          imageSrc: getProductImageSrc(
-            {
-              productName: item?.productName || "",
-              partner: item?.partnerName || "",
-              productCode: item?.productCode || "",
-            },
-            productImageMap
-          ),
+          imageSrc: getProductImageSrc({
+            productName: item?.productName || "",
+            partner: item?.partnerName || "",
+            productCode: item?.productCode || "",
+          }, productImageMap),
         })),
     [happycallAnalytics, productImageMap]
   );
 
+  const happycallHeroCard = previousDayHappycallTopList[0] || null;
+  const happycallMiniCards = previousDayHappycallTopList.slice(1, 5);
+  const totalVisibleProducts = groupedPartners.reduce((sum, item) => sum + item.products.length, 0);
   const imageRegistryProducts = useMemo(() => {
     const keyword = normalizeText(imageRegisterSearch);
     const flatList = groupedPartners.flatMap((group) =>
@@ -1391,9 +1542,20 @@ function App() {
     const file = e.target.files?.[0];
     if (!file || !selectedImageTargetKey) return;
 
-    const targetProduct = imageRegistryProducts.find((item) => item.imageKey === selectedImageTargetKey);
+    const targetProduct = imageRegistryProducts.find((item) => item.imageKey === selectedImageTargetKey) ||
+      groupedPartners.flatMap((group) => group.products.map((product) => ({
+        partner: group.partner,
+        productCode: product.productCode,
+        productName: product.productName,
+        imageKey: makeProductImageMapKey({
+          productCode: product.productCode,
+          partner: group.partner,
+          productName: product.productName,
+        }),
+      }))).find((item) => item.imageKey === selectedImageTargetKey);
+
     if (!targetProduct) {
-      setError("상품 정보를 찾지 못했습니다.");
+      setError("등록 대상 상품을 찾지 못했습니다.");
       if (e.target) e.target.value = "";
       return;
     }
@@ -1420,24 +1582,20 @@ function App() {
 
       const result = await response.json();
       if (!response.ok || result.ok === false) {
-        throw new Error(result.message || "이미지 저장 실패");
+        throw new Error(result.message || "이미지 등록 실패");
       }
 
       const nextMap = (Array.isArray(result.product_images) ? result.product_images : []).reduce((acc, item) => {
-        const key = String(item?.["이미지매핑키"] || "").trim();
-        const fileId = String(item?.["드라이브파일ID"] || "").trim();
-        const url = fileId
-          ? https://drive.google.com/thumbnail?id=${fileId}&sz=w1200
-          : String(item?.["이미지URL"] || "").trim();
+        const key = String(item?.맵키 || "").trim();
+        const url = String(item?.이미지URL || "").trim();
         if (key && url) acc[key] = url;
         return acc;
       }, {});
-
       setProductImageMap(nextMap);
-      setToast("이미지 저장 완료");
-      setMessage("상품 이미지가 저장되었습니다.");
+      setToast("이미지 등록 완료");
+      setMessage("상품 이미지가 등록되었습니다.");
     } catch (err) {
-      setError(err.message || "이미지 저장 실패");
+      setError(err.message || "이미지 등록 실패");
     } finally {
       setUploadingImageKey("");
       setSelectedImageTargetKey("");
@@ -1542,7 +1700,7 @@ function App() {
   }, [pendingMap, saving, clearFlushTimer, flushPending]);
 
   const saveInspectionQtySimple = async (product) => {
-    const draftKey = inspection||${product.partner}||${product.productCode};
+    const draftKey = `inspection||${product.partner}||${product.productCode}`;
     const qty = parseQty(drafts[draftKey]?.inspectionQty);
     const photoFiles = Array.isArray(drafts[draftKey]?.photoFiles) ? drafts[draftKey].photoFiles : [];
     const entityKey = makeEntityKey(currentJob?.job_key, product.productCode, product.partner);
@@ -1585,7 +1743,7 @@ function App() {
       return;
     }
 
-    const draftKey = return||${product.partner}||${product.productCode}||${centerName};
+    const draftKey = `return||${product.partner}||${product.productCode}||${centerName}`;
     const draft = drafts[draftKey] || {};
     const returnQty = parseQty(draft.returnQty);
     const exchangeQty = parseQty(draft.exchangeQty);
@@ -1733,10 +1891,10 @@ function App() {
       const href = URL.createObjectURL(blob);
       const fileName = result.fileName ||
         (mode === "movement"
-          ? 회송_교환_사진_${formatDateForFileName()}.zip
+          ? `회송_교환_사진_${formatDateForFileName()}.zip`
           : mode === "inspection"
-          ? 검품사진_${formatDateForFileName()}.zip
-          : 참고사진_${formatDateForFileName()}.zip);
+          ? `검품사진_${formatDateForFileName()}.zip`
+          : `참고사진_${formatDateForFileName()}.zip`);
 
       link.href = href;
       link.download = fileName;
@@ -1863,7 +2021,7 @@ function App() {
         const batchNumber = Math.floor(index / batchSize) + 1;
         const processedCount = Math.min(index + batchRows.length, rows.length);
         setMessage(
-          해피콜 CSV 처리 중... ${batchNumber}/${totalBatches} 배치 (${processedCount} / ${rows.length})
+          `해피콜 CSV 처리 중... ${batchNumber}/${totalBatches} 배치 (${processedCount} / ${rows.length})`
         );
 
         const response = await fetch(SCRIPT_URL, {
@@ -1878,7 +2036,7 @@ function App() {
         const result = await response.json();
         if (!response.ok || result.ok === false) {
           throw new Error(
-            result.message || 해피콜 CSV 가져오기에 실패했습니다. (${batchNumber}/${totalBatches} 배치)
+            result.message || `해피콜 CSV 가져오기에 실패했습니다. (${batchNumber}/${totalBatches} 배치)`
           );
         }
 
@@ -1890,13 +2048,13 @@ function App() {
       setHappycallAnalytics(lastResult?.happycall || {});
       setMessage("");
       setToast(
-        해피콜 CSV 반영 완료 · 신규 ${insertedTotal}건 · 갱신 ${updatedTotal}건${
-          skippedCount > 0 ?  · 중복 제외 ${skippedCount}건 : ""
-        }
+        `해피콜 CSV 반영 완료 · 신규 ${insertedTotal}건 · 갱신 ${updatedTotal}건${
+          skippedCount > 0 ? ` · 중복 제외 ${skippedCount}건` : ""
+        }`
       );
     } catch (err) {
       setError(
-        ${err.message || "해피콜 CSV 가져오기에 실패했습니다."} 같은 CSV를 다시 올리면 이어서 반영됩니다.
+        `${err.message || "해피콜 CSV 가져오기에 실패했습니다."} 같은 CSV를 다시 올리면 이어서 반영됩니다.`
       );
     } finally {
       setUploadingHappycallCsv(false);
@@ -1915,25 +2073,28 @@ function App() {
         onChange={handleCsvUpload}
         style={styles.hiddenInput}
       />
-      <input
-        ref={happycallFileInputRef}
-        type="file"
-        accept=".csv,.xls,.xlsx"
-        onChange={handleHappycallCsvUpload}
-        style={styles.hiddenInput}
-      />
-      <input
-        ref={imageRegisterInputRef}
-        type="file"
-        accept="image/*"
-        onChange={handleProductImageUpload}
-        style={styles.hiddenInput}
-      />
+        <input
+          ref={happycallFileInputRef}
+          type="file"
+          accept=".csv,.xls,.xlsx"
+          onChange={handleHappycallCsvUpload}
+          style={styles.hiddenInput}
+        />
+        <input
+          ref={imageRegisterInputRef}
+          type="file"
+          accept="image/*"
+          onChange={handleProductImageUpload}
+          style={styles.hiddenInput}
+        />
 
       <div style={styles.headerCard}>
         <div style={styles.headerTopRow}>
-          <div>
-            <h1 style={styles.title}>GS신선강화지원팀</h1>
+          <div style={styles.brandBlock}>
+            <div style={styles.brandRow}>
+              <img src="/assets/gs-logo.svg" alt="GS 로고" style={styles.brandLogo} />
+              <h1 style={styles.title}>GS신선강화지원팀 검품 시스템</h1>
+            </div>
             <div style={styles.headerLinkRow}>
               <a href={worksheetUrl || "#"} target="_blank" rel="noreferrer" style={styles.headerLink}>
                 {worksheetUrl || "워크시트 URL 없음"}
@@ -2005,7 +2166,7 @@ function App() {
               onClick={() => fileInputRef.current?.click()}
               style={styles.primaryButton}
             >
-              {uploadingCsv ? "처리 중..." : "검품 CSV 선택"}
+              {uploadingCsv ? "처리 중..." : "📄 검품 CSV 업로드"}
             </button>
             <button
               type="button"
@@ -2016,18 +2177,7 @@ function App() {
                 opacity: uploadingHappycallCsv ? 0.7 : 1,
               }}
             >
-              {uploadingHappycallCsv ? "처리 중..." : "해피콜 파일 선택"}
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setError("");
-                setAdminPassword("");
-                setShowAdminReset(true);
-              }}
-              style={styles.secondaryButton}
-            >
-              관리자 초기화
+              {uploadingHappycallCsv ? "처리 중..." : "🗂 해피콜 업로드"}
             </button>
             <button
               type="button"
@@ -2039,7 +2189,18 @@ function App() {
               }}
               style={styles.secondaryButton}
             >
-              이미지 등록
+              🖼 이미지 등록
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setError("");
+                setAdminPassword("");
+                setShowAdminReset(true);
+              }}
+              style={styles.secondaryButton}
+            >
+              👤 관리자 초기화
             </button>
           </div>
         </div>
@@ -2055,9 +2216,7 @@ function App() {
             style={styles.searchInput}
           />
           <button type="button" onClick={() => setIsScannerOpen(true)} style={styles.scanButton} aria-label="바코드 스캔">
-            <span style={styles.scanIcon}>
-              <BarcodeScanIcon size={26} />
-            </span>
+            <span style={styles.scanIcon}>스캔</span>
           </button>
         </div>
       </div>
@@ -2075,97 +2234,117 @@ function App() {
       <div style={styles.panel}>
         <div style={styles.happycallHeader}>
           <div>
-            <div style={styles.sectionTitle}>전일 해피콜 최다 TOP10</div>
-            <div style={styles.metaText}>전일 접수 해피콜 기준</div>
+            <div style={styles.sectionTitle}>전일 해피콜 TOP 5 {totalVisibleProducts ? `(${totalVisibleProducts}건)` : ""}</div>
+            <div style={styles.heroSubtext}>전일 접수 해피콜 기준</div>
           </div>
         </div>
 
         {previousDayHappycallTopList.length === 0 ? (
           <div style={styles.emptyBox}>전일 해피콜 데이터가 없습니다.</div>
         ) : (
-          <div style={styles.kpiGrid}>
-            {previousDayHappycallTopList.map((card) => (
-              <div
-                key={happycall-top-${card.rank}}
-                style={{
-                  ...styles.kpiCard,
-                  borderColor:
-                    card.rank === 1 ? "#fca5a5" : card.rank === 2 ? "#93c5fd" : card.rank === 3 ? "#86efac" : "#e5e7eb",
-                }}
-              >
-                <div style={styles.cardContentRow}>
-                  <div style={styles.cardMainCopy}>
-                    <div style={styles.topRankRow}>
-                      {getTopMedal(card.rank) ? (
-                        <span style={styles.topMedal}>{getTopMedal(card.rank)}</span>
-                      ) : (
-                        <span style={styles.topMedalPlaceholder} />
-                      )}
+          <div style={styles.happycallShowcase}>
+            {happycallHeroCard ? (
+              <div style={styles.heroTopCard}>
+                <div style={styles.heroTopCopy}>
+                  <div style={styles.heroTopBadge}>
+                    <span style={styles.heroTopMedal}>{getTopMedal(happycallHeroCard.rank)}</span>
+                    <span style={styles.heroTopBadgeText}>TOP {happycallHeroCard.rank}</span>
+                  </div>
+                  <div style={styles.heroTopName}>{happycallHeroCard.productName}</div>
+                  <div style={styles.heroTopMeta}>
+                    {happycallHeroCard.count.toLocaleString("ko-KR")}건 · {formatPercent(happycallHeroCard.share)}
+                  </div>
+                  <div style={styles.heroProgressRow}>
+                    <div style={styles.heroProgressTrack}>
                       <div
                         style={{
-                          ...styles.kpiLabel,
-                          marginBottom: 0,
-                          fontWeight: 900,
-                          color:
-                            card.rank === 1 ? "#b91c1c" : card.rank === 2 ? "#1d4ed8" : card.rank === 3 ? "#15803d" : "#64748b",
+                          ...styles.heroProgressFill,
+                          width: `${Math.max(14, Math.min(100, happycallHeroCard.share * 100))}%`,
                         }}
-                      >
-                        {TOP.${card.rank}}
-                      </div>
+                      />
                     </div>
-                    <div
-                      style={{
-                        ...styles.kpiValue,
-                        fontSize: 18,
-                        fontWeight: 900,
-                        color:
-                          card.rank === 1 ? "#b91c1c" : card.rank === 2 ? "#1d4ed8" : card.rank === 3 ? "#15803d" : "#0f172a",
-                      }}
-                    >
-                      {card.productName}
-                    </div>
-                    <div style={styles.topCardMeta}>
-                      {card.count.toLocaleString("ko-KR")}건 · {formatPercent(card.share)}
-                    </div>
+                    <div style={styles.heroProgressValue}>{formatPercent(happycallHeroCard.share)}</div>
                   </div>
-                  {card.imageSrc ? (
-                    <div style={styles.cardThumbFrame}>
-                      <img src={card.imageSrc} alt={card.productName} style={styles.cardThumbImage} />
-                    </div>
-                  ) : null}
+                </div>
+                <div style={styles.heroImageFrame}>
+                  {happycallHeroCard.imageSrc ? (
+                    <img
+                      src={happycallHeroCard.imageSrc}
+                      alt={happycallHeroCard.productName}
+                      style={styles.heroImage}
+                    />
+                  ) : (
+                    <div style={styles.heroFallbackImage}>📦</div>
+                  )}
                 </div>
               </div>
-            ))}
+            ) : null}
+
+            {happycallMiniCards.length ? (
+              <div style={styles.heroMiniGrid}>
+                {happycallMiniCards.map((card) => (
+                  <div
+                    key={`happycall-top-${card.rank}`}
+                    style={{
+                      ...styles.heroMiniCard,
+                      borderColor:
+                        card.rank === 2 ? "#93c5fd" : card.rank === 3 ? "#86efac" : "#dbe3f0",
+                    }}
+                  >
+                    <div style={styles.heroMiniLabel}>
+                      <span>{getTopMedal(card.rank) || "•"}</span>
+                      <span>{card.rank <= 3 ? `TOP ${card.rank}` : ""}</span>
+                    </div>
+                    <div style={styles.heroMiniContent}>
+                      <div style={styles.heroMiniCopy}>
+                        <div style={styles.heroMiniName}>{card.productName}</div>
+                        <div style={styles.heroMiniMeta}>
+                          {card.count.toLocaleString("ko-KR")}건 · {formatPercent(card.share)}
+                        </div>
+                      </div>
+                      {card.imageSrc ? (
+                        <div style={styles.heroMiniThumbFrame}>
+                          <img src={card.imageSrc} alt={card.productName} style={styles.heroMiniThumbImage} />
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+
+            <div style={styles.heroActionRow}>
+              <button
+                type="button"
+                onClick={() => downloadPhotoZip("movement")}
+                style={styles.heroActionButton}
+              >
+                {zipDownloading === "movement" ? "ZIP 생성 중..." : "📷 불량사진"}
+              </button>
+              <button
+                type="button"
+                onClick={() => downloadPhotoZip("inspection")}
+                style={styles.heroActionButton}
+              >
+                {zipDownloading === "inspection" ? "ZIP 생성 중..." : "🧾 검품사진"}
+              </button>
+              <button
+                type="button"
+                onClick={() => downloadPhotoZip("photoOnly")}
+                style={styles.heroActionButton}
+              >
+                {zipDownloading === "photoOnly" ? "ZIP 생성 중..." : "🔗 참고사진"}
+              </button>
+            </div>
           </div>
         )}
       </div>
 
-      <div style={styles.countRow}>
-        <div style={styles.countText}>총 {groupedPartners.reduce((sum, item) => sum + item.products.length, 0)}건</div>
-        <div style={styles.countActions}>
-          <button
-            type="button"
-            onClick={() => downloadPhotoZip("movement")}
-            style={styles.historyButton}
-          >
-            {zipDownloading === "movement" ? "ZIP 생성 중..." : "불량사진 저장"}
-          </button>
-          <button
-            type="button"
-            onClick={() => downloadPhotoZip("inspection")}
-            style={styles.historyButton}
-          >
-            {zipDownloading === "inspection" ? "ZIP 생성 중..." : "검품사진 저장"}
-          </button>
-          <button
-            type="button"
-            onClick={() => downloadPhotoZip("photoOnly")}
-            style={styles.historyButton}
-          >
-            {zipDownloading === "photoOnly" ? "ZIP 생성 중..." : "참고사진 저장"}
-          </button>
+      <div style={styles.partnerPanel}>
+        <div style={styles.partnerSectionHeader}>
+          <div style={styles.sectionTitle}>협력사 목록</div>
+          <div style={styles.partnerSectionCount}>총 {totalVisibleProducts}건</div>
         </div>
-      </div>
 
       <div style={styles.list}>
         {groupedPartners.length === 0 ? (
@@ -2181,20 +2360,23 @@ function App() {
                 }
               >
                 <div style={styles.partnerTitle}>{partnerGroup.partner}</div>
-                <div style={styles.partnerCount}>{partnerGroup.products.length}건</div>
+                <div style={styles.partnerHeaderRight}>
+                  <div style={styles.partnerCount}>{partnerGroup.products.length}건</div>
+                  <div style={styles.partnerChevron}>›</div>
+                </div>
               </button>
 
               {expandedPartner === partnerGroup.partner && (
                 <div style={styles.partnerBody}>
                   {partnerGroup.products.map((product) => {
-                    const productStateKey = ${product.partner}||${product.productCode};
-                    const historyCounts = historyCountMap[${product.partner}||${product.productCode}] || {
+                    const productStateKey = `${product.partner}||${product.productCode}`;
+                    const historyCounts = historyCountMap[`${product.partner}||${product.productCode}`] || {
                       returnCount: 0,
                       exchangeCount: 0,
                     };
                     const historySummary = [
-                      historyCounts.returnCount > 0 ? 회송 ${historyCounts.returnCount} : "",
-                      historyCounts.exchangeCount > 0 ? 교환 ${historyCounts.exchangeCount} : "",
+                      historyCounts.returnCount > 0 ? `회송 ${historyCounts.returnCount}` : "",
+                      historyCounts.exchangeCount > 0 ? `교환 ${historyCounts.exchangeCount}` : "",
                     ]
                       .filter(Boolean)
                       .join(" / ");
@@ -2206,8 +2388,8 @@ function App() {
 
                     const draftKey =
                       mode === "inspection"
-                        ? inspection||${product.partner}||${product.productCode}
-                        : return||${product.partner}||${product.productCode}||${selectedCenter};
+                        ? `inspection||${product.partner}||${product.productCode}`
+                        : `return||${product.partner}||${product.productCode}||${selectedCenter}`;
                     const draft = drafts[draftKey] || {};
                     const entityKey = makeEntityKey(currentJob?.job_key, product.productCode, product.partner);
                     const inspectionStatus = itemStatusMap[entityKey];
@@ -2227,13 +2409,13 @@ function App() {
                         return {
                           key: periodKey,
                           rank: stats.rank,
-                          label: ${label} 해피콜 TOP${stats.rank},
+                          label: stats.rank <= 3 ? `${label} 해피콜 TOP${stats.rank}` : `${label} 해피콜`,
                         };
                       })
                       .filter(Boolean);
 
                     return (
-                      <div key={${partnerGroup.partner}-${product.productCode}} style={styles.card}>
+                      <div key={`${partnerGroup.partner}-${product.productCode}`} style={styles.card}>
                         {mode === "inspection" ? (
                           <div style={styles.cardInlineInspection}>
                             <div style={styles.cardInlineInfo}>
@@ -2247,29 +2429,30 @@ function App() {
                                     ))}
                                   </div>
                                 ) : null}
-                                <div style={styles.cardTitle}>{product.productName || "상품명 없음"}</div>
-                                {product.eventInfo?.행사여부 ? (
-                                  <span style={styles.eventBadge}>
-                                    {product.eventInfo.행사명 || "행사"}
-                                  </span>
+                              </div>
+                              <div style={styles.cardContentRow}>
+                                <div style={styles.cardMainCopy}>
+                                  <div style={styles.cardTitleRow}>
+                                    <div style={styles.cardTitle}>{product.productName || "상품명 없음"}</div>
+                                    {product.eventInfo?.행사여부 ? (
+                                      <span style={styles.eventBadge}>
+                                        {product.eventInfo.행사명 || "행사"}
+                                      </span>
+                                    ) : null}
+                                  </div>
+                                  <div style={styles.cardMeta}>코드 {product.productCode}</div>
+                                  <div style={styles.qtyRow}>
+                                    <span style={styles.qtyChip}>총 발주 {product.totalQty}개</span>
+                                    {historySummary ? <span style={styles.qtyChip}>{historySummary}</span> : null}
+                                  </div>
+                                </div>
+                                {product.imageSrc ? (
+                                  <div style={styles.cardThumbFrame}>
+                                    <img src={product.imageSrc} alt={product.productName} style={styles.cardThumbImage} />
+                                  </div>
                                 ) : null}
                               </div>
-                              <div style={styles.cardMeta}>코드 {product.productCode}</div>
-                              <div style={styles.qtyRow}>
-                                <span style={styles.qtyChip}>총 발주 {product.totalQty}개</span>
-                                {historySummary ? <span style={styles.qtyChip}>{historySummary}</span> : null}
-                              </div>
                             </div>
-
-                            {product.imageSrc ? (
-                              <div style={styles.cardThumbFrame}>
-                                <img
-                                  src={product.imageSrc}
-                                  alt={product.productName || "상품 이미지"}
-                                  style={styles.cardThumbImage}
-                                />
-                              </div>
-                            ) : null}
 
                             <div style={styles.inlineInspectionRow}>
                               <input
@@ -2382,15 +2565,17 @@ function App() {
                                     ))}
                                   </div>
                                 ) : null}
-                                <div style={styles.cardTitle}>{product.productName || "상품명 없음"}</div>
-                                {product.eventInfo?.행사여부 ? (
-                                  <span style={styles.eventBadge}>
-                                    {product.eventInfo.행사명 || "행사"}
-                                  </span>
-                                ) : null}
                               </div>
                               <div style={styles.cardContentRow}>
                                 <div style={styles.cardMainCopy}>
+                                  <div style={styles.cardTitleRow}>
+                                    <div style={styles.cardTitle}>{product.productName || "상품명 없음"}</div>
+                                    {product.eventInfo?.행사여부 ? (
+                                      <span style={styles.eventBadge}>
+                                        {product.eventInfo.행사명 || "행사"}
+                                      </span>
+                                    ) : null}
+                                  </div>
                                   <div style={styles.cardMeta}>코드 {product.productCode}</div>
                                   <div style={styles.qtyRow}>
                                     <span style={styles.qtyChip}>총 발주 {product.totalQty}개</span>
@@ -2399,11 +2584,7 @@ function App() {
                                 </div>
                                 {product.imageSrc ? (
                                   <div style={styles.cardThumbFrame}>
-                                    <img
-                                      src={product.imageSrc}
-                                      alt={product.productName || "상품 이미지"}
-                                      style={styles.cardThumbImage}
-                                    />
+                                    <img src={product.imageSrc} alt={product.productName} style={styles.cardThumbImage} />
                                   </div>
                                 ) : null}
                               </div>
@@ -2438,7 +2619,7 @@ function App() {
                                 </div>
                                 <div style={styles.metaText}>
                                   행사: {product.eventInfo?.행사여부 || ""}
-                                  {product.eventInfo?.행사명 ?  (${product.eventInfo.행사명}) : ""}
+                                  {product.eventInfo?.행사명 ? ` (${product.eventInfo.행사명})` : ""}
                                 </div>
                               </div>
                             )}
@@ -2527,6 +2708,7 @@ function App() {
           ))
         )}
       </div>
+      </div>
 
       {showHistory && (
         <div style={styles.sheetOverlay} onClick={() => setShowHistory(false)}>
@@ -2547,7 +2729,7 @@ function App() {
               <div style={styles.sheetList}>
                 {historyRows.map((record, index) => (
                   <div
-                    key={${record.__rowNumber || "row"}-${record.작성일시 || "time"}-${index}}
+                    key={`${record.__rowNumber || "row"}-${record.작성일시 || "time"}-${index}`}
                     style={styles.historyCard}
                   >
                     <button
@@ -2655,49 +2837,49 @@ function App() {
               </button>
             </div>
 
-            <div style={styles.formGroup}>
-              <label style={styles.label}>상품 검색</label>
+            <div style={styles.infoBox}>
+              현재 CSV 기준 상품에 대해 이미지를 등록하거나 교체할 수 있습니다. 등록한 이미지는 같은 협력사/상품에 계속 자동 적용됩니다.
+            </div>
+
+            <div style={styles.searchRow}>
               <input
-                type="text"
                 value={imageRegisterSearch}
                 onChange={(e) => setImageRegisterSearch(e.target.value)}
-                style={styles.input}
                 placeholder="상품명 / 상품코드 / 협력사 검색"
+                style={styles.searchInput}
               />
             </div>
 
-            <div style={styles.imageRegisterList}>
-              {imageRegistryProducts.length === 0 ? (
-                <div style={styles.emptyBox}>등록할 상품이 없습니다.</div>
-              ) : (
-                imageRegistryProducts.map((product) => (
+                {imageRegistryProducts.length === 0 ? (
+              <div style={styles.emptyState}>표시할 상품이 없습니다.</div>
+            ) : (
+              <div style={styles.imageRegisterList}>
+                {imageRegistryProducts.map((product) => (
                   <div key={product.imageKey} style={styles.imageRegisterCard}>
                     <div style={styles.imageRegisterInfo}>
-                      <div style={styles.imageRegisterName}>{product.productName || "상품명 없음"}</div>
+                      <div style={styles.imageRegisterName}>{product.productName}</div>
                       <div style={styles.metaText}>코드 {product.productCode || "-"}</div>
                       <div style={styles.metaText}>협력사 {product.partner || "-"}</div>
+                      <div style={styles.metaText}>총 발주 {parseQty(product.totalQty).toLocaleString("ko-KR")}개</div>
+                      <div style={styles.metaText}>{product.imageSrc ? "현재 이미지 있음" : "현재 이미지 없음"}</div>
                     </div>
-                    {product.imageSrc ? (
-                      <div style={{ ...styles.cardThumbFrame, width: 64, height: 64 }}>
-                        <img src={product.imageSrc} alt={product.productName} style={styles.cardThumbImage} />
-                      </div>
-                    ) : null}
                     <button
                       type="button"
                       onClick={() => openImageRegisterPicker(product)}
                       disabled={uploadingImageKey === product.imageKey}
-                      style={styles.secondaryButton}
+                      style={{
+                        ...styles.primaryButton,
+                        minHeight: 42,
+                        padding: "0 14px",
+                        opacity: uploadingImageKey === product.imageKey ? 0.7 : 1,
+                      }}
                     >
-                      {uploadingImageKey === product.imageKey
-                        ? "저장 중..."
-                        : product.imageSrc
-                        ? "이미지 교체"
-                        : "이미지 등록"}
+                      {uploadingImageKey === product.imageKey ? "등록 중..." : product.imageSrc ? "이미지 교체" : "이미지 등록"}
                     </button>
                   </div>
-                ))
-              )}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -2706,7 +2888,7 @@ function App() {
         <div style={styles.scannerOverlay} onClick={closeScanner}>
           <div style={styles.scannerModal} onClick={(e) => e.stopPropagation()}>
             <button type="button" onClick={closeScanner} style={styles.scannerCloseBtn}>
-              ×
+              횞
             </button>
 
             <div style={styles.scannerTopText}>{scannerReady ? scannerStatus : "바코드 인식 중..."}</div>
@@ -2722,13 +2904,8 @@ function App() {
 
             <div style={styles.scannerActions}>
               {torchSupported ? (
-                <button
-                  type="button"
-                  onClick={toggleTorch}
-                  style={{ ...styles.secondaryButton, width: 52, minWidth: 52, padding: 0 }}
-                  aria-label={torchOn ? "플래시 끄기" : "플래시 켜기"}
-                >
-                  <FlashlightIcon size={20} active={torchOn} />
+                <button type="button" onClick={toggleTorch} style={styles.secondaryButton}>
+                  {torchOn ? "플래시 끄기" : "플래시 켜기"}
                 </button>
               ) : null}
 
@@ -2755,23 +2932,39 @@ function App() {
 const styles = {
   app: {
     minHeight: "100vh",
-    background: "#f4f6fb",
-    padding: 14,
+    background: "linear-gradient(180deg, #f8fbff 0%, #eef3fb 100%)",
+    padding: "16px 14px 24px",
     color: "#1f2937",
-    fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, sans-serif",
+    fontFamily: "\"Pretendard\", -apple-system, BlinkMacSystemFont, sans-serif",
     boxSizing: "border-box",
-    maxWidth: 760,
+    maxWidth: 460,
     margin: "0 auto",
   },
   hiddenInput: {
     display: "none",
   },
+  brandBlock: {
+    minWidth: 0,
+    flex: 1,
+  },
+  brandRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+  },
+  brandLogo: {
+    width: 34,
+    height: "auto",
+    flexShrink: 0,
+  },
   headerCard: {
-    background: "#ffffff",
-    borderRadius: 18,
-    padding: 16,
-    marginBottom: 12,
-    border: "1px solid #e5e7eb",
+    background: "linear-gradient(180deg, rgba(255,255,255,0.97) 0%, rgba(250,252,255,0.94) 100%)",
+    backdropFilter: "blur(14px)",
+    borderRadius: 26,
+    padding: 18,
+    marginBottom: 14,
+    border: "1px solid #dfe7f5",
+    boxShadow: "0 14px 40px rgba(101, 130, 184, 0.14)",
   },
   headerTopRow: {
     display: "flex",
@@ -2782,8 +2975,9 @@ const styles = {
   },
   title: {
     margin: 0,
-    fontSize: 24,
+    fontSize: 18,
     fontWeight: 800,
+    lineHeight: 1.25,
   },
   subtitle: {
     marginTop: 8,
@@ -2799,27 +2993,28 @@ const styles = {
     flexWrap: "wrap",
   },
   headerLink: {
-    color: "#2563eb",
-    fontSize: 13,
+    color: "#8b98b8",
+    fontSize: 12,
     textDecoration: "none",
     wordBreak: "break-all",
   },
   copyButton: {
-    minHeight: 32,
-    padding: "0 10px",
+    minHeight: 34,
+    padding: "0 12px",
     borderRadius: 999,
-    border: "1px solid #cbd5e1",
-    background: "#fff",
-    color: "#0f172a",
+    border: "1px solid #d7deec",
+    background: "#ffffff",
+    color: "#2d4ea1",
     fontSize: 12,
     fontWeight: 800,
     cursor: "pointer",
+    boxShadow: "0 4px 10px rgba(37, 99, 235, 0.06)",
   },
   headerModeBadge: {
-    background: "#e0e7ff",
-    color: "#3730a3",
+    background: "#eef3ff",
+    color: "#6377b9",
     borderRadius: 999,
-    padding: "8px 12px",
+    padding: "8px 14px",
     fontSize: 12,
     fontWeight: 800,
     flexShrink: 0,
@@ -2830,23 +3025,24 @@ const styles = {
     gap: 10,
   },
   quickActionCard: {
-    minHeight: 74,
-    borderRadius: 16,
-    border: "1px solid #dbe3f0",
-    background: "#f8fafc",
+    minHeight: 72,
+    borderRadius: 18,
+    border: "1px solid #e2e8f5",
+    background: "#ffffff",
     display: "flex",
     flexDirection: "column",
     alignItems: "center",
     justifyContent: "center",
     gap: 6,
     cursor: "pointer",
-    color: "#0f172a",
+    color: "#405074",
     fontWeight: 800,
+    boxShadow: "0 8px 20px rgba(106, 132, 179, 0.08)",
   },
   quickActionCardActive: {
-    background: "#111827",
+    background: "linear-gradient(135deg, #3c6fdc 0%, #2454c3 100%)",
     color: "#fff",
-    borderColor: "#111827",
+    borderColor: "#2454c3",
   },
   quickActionIcon: {
     fontSize: 20,
@@ -2875,11 +3071,12 @@ const styles = {
     borderColor: "#111827",
   },
   panel: {
-    background: "#ffffff",
-    borderRadius: 16,
-    padding: 14,
-    marginBottom: 12,
-    border: "1px solid #e5e7eb",
+    background: "linear-gradient(180deg, rgba(255,255,255,0.97) 0%, rgba(249,251,255,0.94) 100%)",
+    borderRadius: 24,
+    padding: 16,
+    marginBottom: 14,
+    border: "1px solid #e4eaf5",
+    boxShadow: "0 12px 30px rgba(101, 130, 184, 0.08)",
   },
   happycallHeader: {
     display: "flex",
@@ -2887,11 +3084,16 @@ const styles = {
     gap: 12,
     alignItems: "flex-start",
     flexWrap: "wrap",
-    marginBottom: 12,
+    marginBottom: 10,
+  },
+  heroSubtext: {
+    marginTop: 4,
+    fontSize: 12,
+    color: "#8391b1",
   },
   happycallBadge: {
     borderRadius: 999,
-    padding: "6px 10px",
+    padding: "7px 11px",
     background: "#fee2e2",
     color: "#b91c1c",
     fontSize: 11,
@@ -2926,22 +3128,24 @@ const styles = {
     padding: "0 16px",
     borderRadius: 14,
     border: "none",
-    background: "#2563eb",
+    background: "linear-gradient(135deg, #3c6fdc 0%, #2454c3 100%)",
     color: "#fff",
     fontSize: 15,
     fontWeight: 800,
     cursor: "pointer",
+    boxShadow: "0 10px 20px rgba(50, 95, 203, 0.18)",
   },
   secondaryButton: {
     minHeight: 48,
     padding: "0 16px",
     borderRadius: 14,
-    border: "1px solid #d1d5db",
-    background: "#fff",
-    color: "#111827",
+    border: "1px solid #dbe4f3",
+    background: "#ffffff",
+    color: "#34486f",
     fontSize: 15,
     fontWeight: 800,
     cursor: "pointer",
+    boxShadow: "0 8px 16px rgba(106, 132, 179, 0.06)",
   },
   label: {
     display: "block",
@@ -3006,9 +3210,7 @@ const styles = {
     justifyContent: "center",
   },
   scanIcon: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
+    fontSize: 22,
     lineHeight: 1,
   },
   formGroup: {
@@ -3020,7 +3222,7 @@ const styles = {
   metaText: {
     marginTop: 8,
     fontSize: 12,
-    color: "#6b7280",
+    color: "#8b98b8",
     wordBreak: "break-all",
     lineHeight: 1.5,
   },
@@ -3041,6 +3243,176 @@ const styles = {
     marginBottom: 12,
     border: "1px solid #fecaca",
     fontSize: 14,
+  },
+  happycallShowcase: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 12,
+  },
+  heroTopCard: {
+    display: "grid",
+    gridTemplateColumns: "minmax(0, 1fr) 116px",
+    gap: 12,
+    padding: 16,
+    borderRadius: 22,
+    background: "linear-gradient(180deg, #fff8e7 0%, #ffe8b5 100%)",
+    border: "1px solid #f2ddb0",
+    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.7), 0 12px 24px rgba(214, 167, 72, 0.12)",
+    alignItems: "center",
+  },
+  heroTopCopy: {
+    minWidth: 0,
+  },
+  heroTopBadge: {
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
+    color: "#d18a00",
+    fontSize: 13,
+    fontWeight: 800,
+    marginBottom: 6,
+  },
+  heroTopMedal: {
+    fontSize: 20,
+    lineHeight: 1,
+  },
+  heroTopBadgeText: {
+    letterSpacing: 0.2,
+  },
+  heroTopName: {
+    fontSize: 20,
+    lineHeight: 1.2,
+    fontWeight: 900,
+    color: "#24324d",
+    wordBreak: "keep-all",
+  },
+  heroTopMeta: {
+    marginTop: 8,
+    fontSize: 15,
+    fontWeight: 700,
+    color: "#495976",
+  },
+  heroProgressRow: {
+    display: "grid",
+    gridTemplateColumns: "minmax(0, 1fr) auto",
+    alignItems: "center",
+    gap: 10,
+    marginTop: 12,
+  },
+  heroProgressTrack: {
+    height: 12,
+    borderRadius: 999,
+    background: "rgba(37, 84, 195, 0.12)",
+    overflow: "hidden",
+  },
+  heroProgressFill: {
+    height: "100%",
+    borderRadius: 999,
+    background: "linear-gradient(90deg, #3f73e6 0%, #2454c3 100%)",
+  },
+  heroProgressValue: {
+    fontSize: 14,
+    fontWeight: 800,
+    color: "#50607f",
+  },
+  heroImageFrame: {
+    height: 104,
+    borderRadius: 18,
+    background: "rgba(255,255,255,0.45)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden",
+  },
+  heroImage: {
+    width: "100%",
+    height: "100%",
+    objectFit: "contain",
+    mixBlendMode: "multiply",
+  },
+  heroFallbackImage: {
+    fontSize: 48,
+  },
+  heroMiniGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+    gap: 10,
+  },
+  heroMiniCard: {
+    background: "linear-gradient(180deg, #ffffff 0%, #fbfcff 100%)",
+    border: "1px solid #e4eaf5",
+    borderRadius: 18,
+    padding: 14,
+    minHeight: 120,
+    boxShadow: "0 8px 20px rgba(106, 132, 179, 0.06)",
+  },
+  heroMiniContent: {
+    display: "grid",
+    gridTemplateColumns: "minmax(0, 1fr) 58px",
+    gap: 10,
+    alignItems: "end",
+  },
+  heroMiniCopy: {
+    minWidth: 0,
+  },
+  heroMiniLabel: {
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
+    color: "#6377b9",
+    fontSize: 12,
+    fontWeight: 800,
+    marginBottom: 8,
+  },
+  heroMiniName: {
+    fontSize: 17,
+    lineHeight: 1.24,
+    fontWeight: 900,
+    color: "#22314b",
+    wordBreak: "keep-all",
+  },
+  heroMiniMeta: {
+    marginTop: 8,
+    fontSize: 13,
+    color: "#687694",
+    fontWeight: 700,
+  },
+  heroMiniThumbFrame: {
+    width: 58,
+    height: 58,
+    borderRadius: 14,
+    background: "#f8fbff",
+    border: "1px solid #e4eaf5",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden",
+  },
+  heroMiniThumbImage: {
+    width: "100%",
+    height: "100%",
+    objectFit: "contain",
+    mixBlendMode: "multiply",
+  },
+  heroActionRow: {
+    display: "grid",
+    gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+    gap: 8,
+  },
+  heroActionButton: {
+    minHeight: 42,
+    border: "1px solid #dce4f4",
+    borderRadius: 14,
+    background: "#f8fbff",
+    color: "#3e5a98",
+    fontSize: 13,
+    fontWeight: 800,
+    cursor: "pointer",
+    boxShadow: "0 6px 14px rgba(106, 132, 179, 0.05)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
   },
   countRow: {
     display: "flex",
@@ -3075,33 +3447,6 @@ const styles = {
     borderRadius: 16,
     padding: 14,
     boxShadow: "0 4px 14px rgba(15,23,42,0.04)",
-  },
-  cardContentRow: {
-    display: "grid",
-    gridTemplateColumns: "minmax(0, 1fr) 88px",
-    gap: 12,
-    alignItems: "center",
-  },
-  cardMainCopy: {
-    minWidth: 0,
-  },
-  cardThumbFrame: {
-    width: 88,
-    height: 88,
-    borderRadius: 16,
-    border: "1px solid #dbe3f0",
-    background: "#fff",
-    overflow: "hidden",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    flexShrink: 0,
-  },
-  cardThumbImage: {
-    width: "100%",
-    height: "100%",
-    objectFit: "contain",
-    display: "block",
   },
   kpiLabel: {
     fontSize: 12,
@@ -3154,7 +3499,27 @@ const styles = {
     display: "flex",
     flexDirection: "column",
     gap: 12,
-    paddingBottom: 18,
+    paddingBottom: 6,
+  },
+  partnerPanel: {
+    background: "linear-gradient(180deg, rgba(255,255,255,0.97) 0%, rgba(248,251,255,0.94) 100%)",
+    borderRadius: 24,
+    padding: 16,
+    marginBottom: 14,
+    border: "1px solid #e4eaf5",
+    boxShadow: "0 12px 30px rgba(101, 130, 184, 0.08)",
+  },
+  partnerSectionHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 10,
+    marginBottom: 10,
+  },
+  partnerSectionCount: {
+    fontSize: 13,
+    color: "#6f7fa4",
+    fontWeight: 700,
   },
   partnerGroup: {
     display: "flex",
@@ -3162,8 +3527,8 @@ const styles = {
     gap: 8,
   },
   partnerHeader: {
-    border: "1px solid #dbe3f0",
-    background: "#eef4ff",
+    border: "1px solid #dfe7f5",
+    background: "linear-gradient(180deg, #f7f9ff 0%, #eff4ff 100%)",
     borderRadius: 16,
     padding: "14px 16px",
     cursor: "pointer",
@@ -3171,6 +3536,12 @@ const styles = {
     justifyContent: "space-between",
     alignItems: "center",
     textAlign: "left",
+  },
+  partnerHeaderRight: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    flexShrink: 0,
   },
   partnerTitle: {
     fontSize: 16,
@@ -3181,17 +3552,23 @@ const styles = {
     color: "#475569",
     fontWeight: 700,
   },
+  partnerChevron: {
+    fontSize: 20,
+    lineHeight: 1,
+    color: "#9aa8c7",
+    fontWeight: 700,
+  },
   partnerBody: {
     display: "flex",
     flexDirection: "column",
     gap: 12,
   },
   card: {
-    background: "#fff",
-    borderRadius: 18,
-    border: "1px solid #e5e7eb",
+    background: "linear-gradient(180deg, #ffffff 0%, #fbfcff 100%)",
+    borderRadius: 20,
+    border: "1px solid #e4eaf5",
     overflow: "hidden",
-    boxShadow: "0 6px 20px rgba(15,23,42,0.04)",
+    boxShadow: "0 10px 24px rgba(101, 130, 184, 0.08)",
   },
   cardButton: {
     width: "100%",
@@ -3223,21 +3600,56 @@ const styles = {
   },
   cardTopRow: {
     display: "flex",
-    justifyContent: "space-between",
     alignItems: "flex-start",
     gap: 8,
-    paddingRight: 28,
+    marginBottom: 8,
   },
   cardTopRowInline: {
     display: "flex",
-    justifyContent: "space-between",
     alignItems: "flex-start",
     gap: 8,
+    marginBottom: 8,
+  },
+  cardTitleRow: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: 10,
+  },
+  cardContentRow: {
+    display: "grid",
+    gridTemplateColumns: "minmax(0, 1fr) 84px",
+    gap: 12,
+    alignItems: "center",
+  },
+  cardMainCopy: {
+    minWidth: 0,
   },
   cardTitle: {
     fontSize: 17,
     fontWeight: 800,
     lineHeight: 1.45,
+    color: "#16233d",
+    wordBreak: "keep-all",
+    flex: 1,
+  },
+  cardThumbFrame: {
+    width: 84,
+    height: 84,
+    borderRadius: 16,
+    background: "#f8fbff",
+    border: "1px solid #e4eaf5",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden",
+    boxShadow: "0 8px 16px rgba(106, 132, 179, 0.08)",
+  },
+  cardThumbImage: {
+    width: "100%",
+    height: "100%",
+    objectFit: "contain",
+    mixBlendMode: "multiply",
   },
   cardMeta: {
     marginTop: 6,
@@ -3320,9 +3732,9 @@ const styles = {
     justifyContent: "center",
   },
   bottomSheet: {
-    width: "100%",
-    maxWidth: 760,
-    maxHeight: "78vh",
+      width: "100%",
+      maxWidth: 760,
+      maxHeight: "78vh",
     background: "#fff",
     borderTopLeftRadius: 22,
     borderTopRightRadius: 22,
@@ -3345,10 +3757,37 @@ const styles = {
     marginBottom: 12,
   },
   sheetTitle: {
-    margin: 0,
-    fontSize: 18,
-    fontWeight: 800,
-  },
+      margin: 0,
+      fontSize: 18,
+      fontWeight: 800,
+    },
+  imageRegisterList: {
+      display: "grid",
+      gap: 10,
+      marginTop: 12,
+    },
+  imageRegisterCard: {
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: 12,
+      padding: 14,
+      borderRadius: 18,
+      border: "1px solid #e5eaf5",
+      background: "#ffffff",
+      boxShadow: "0 8px 18px rgba(101, 130, 184, 0.06)",
+    },
+  imageRegisterInfo: {
+      minWidth: 0,
+      flex: 1,
+    },
+  imageRegisterName: {
+      fontSize: 15,
+      fontWeight: 800,
+      color: "#1f2f53",
+      marginBottom: 4,
+      wordBreak: "keep-all",
+    },
   sheetClose: {
     minHeight: 40,
     padding: "0 12px",
@@ -3537,31 +3976,6 @@ const styles = {
     marginTop: 16,
     flexWrap: "wrap",
   },
-  imageRegisterList: {
-    display: "flex",
-    flexDirection: "column",
-    gap: 10,
-    paddingBottom: 12,
-  },
-  imageRegisterCard: {
-    display: "flex",
-    gap: 12,
-    alignItems: "center",
-    border: "1px solid #e5e7eb",
-    borderRadius: 16,
-    background: "#fff",
-    padding: 12,
-  },
-  imageRegisterInfo: {
-    flex: 1,
-    minWidth: 0,
-  },
-  imageRegisterName: {
-    fontSize: 15,
-    fontWeight: 800,
-    lineHeight: 1.4,
-    wordBreak: "break-word",
-  },
   toast: {
     position: "fixed",
     left: "50%",
@@ -3579,3 +3993,4 @@ const styles = {
 };
 
 export default App;
+
