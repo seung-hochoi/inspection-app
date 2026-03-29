@@ -595,6 +595,11 @@ const computeJobKey = (rows) =>
     )
   )}`;
 
+const PENDING_STORAGE_KEY = "inspection_pending_v2";
+const DRAFT_STORAGE_KEY = "inspection_drafts_v2";
+const MAX_SAVE_PARALLEL = 2;
+const RETRY_DELAYS_MS = [800, 2000, 4000];
+
 const fileToBase64 = (file) =>
   new Promise((resolve, reject) => {
     if (!file) {
@@ -629,6 +634,23 @@ const filesToBase64 = async (files) => {
 
   return results;
 };
+
+const delay = (ms) =>
+  new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+
+const createUploadedPhotoItem = (item) => ({
+  __uploaded: true,
+  fileId: String(item?.fileId || "").trim(),
+  viewUrl: String(item?.viewUrl || "").trim(),
+  driveUrl: String(item?.driveUrl || "").trim(),
+  fileName: String(item?.fileName || "").trim(),
+  name: String(item?.fileName || item?.name || "").trim(),
+});
+
+const isUploadedPhotoItem = (item) =>
+  !!item && typeof item === "object" && item.__uploaded === true && !!item.fileId;
 
 const formatDateTime = (value) => {
   if (!value) return "-";
@@ -823,6 +845,11 @@ function DraftPhotoPreviewItem({ file, index, onRemove, styles }) {
       return undefined;
     }
 
+    if (isUploadedPhotoItem(file)) {
+      setPreviewUrl(file.viewUrl || "");
+      return undefined;
+    }
+
     const nextUrl = URL.createObjectURL(file);
     setPreviewUrl(nextUrl);
 
@@ -834,7 +861,7 @@ function DraftPhotoPreviewItem({ file, index, onRemove, styles }) {
   return (
     <div style={styles.draftPhotoCard}>
       {previewUrl ? (
-        <img src={previewUrl} alt={file?.name || `선택 사진 ${index + 1}`} style={styles.draftPhotoImage} />
+        <img src={previewUrl} alt={file?.fileName || file?.name || `선택 사진 ${index + 1}`} style={styles.draftPhotoImage} />
       ) : (
         <div style={styles.photoThumbEmpty}>미리보기 불가</div>
       )}
@@ -930,7 +957,12 @@ function App() {
   const scannerControlsRef = useRef(null);
   const scannerTrackRef = useRef(null);
   const scannerStatusTimerRef = useRef(null);
+  const draftsRef = useRef({});
   const pendingRef = useRef({});
+  const saveQueueRef = useRef({});
+  const uploadQueueRef = useRef({});
+  const retryMapRef = useRef({});
+  const activeSaveCountRef = useRef(0);
   const savingRef = useRef(false);
   const flushTimerRef = useRef(null);
 
@@ -962,6 +994,127 @@ function App() {
       centerName || "",
     ].join("||");
 
+  const getStatusLabel = (status) => {
+    if (status === "pending") return "저장대기";
+    if (status === "uploading") return "업로드중";
+    if (status === "saving") return "저장확인중";
+    if (status === "retrying") return "재전송중";
+    if (status === "saved") return "저장완료";
+    if (status === "failed") return "확인필요";
+    return "";
+  };
+
+  const serializePhotoItems = useCallback(
+    (items) =>
+      (Array.isArray(items) ? items : [])
+        .filter(isUploadedPhotoItem)
+        .map((item) => createUploadedPhotoItem(item)),
+    []
+  );
+
+  const persistDrafts = useCallback((nextDrafts) => {
+    try {
+      const serializable = Object.fromEntries(
+        Object.entries(nextDrafts || {}).map(([key, value]) => [
+          key,
+          {
+            ...value,
+            photoFiles: serializePhotoItems(value?.photoFiles),
+            photoNames: Array.isArray(value?.photoNames) ? value.photoNames : [],
+          },
+        ])
+      );
+      window.localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(serializable));
+    } catch (_) {}
+  }, [serializePhotoItems]);
+
+  const persistPending = useCallback((nextPending) => {
+    try {
+      const serializable = Object.fromEntries(
+        Object.entries(nextPending || {}).map(([key, value]) => [
+          key,
+          {
+            ...value,
+            photoFiles: undefined,
+            photoItems: serializePhotoItems(value?.photoItems || value?.photoFiles),
+          },
+        ])
+      );
+      window.localStorage.setItem(PENDING_STORAGE_KEY, JSON.stringify(serializable));
+    } catch (_) {}
+  }, [serializePhotoItems]);
+
+  const restoreLocalState = useCallback(() => {
+    try {
+      const rawDrafts = window.localStorage.getItem(DRAFT_STORAGE_KEY);
+      if (rawDrafts) {
+        const parsedDrafts = JSON.parse(rawDrafts);
+        setDrafts(parsedDrafts || {});
+      }
+    } catch (_) {}
+
+    try {
+      const rawPending = window.localStorage.getItem(PENDING_STORAGE_KEY);
+      if (rawPending) {
+        const parsedPending = JSON.parse(rawPending) || {};
+        setPendingMap(parsedPending);
+        pendingRef.current = parsedPending;
+        setItemStatusMap((prev) => {
+          const next = { ...prev };
+          Object.keys(parsedPending).forEach((key) => {
+            next[key] = "pending";
+          });
+          return next;
+        });
+      }
+    } catch (_) {}
+  }, []);
+
+  useEffect(() => {
+    persistDrafts(drafts);
+    draftsRef.current = drafts;
+  }, [drafts, persistDrafts]);
+
+  const runQueuedTask = useCallback((queueRef, itemKey, task) => {
+    const previous = queueRef.current[itemKey] || Promise.resolve();
+    const next = previous.catch(() => undefined).then(task);
+    queueRef.current[itemKey] = next.finally(() => {
+      if (queueRef.current[itemKey] === next) {
+        delete queueRef.current[itemKey];
+      }
+    });
+    return queueRef.current[itemKey];
+  }, []);
+
+  const runWithSaveSlot = useCallback(async (task) => {
+    while (activeSaveCountRef.current >= MAX_SAVE_PARALLEL) {
+      await delay(120);
+    }
+    activeSaveCountRef.current += 1;
+    try {
+      return await task();
+    } finally {
+      activeSaveCountRef.current = Math.max(0, activeSaveCountRef.current - 1);
+    }
+  }, []);
+
+  const runWithRetry = useCallback(async (task, onRetry) => {
+    let lastError = null;
+    for (let attempt = 0; attempt < RETRY_DELAYS_MS.length; attempt += 1) {
+      try {
+        return await task(attempt);
+      } catch (error) {
+        lastError = error;
+        if (attempt === RETRY_DELAYS_MS.length - 1) break;
+        if (typeof onRetry === "function") {
+          await onRetry(attempt + 1, error);
+        }
+        await delay(RETRY_DELAYS_MS[attempt]);
+      }
+    }
+    throw lastError || new Error("request failed");
+  }, []);
+
   const setItemStatuses = (keys, status) => {
     if (!keys.length) return;
     setItemStatusMap((prev) => {
@@ -973,7 +1126,7 @@ function App() {
     });
   };
 
-  const removePendingKeys = (keys) => {
+  const removePendingKeys = useCallback((keys) => {
     if (!keys.length) return;
     setPendingMap((prev) => {
       const next = { ...prev };
@@ -981,9 +1134,10 @@ function App() {
         delete next[key];
       });
       pendingRef.current = next;
+      persistPending(next);
       return next;
     });
-  };
+  }, [persistPending]);
 
   const upsertPendingEntries = useCallback((entries) => {
     if (!entries.length) return;
@@ -1001,10 +1155,10 @@ function App() {
           merged.교환수량 = prevEntry.교환수량 || 0;
           merged.센터명 = prevEntry.센터명 || merged.센터명 || "";
           merged.비고 = prevEntry.비고 || merged.비고 || "";
-          merged.photoFiles =
-            (Array.isArray(entry.photoFiles) && entry.photoFiles.length
-              ? entry.photoFiles
-              : prevEntry.photoFiles) || [];
+          merged.photoItems =
+            (Array.isArray(entry.photoItems) && entry.photoItems.length
+              ? entry.photoItems
+              : prevEntry.photoItems) || [];
         }
 
         if (entry.type === "return" || entry.type === "exchange") {
@@ -1016,22 +1170,25 @@ function App() {
           merged.회송수량 = parseQty(entry.회송수량);
           merged.교환수량 = parseQty(entry.교환수량);
           merged.비고 = entry.비고 || prevEntry.비고 || "";
-          merged.photoFiles = [
-            ...(Array.isArray(prevEntry.photoFiles) ? prevEntry.photoFiles : []),
-            ...(Array.isArray(entry.photoFiles) ? entry.photoFiles : []),
-          ];
+          merged.photoItems = serializePhotoItems(
+            [
+              ...(Array.isArray(prevEntry.photoItems) ? prevEntry.photoItems : []),
+              ...(Array.isArray(entry.photoItems) ? entry.photoItems : []),
+            ]
+          );
         }
 
         next[entry.key] = merged;
       });
       pendingRef.current = next;
+      persistPending(next);
       return next;
     });
     setItemStatuses(
       entries.map((entry) => entry.key),
       "pending"
     );
-  }, []);
+  }, [persistPending, serializePhotoItems]);
 
   const stopScanner = useCallback(() => {
     if (scannerStatusTimerRef.current) {
@@ -1388,6 +1545,10 @@ function App() {
     loadInspectionRows();
   }, [loadBootstrap, loadHistoryRows, loadInspectionRows]);
 
+  useEffect(() => {
+    restoreLocalState();
+  }, [restoreLocalState]);
+
   const filteredRows = useMemo(() => {
     return rows.filter((row) => {
       const code = normalizeProductCode(row.__productCode);
@@ -1631,10 +1792,12 @@ function App() {
 
   const buildInspectionPendingEntry = useCallback((product, nextDraft = {}) => {
     const entityKey = makeEntityKey(currentJob?.job_key, product.productCode, product.partner);
-    const photoFiles = Array.isArray(nextDraft.photoFiles) ? nextDraft.photoFiles : [];
+    const draftKey = `inspection||${product.partner}||${product.productCode}`;
+    const photoItems = serializePhotoItems(nextDraft.photoFiles);
 
     return {
       key: entityKey,
+      draftKey,
       type: "inspection",
       작업기준일또는CSV식별값: currentJob?.job_key || "",
       작성일시: new Date().toISOString(),
@@ -1650,10 +1813,11 @@ function App() {
       비고: pendingMap[entityKey]?.비고 || "",
       행사여부: product.eventInfo?.행사여부 || "",
       행사명: product.eventInfo?.행사명 || "",
-      photoFiles,
-      photoNames: photoFiles.map((file) => file.name),
+      photoItems,
+      사진파일ID목록: photoItems.map((item) => item.fileId).join("\n"),
+      photoNames: photoItems.map((item) => item.fileName || item.name),
     };
-  }, [currentJob?.job_key, pendingMap]);
+  }, [currentJob?.job_key, pendingMap, serializePhotoItems]);
 
   const buildMovementEntries = useCallback((product, centerName, nextDraft = {}) => {
     const centerInfo = product.centers.find((item) => item.center === centerName);
@@ -1664,12 +1828,13 @@ function App() {
     const returnQty = parseQty(nextDraft.returnQty);
     const exchangeQty = parseQty(nextDraft.exchangeQty);
     const memo = String(nextDraft.memo || "").trim();
-    const photoFiles = Array.isArray(nextDraft.photoFiles) ? nextDraft.photoFiles : [];
+    const photoItems = serializePhotoItems(nextDraft.photoFiles);
     const entries = [];
 
     if (returnQty > 0) {
       entries.push({
         key: makeMovementPendingKey("RETURN", currentJob.job_key, product.productCode, product.partner, centerName),
+        draftKey: `return||${product.partner}||${product.productCode}||${centerName}`,
         type: "movement",
         movementType: "RETURN",
         작업기준일또는CSV식별값: currentJob.job_key,
@@ -1686,8 +1851,9 @@ function App() {
         교환수량: 0,
         qty: returnQty,
         비고: memo,
-        photoFiles,
-        photoNames: photoFiles.map((file) => file.name),
+        photoItems,
+        사진파일ID목록: photoItems.map((item) => item.fileId).join("\n"),
+        photoNames: photoItems.map((item) => item.fileName || item.name),
         전체발주수량: product.totalQty || 0,
       });
     }
@@ -1695,6 +1861,7 @@ function App() {
     if (exchangeQty > 0) {
       entries.push({
         key: makeMovementPendingKey("EXCHANGE", currentJob.job_key, product.productCode, product.partner, centerName),
+        draftKey: `return||${product.partner}||${product.productCode}||${centerName}`,
         type: "movement",
         movementType: "EXCHANGE",
         작업기준일또는CSV식별값: currentJob.job_key,
@@ -1711,14 +1878,15 @@ function App() {
         교환수량: exchangeQty,
         qty: exchangeQty,
         비고: memo,
-        photoFiles,
-        photoNames: photoFiles.map((file) => file.name),
+        photoItems,
+        사진파일ID목록: photoItems.map((item) => item.fileId).join("\n"),
+        photoNames: photoItems.map((item) => item.fileName || item.name),
         전체발주수량: product.totalQty || 0,
       });
     }
 
     return entries;
-  }, [currentJob?.job_key]);
+  }, [currentJob?.job_key, serializePhotoItems]);
 
   const removeDraftPhoto = useCallback((draftKey, index) => {
     const currentDraft = drafts[draftKey] || {};
@@ -1737,6 +1905,69 @@ function App() {
       [draftKey]: nextDraft,
     }));
   }, [drafts]);
+
+  const uploadDraftPhotos = useCallback(async ({ draftKey, itemKey, baseName, files }) => {
+    const list = Array.isArray(files) ? files : [];
+    if (!list.length) return;
+
+    await runQueuedTask(uploadQueueRef, itemKey, async () => {
+      setItemStatuses([itemKey], "uploading");
+
+      try {
+        const encodedPhotos = await filesToBase64(list);
+        const result = await runWithRetry(
+          async () => {
+            const response = await fetch(SCRIPT_URL, {
+              method: "POST",
+              headers: { "Content-Type": "text/plain;charset=utf-8" },
+              body: JSON.stringify({
+                action: "uploadPhotos",
+                payload: {
+                  itemKey,
+                  productName: baseName,
+                  photos: encodedPhotos,
+                },
+              }),
+            });
+            const payload = await response.json();
+            if (!response.ok || payload.ok === false) {
+              throw new Error(payload.message || "사진 업로드 실패");
+            }
+            return payload;
+          },
+          async () => {
+            setItemStatuses([itemKey], "retrying");
+          }
+        );
+
+        const uploadedPhotos = (Array.isArray(result?.data?.photos) ? result.data.photos : []).map(createUploadedPhotoItem);
+        setDrafts((prev) => {
+          const currentDraft = prev[draftKey] || {};
+          const previousPhotos = serializePhotoItems(currentDraft.photoFiles);
+          const nextPhotos = [...previousPhotos, ...uploadedPhotos];
+          const nextDraft = {
+            ...currentDraft,
+            photoFiles: nextPhotos,
+            photoNames: nextPhotos.map((photo) => photo.fileName || photo.name),
+          };
+          return {
+            ...prev,
+            [draftKey]: nextDraft,
+          };
+        });
+        setItemStatuses([itemKey], "pending");
+      } catch (err) {
+        retryMapRef.current[itemKey] = {
+          kind: "upload",
+          draftKey,
+          itemKey,
+          baseName,
+        };
+        setItemStatuses([itemKey], "failed");
+        setError(err.message || "사진 업로드 실패");
+      }
+    });
+  }, [runQueuedTask, runWithRetry, serializePhotoItems]);
 
   const cancelMovementEventByRow = async (rowNumber) => {
     const response = await fetch(SCRIPT_URL, {
@@ -1835,94 +2066,106 @@ function App() {
     const rows = Object.values(pendingRef.current || {});
     if (!rows.length || savingRef.current) return;
 
-    const targetKeys = rows.map((row) => row.key);
-
     clearFlushTimer();
     savingRef.current = true;
     setSaving(true);
-    setItemStatuses(targetKeys, "saving");
 
     try {
-      const requestRows = [];
+      const tasks = rows.map((row) =>
+        runQueuedTask(saveQueueRef, row.key, () =>
+          runWithSaveSlot(async () => {
+            const { key, draftKey, photoItems, ...rest } = row;
+            const statusKeys = [key, draftKey].filter(Boolean);
 
-      for (const row of rows) {
-        const { key, photoFile, photoFiles, ...rest } = row;
-        let photosPayload = [];
+            try {
+              if (draftKey && uploadQueueRef.current[draftKey]) {
+                await uploadQueueRef.current[draftKey];
+              }
+              const latestDraft = draftKey ? draftsRef.current[draftKey] || {} : {};
+              const latestPhotoItems = serializePhotoItems(latestDraft.photoFiles);
+              setItemStatuses(statusKeys, "saving");
+              const response = await runWithRetry(
+                async () => {
+                  const saveResponse = await fetch(SCRIPT_URL, {
+                    method: "POST",
+                    headers: { "Content-Type": "text/plain;charset=utf-8" },
+                    body: JSON.stringify({
+                      action: "saveBatch",
+                      rows: [
+                        {
+                          ...rest,
+                          사진파일ID목록: (latestPhotoItems.length ? latestPhotoItems : Array.isArray(photoItems) ? photoItems : [])
+                            .map((item) => item.fileId)
+                            .join("\n")
+                            || rest.사진파일ID목록
+                            || "",
+                          photoItems: latestPhotoItems.length ? latestPhotoItems : photoItems,
+                          photoNames: (latestPhotoItems.length ? latestPhotoItems : Array.isArray(photoItems) ? photoItems : [])
+                            .map((item) => item.fileName || item.name),
+                        },
+                      ],
+                    }),
+                  });
+                  const payload = await saveResponse.json();
+                  if (!saveResponse.ok || payload.ok === false) {
+                    throw new Error(payload.message || "저장 실패");
+                  }
+                  return payload;
+                },
+                async () => {
+                  setItemStatuses(statusKeys, "retrying");
+                }
+              );
 
-        if (Array.isArray(photoFiles) && photoFiles.length) {
-          photosPayload = await filesToBase64(photoFiles);
-        } else if (photoFile) {
-          const singlePhoto = await fileToBase64(photoFile);
-          photosPayload = singlePhoto ? [singlePhoto] : [];
-        }
+              removePendingKeys([key]);
+              retryMapRef.current[key] = null;
+              setItemStatuses(statusKeys, "saved");
+              if (draftKey) {
+                setDrafts((prev) => ({
+                  ...prev,
+                  [draftKey]: {
+                    ...(prev[draftKey] || {}),
+                    photoFiles: [],
+                    photoNames: [],
+                  },
+                }));
+              }
 
-        requestRows.push({
-          ...rest,
-          사진들: photosPayload,
-        });
-      }
+              if (Array.isArray(response.records)) {
+                const nextRows = [...response.records].sort((a, b) =>
+                  String(b.작성일시 || "").localeCompare(String(a.작성일시 || ""), "ko")
+                );
+                setHistoryRows(nextRows);
+              }
 
-      console.log(
-        "[flushPending] requestRows",
-        requestRows.map((row) => ({
-          type: row.type,
-          movementType: row.movementType || "",
-          jobKey: row.작업기준일또는CSV식별값,
-          productCode: row.상품코드,
-          partnerName: row.협력사명,
-          centerName: row.센터명,
-          inspectionQty: row.검품수량,
-          returnQty: row.회송수량,
-          exchangeQty: row.교환수량,
-          totalQty: row.전체발주수량,
-          orderQty: row.발주수량,
-          photosCount: Array.isArray(row.사진들) ? row.사진들.length : 0,
-        }))
+              if (Array.isArray(response.inspectionRowsSnapshot)) {
+                setInspectionRows(response.inspectionRowsSnapshot);
+              } else if (Array.isArray(response.inspectionRows)) {
+                setInspectionRows(response.inspectionRows);
+              }
+
+              if (response.summary) {
+                setDashboardSummary(response.summary);
+              }
+
+              setToast("저장 완료");
+            } catch (err) {
+              retryMapRef.current[key] = row;
+              setItemStatuses(statusKeys, "failed");
+              setError(err.message || "저장 실패");
+            }
+          })
+        )
       );
 
-      const response = await fetch(SCRIPT_URL, {
-        method: "POST",
-        headers: { "Content-Type": "text/plain;charset=utf-8" },
-        body: JSON.stringify({
-          action: "saveBatch",
-          rows: requestRows,
-        }),
-      });
-
-      const result = await response.json();
-      if (!response.ok || result.ok === false) {
-        throw new Error(result.message || "배치 저장 실패");
-      }
-
-      removePendingKeys(targetKeys);
-      setItemStatuses(targetKeys, "saved");
-
-      if (Array.isArray(result.records)) {
-        const nextRows = [...result.records].sort((a, b) =>
-          String(b.작성일시 || "").localeCompare(String(a.작성일시 || ""), "ko")
-        );
-        setHistoryRows(nextRows);
-      }
-
-      if (Array.isArray(result.inspectionRowsSnapshot)) {
-        setInspectionRows(result.inspectionRowsSnapshot);
-      } else if (Array.isArray(result.inspectionRows)) {
-        setInspectionRows(result.inspectionRows);
-      }
-
-      if (result.summary) {
-        setDashboardSummary(result.summary);
-      }
-
-      setToast("저장 완료");
+      await Promise.allSettled(tasks);
     } catch (err) {
-      setItemStatuses(targetKeys, "failed");
-      setError(err.message || "배치 저장 실패");
+      setError(err.message || "저장 처리 실패");
     } finally {
       savingRef.current = false;
       setSaving(false);
     }
-  }, [clearFlushTimer]);
+  }, [clearFlushTimer, removePendingKeys, runQueuedTask, runWithRetry, runWithSaveSlot, serializePhotoItems]);
 
   useEffect(() => {
     pendingRef.current = pendingMap;
@@ -1975,19 +2218,11 @@ function App() {
       exchangeQty: nextEntry.교환수량,
       totalQty: nextEntry.전체발주수량,
       orderQty: nextEntry.발주수량,
-      photosCount: Array.isArray(nextEntry.photoFiles) ? nextEntry.photoFiles.length : 0,
+      photosCount: Array.isArray(nextEntry.photoItems) ? nextEntry.photoItems.length : 0,
     });
 
     upsertPendingEntries([nextEntry]);
     flushPending();
-    setDrafts((prev) => ({
-      ...prev,
-      [draftKey]: {
-        ...prev[draftKey],
-        photoFiles: [],
-        photoNames: [],
-      },
-    }));
     setToast("저장되었습니다.");
   };
 
@@ -2029,22 +2264,12 @@ function App() {
         exchangeQty: entry.교환수량,
         totalQty: entry.전체발주수량,
         orderQty: entry.발주수량,
-        photosCount: Array.isArray(entry.photoFiles) ? entry.photoFiles.length : 0,
+        photosCount: Array.isArray(entry.photoItems) ? entry.photoItems.length : 0,
       }))
     );
 
     upsertPendingEntries(movementEntries);
     flushPending();
-    setDrafts((prev) => ({
-      ...prev,
-      [draftKey]: {
-        returnQty: "",
-        exchangeQty: "",
-        memo: "",
-        photoFiles: [],
-        photoNames: [],
-      },
-    }));
     setToast("저장되었습니다.");
   };
 
@@ -2095,6 +2320,19 @@ function App() {
       const result = await response.json();
       if (!response.ok || result.ok === false) {
         throw new Error(result.message || "ZIP 다운로드 실패");
+      }
+
+      if (result.downloadUrl) {
+        const link = document.createElement("a");
+        link.href = result.downloadUrl;
+        link.target = "_blank";
+        link.rel = "noreferrer";
+        link.download = result.fileName || "";
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setToast("ZIP 다운로드 준비 완료");
+        return;
       }
 
       if (!result.zipBase64) {
@@ -2638,12 +2876,12 @@ function App() {
                     const inspectionPreviewText = `현재 ${inspectionSaved.inspectionQty}개, 입력 ${inspectionInputQty}개, 저장 후 ${inspectionInputQty || inspectionSaved.inspectionQty}개`;
                     const returnPreviewText = `현재 ${returnSavedQty}개, 입력 ${returnInputQty}개, 저장 후 누적 ${returnSavedQty + returnInputQty}개`;
                     const exchangePreviewText = `현재 ${exchangeSavedQty}개, 입력 ${exchangeInputQty}개, 저장 후 누적 ${exchangeSavedQty + exchangeInputQty}개`;
-                    const inspectionStatus = itemStatusMap[entityKey];
-                    const returnStatus = itemStatusMap[entityKey];
-                    const exchangeStatus = itemStatusMap[entityKey];
+                    const inspectionStatus = itemStatusMap[draftKey] || itemStatusMap[entityKey];
+                    const movementStatus = itemStatusMap[draftKey];
                     const actionStatus = mode === "inspection"
                       ? inspectionStatus
-                      : returnStatus || exchangeStatus;
+                      : movementStatus;
+                    const actionStatusLabel = getStatusLabel(actionStatus);
                     const happycallBadges = [
                       ["1d", "전일"],
                       ["7d", "일주일"],
@@ -2729,21 +2967,12 @@ function App() {
                                 multiple
                                 onChange={(e) => {
                                   const files = Array.from(e.target.files || []);
-                                  const previousPhotoFiles = Array.isArray(draft.photoFiles) ? draft.photoFiles : [];
-                                  const previousPhotoNames = Array.isArray(draft.photoNames) ? draft.photoNames : [];
-                                  const nextPhotoFiles = [...previousPhotoFiles, ...files];
-                                  const nextPhotoNames = [...previousPhotoNames, ...files.map((file) => file.name)];
-                                  const nextDraft = {
-                                    ...draft,
-                                    photoFiles: nextPhotoFiles,
-                                    photoNames: nextPhotoNames,
-                                  };
-
-                                  setDrafts((prev) => ({
-                                    ...prev,
-                                    [draftKey]: nextDraft,
-                                  }));
-
+                                  uploadDraftPhotos({
+                                    draftKey,
+                                    itemKey: entityKey,
+                                    baseName: product.productName || "검품",
+                                    files,
+                                  });
                                   e.target.value = "";
                                 }}
                                 style={styles.fileInput}
@@ -2755,6 +2984,9 @@ function App() {
                                 }
                                 styles={styles}
                               />
+                              {actionStatusLabel ? (
+                                <div style={styles.inputHintText}>{actionStatusLabel}</div>
+                              ) : null}
                             </div>
                             <button
                               type="button"
@@ -2920,21 +3152,12 @@ function App() {
                                     multiple
                                     onChange={(e) => {
                                       const files = Array.from(e.target.files || []);
-                                      const previousPhotoFiles = Array.isArray(draft.photoFiles) ? draft.photoFiles : [];
-                                      const previousPhotoNames = Array.isArray(draft.photoNames) ? draft.photoNames : [];
-                                      const nextPhotoFiles = [...previousPhotoFiles, ...files];
-                                      const nextPhotoNames = [...previousPhotoNames, ...files.map((file) => file.name)];
-                                      const nextDraft = {
-                                        ...draft,
-                                        photoFiles: nextPhotoFiles,
-                                        photoNames: nextPhotoNames,
-                                      };
-
-                                      setDrafts((prev) => ({
-                                        ...prev,
-                                        [draftKey]: nextDraft,
-                                      }));
-
+                                      uploadDraftPhotos({
+                                        draftKey,
+                                        itemKey: draftKey,
+                                        baseName: product.productName || "불량",
+                                        files,
+                                      });
                                       e.target.value = "";
                                     }}
                                     style={styles.fileInput}
@@ -2946,6 +3169,9 @@ function App() {
                                     }
                                     styles={styles}
                                   />
+                                  {actionStatusLabel ? (
+                                    <div style={styles.inputHintText}>{actionStatusLabel}</div>
+                                  ) : null}
                                 </div>
 
                                 <button
