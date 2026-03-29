@@ -2399,7 +2399,11 @@ function createPhotoZip_(payload) {
     if (!photos.length) return;
 
     if (mode === "inspection") {
-      if (parseNumber_(record["검품수량"]) <= 0) return;
+      var hasInspectionPhoto =
+        !!String(record["사진링크"] || "").trim() ||
+        !!String(record["사진링크목록"] || "").trim() ||
+        !!String(record["사진파일ID목록"] || "").trim();
+      if (!hasInspectionPhoto) return;
     } else {
     var hasMovement = isMovementRecord_(record);
     if (mode === "movement" && !hasMovement) return;
