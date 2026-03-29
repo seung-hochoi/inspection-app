@@ -78,66 +78,6 @@ const getHappycallProductMetrics = (analytics, product) => {
   return result;
 };
 
-const isClassifiedHappycallProduct = (item) => {
-  const name = String(item?.productName || "").trim();
-  return !!name && name !== "미분류상품";
-};
-
-const buildVisibleHappycallRanks = (analytics) => {
-  const periods = analytics?.periods || {};
-  const rankMap = {};
-
-  Object.entries(periods).forEach(([periodKey, periodValue]) => {
-    (periodValue?.topProducts || [])
-      .filter(isClassifiedHappycallProduct)
-      .slice(0, 10)
-      .forEach((item, index) => {
-        const payload = {
-          rank: index + 1,
-          count: parseQty(item?.count || 0),
-          share: Number(item?.share || 0),
-          reason: item?.topReason || "",
-        };
-
-        [
-          `sku::${makeSkuKey(item?.productCode, item?.partnerName)}`,
-          `name::${normalizeHappycallLookupText(item?.productName)}||${normalizeHappycallLookupText(item?.partnerName)}`,
-          `code::${normalizeProductCode(item?.productCode || "")}`,
-          `nameOnly::${normalizeHappycallLookupText(item?.productName)}`,
-        ]
-          .filter(Boolean)
-          .forEach((key) => {
-            if (!rankMap[key]) rankMap[key] = {};
-            rankMap[key][periodKey] = payload;
-          });
-      });
-  });
-
-  return rankMap;
-};
-
-const getHappycallProductRanks = (rankMap, product) => {
-  const keys = [
-    `sku::${makeSkuKey(product?.productCode, product?.partner)}`,
-    `name::${normalizeHappycallLookupText(product?.productName)}||${normalizeHappycallLookupText(product?.partner)}`,
-    `code::${normalizeProductCode(product?.productCode || "")}`,
-    `nameOnly::${normalizeHappycallLookupText(product?.productName)}`,
-  ];
-
-  const result = {};
-
-  ["1d", "7d", "30d"].forEach((periodKey) => {
-    for (const key of keys) {
-      if (key && rankMap[key]?.[periodKey]) {
-        result[periodKey] = rankMap[key][periodKey];
-        break;
-      }
-    }
-  });
-
-  return result;
-};
-
 const formatPercent = (value) => {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? `${(numeric * 100).toFixed(1)}%` : "-";
@@ -161,6 +101,178 @@ const getTopMedal = (rank) => {
   if (rank === 2) return "🥈";
   if (rank === 3) return "🥉";
   return null;
+};
+
+const isClassifiedHappycallProduct = (item) => {
+  const name = String(item?.productName || "").trim();
+  return !!name && name !== "미분류상품";
+};
+
+const buildVisibleHappycallRanks = (analytics) => {
+  const periods = analytics?.periods || {};
+  const rankMap = {};
+
+  Object.entries(periods).forEach(([periodKey, periodValue]) => {
+    (periodValue?.topProducts || [])
+      .filter(isClassifiedHappycallProduct)
+      .slice(0, 10)
+      .forEach((item, index) => {
+        const payload = {
+          rank: index + 1,
+          count: parseQty(item?.count || 0),
+          share: Number(item?.share || 0),
+        };
+        rankMap[`${item?.partnerName || ""}||${item?.productCode || ""}`] = {
+          ...(rankMap[`${item?.partnerName || ""}||${item?.productCode || ""}`] || {}),
+          [periodKey]: payload,
+        };
+      });
+  });
+
+  return rankMap;
+};
+
+const PRODUCT_IMAGE_MAP = [
+  {
+    match: (product) =>
+      /델몬트/i.test(product.partner || "") &&
+      /킹사이즈/.test(product.productName || ""),
+    src: "/assets/products/delmonte-king-banana.jpeg",
+  },
+  {
+    match: (product) =>
+      /(돌코리아|dole)/i.test(product.partner || "") &&
+      /스위티오/.test(product.productName || "") &&
+      /2입/.test(product.productName || ""),
+    src: "/assets/products/dole-sweetio-banana-2.jpeg",
+  },
+  {
+    match: (product) =>
+      /(돌코리아|dole)/i.test(product.partner || "") &&
+      /스위티오/.test(product.productName || ""),
+    src: "/assets/products/dole-sweetio-banana-scene.jpeg",
+  },
+  {
+    match: (product) =>
+      /델몬트/i.test(product.partner || "") &&
+      /프리미엄/.test(product.productName || ""),
+    src: "/assets/products/delmonte-banana-pack.png",
+  },
+  {
+    match: (product) =>
+      /델몬트/i.test(product.partner || "") &&
+      /바나나/.test(product.productName || ""),
+    src: "/assets/products/delmonte-banana-bag.jpeg",
+  },
+  {
+    match: (product) => /바나나/.test(product.productName || ""),
+    src: "/assets/products/banana-generic.jpeg",
+  },
+  {
+    match: (product) => /오이맛고추|한끼딱오이맛고추/.test(product.productName || ""),
+    src: "/assets/products/cucumber-spicy.jpeg",
+  },
+  {
+    match: (product) => /청양고추/.test(product.productName || ""),
+    src: "/assets/products/green-chili-pack.jpeg",
+  },
+  {
+    match: (product) => /고추/.test(product.productName || ""),
+    src: "/assets/products/pepper-hot-pack.jpeg",
+  },
+  {
+    match: (product) => /천안오이|한끼딱오이|오이/.test(product.productName || ""),
+    src: "/assets/products/cucumber-plain.jpeg",
+  },
+  {
+    match: (product) => /애호박|주키니/.test(product.productName || ""),
+    src: "/assets/products/aehobak-single.jpeg",
+  },
+  {
+    match: (product) => /손질대파|대파/.test(product.productName || ""),
+    src: "/assets/products/green-onion-bundle.jpeg",
+  },
+  {
+    match: (product) => /부추/.test(product.productName || ""),
+    src: "/assets/products/chives-bag.jpeg",
+  },
+  {
+    match: (product) => /달래/.test(product.productName || ""),
+    src: "/assets/products/dalrae-bag.jpeg",
+  },
+  {
+    match: (product) => /냉이/.test(product.productName || ""),
+    src: "/assets/products/shepherds-purse-bag.jpeg",
+  },
+  {
+    match: (product) => /참나물/.test(product.productName || ""),
+    src: "/assets/products/chamnamul-bag.jpeg",
+  },
+  {
+    match: (product) => /깻잎|추부깻잎/.test(product.productName || ""),
+    src: "/assets/products/perilla-pack.jpeg",
+  },
+  {
+    match: (product) => /상추|쌈채소/.test(product.productName || ""),
+    src: "/assets/products/ssam-pack.jpeg",
+  },
+  {
+    match: (product) => /꽃상추/.test(product.productName || ""),
+    src: "/assets/products/red-lettuce-pack.jpeg",
+  },
+  {
+    match: (product) => /시금치/.test(product.productName || ""),
+    src: "/assets/products/spinach-bag.jpeg",
+  },
+  {
+    match: (product) => /브로콜리/.test(product.productName || ""),
+    src: "/assets/products/broccoli.jpeg",
+  },
+  {
+    match: (product) => /양배추/.test(product.productName || ""),
+    src: "/assets/products/cabbage-half.jpeg",
+  },
+  {
+    match: (product) => /양파/.test(product.productName || ""),
+    src: "/assets/products/onion-single.jpeg",
+  },
+  {
+    match: (product) => /마늘/.test(product.productName || ""),
+    src: "/assets/products/garlic-bag.jpeg",
+  },
+  {
+    match: (product) => /새송이버섯/.test(product.productName || ""),
+    src: "/assets/products/mushroom-king-oyster.jpeg",
+  },
+  {
+    match: (product) => /참타리버섯|참타리/.test(product.productName || ""),
+    src: "/assets/products/mushroom-king-oyster-bag.jpeg",
+  },
+  {
+    match: (product) => /팽이/.test(product.productName || ""),
+    src: "/assets/products/enoki-pack.jpeg",
+  },
+  {
+    match: (product) => /고구마|꿀밤고구마|호박고구마/.test(product.productName || ""),
+    src: "/assets/products/sweetpotato-pink-bag.jpeg",
+  },
+  {
+    match: (product) => /감자/.test(product.productName || ""),
+    src: "/assets/products/pumpkin-sweetpotato-bag.jpeg",
+  },
+  {
+    match: (product) => /연어/.test(product.productName || ""),
+    src: "/assets/products/salmon-pack.jpeg",
+  },
+  {
+    match: (product) => /목심|삼겹|한돈|돼지/.test(product.productName || ""),
+    src: "/assets/products/pork-neck-pack.jpeg",
+  },
+];
+
+const getProductImageSrc = (product) => {
+  const matched = PRODUCT_IMAGE_MAP.find((entry) => entry.match(product || {}));
+  return matched?.src || "";
 };
 
 const getValue = (row, candidates) => {
@@ -1060,8 +1172,6 @@ function App() {
     });
   }, [rows, excludedProductCodes, excludedPairKeys]);
 
-  const visibleHappycallRankMap = useMemo(() => buildVisibleHappycallRanks(happycallAnalytics), [happycallAnalytics]);
-
   const groupedPartners = useMemo(() => {
     const keyword = normalizeText(search);
     const map = new Map();
@@ -1121,17 +1231,50 @@ function App() {
       centerInfo.rows.push(row);
     });
 
+    const allProducts = Array.from(map.values()).flat();
+    const rankMaps = {
+      "1d": {},
+      "7d": {},
+      "30d": {},
+    };
+
+    Object.keys(rankMaps).forEach((periodKey) => {
+      allProducts
+        .filter((product) => parseQty(product.happycallMetrics?.[periodKey]?.count) > 0)
+        .sort((a, b) => {
+          const countDiff =
+            parseQty(b.happycallMetrics?.[periodKey]?.count) - parseQty(a.happycallMetrics?.[periodKey]?.count);
+          if (countDiff !== 0) return countDiff;
+          return String(a.productName || "").localeCompare(String(b.productName || ""), "ko");
+        })
+        .slice(0, 5)
+        .forEach((product, index) => {
+          rankMaps[periodKey][`${product.partner}||${product.productCode}`] = {
+            rank: index + 1,
+            count: parseQty(product.happycallMetrics?.[periodKey]?.count),
+            share: Number(product.happycallMetrics?.[periodKey]?.share || 0),
+          };
+        });
+    });
+
+    const visibleHappycallRankMap = buildVisibleHappycallRanks(happycallAnalytics);
+
     return Array.from(map.entries())
       .sort((a, b) => a[0].localeCompare(b[0], "ko"))
       .map(([partner, products]) => ({
         partner,
         products: products.map((product) => ({
           ...product,
-          happycallStats: getHappycallProductRanks(visibleHappycallRankMap, product),
+          imageSrc: getProductImageSrc(product),
+          happycallStats: {
+            "1d": visibleHappycallRankMap[`${product.partner}||${product.productCode}`]?.["1d"] || null,
+            "7d": visibleHappycallRankMap[`${product.partner}||${product.productCode}`]?.["7d"] || null,
+            "30d": visibleHappycallRankMap[`${product.partner}||${product.productCode}`]?.["30d"] || null,
+          },
           centers: product.centers.sort((a, b) => (b.totalQty || 0) - (a.totalQty || 0)),
         })),
       }));
-  }, [filteredRows, search, eventMap, happycallAnalytics, visibleHappycallRankMap]);
+  }, [filteredRows, search, eventMap, happycallAnalytics]);
 
   const historyCountMap = useMemo(() => {
     const map = {};
@@ -1164,9 +1307,19 @@ function App() {
           productName: item?.productName || "-",
           count: parseQty(item?.count || 0),
           share: Number(item?.share || 0),
+          partnerName: item?.partnerName || "",
+          productCode: item?.productCode || "",
+          imageSrc: getProductImageSrc({
+            productName: item?.productName || "",
+            partner: item?.partnerName || "",
+          }),
         })),
     [happycallAnalytics]
   );
+
+  const happycallHeroCard = previousDayHappycallTopList[0] || null;
+  const happycallMiniCards = previousDayHappycallTopList.slice(1, 5);
+  const totalVisibleProducts = groupedPartners.reduce((sum, item) => sum + item.products.length, 0);
 
   const updateDraft = (key, field, value) => {
     setDrafts((prev) => ({
@@ -1674,8 +1827,11 @@ function App() {
 
       <div style={styles.headerCard}>
         <div style={styles.headerTopRow}>
-          <div>
-            <h1 style={styles.title}>GS신선강화지원팀</h1>
+          <div style={styles.brandBlock}>
+            <div style={styles.brandRow}>
+              <img src="/assets/gs-logo.svg" alt="GS 로고" style={styles.brandLogo} />
+              <h1 style={styles.title}>GS신선강화지원단 검품 시스템</h1>
+            </div>
             <div style={styles.headerLinkRow}>
               <a href={worksheetUrl || "#"} target="_blank" rel="noreferrer" style={styles.headerLink}>
                 {worksheetUrl || "워크시트 URL 없음"}
@@ -1747,7 +1903,7 @@ function App() {
               onClick={() => fileInputRef.current?.click()}
               style={styles.primaryButton}
             >
-              {uploadingCsv ? "처리 중..." : "검품 CSV 선택"}
+              {uploadingCsv ? "처리 중..." : "📄 검품 CSV 업로드"}
             </button>
             <button
               type="button"
@@ -1758,7 +1914,7 @@ function App() {
                 opacity: uploadingHappycallCsv ? 0.7 : 1,
               }}
             >
-              {uploadingHappycallCsv ? "처리 중..." : "해피콜 파일 선택"}
+              {uploadingHappycallCsv ? "처리 중..." : "🗂 해피콜 업로드"}
             </button>
             <button
               type="button"
@@ -1769,7 +1925,7 @@ function App() {
               }}
               style={styles.secondaryButton}
             >
-              관리자 초기화
+              👤 관리자 초기화
             </button>
           </div>
         </div>
@@ -1803,88 +1959,117 @@ function App() {
       <div style={styles.panel}>
         <div style={styles.happycallHeader}>
           <div>
-            <div style={styles.sectionTitle}>전일 해피콜 최다 TOP10</div>
-            <div style={styles.metaText}>전일 접수 해피콜 기준</div>
+            <div style={styles.sectionTitle}>전일 해피콜 TOP 5 {totalVisibleProducts ? `(${totalVisibleProducts}건)` : ""}</div>
+            <div style={styles.heroSubtext}>전일 접수 해피콜 기준</div>
           </div>
         </div>
 
         {previousDayHappycallTopList.length === 0 ? (
           <div style={styles.emptyBox}>전일 해피콜 데이터가 없습니다.</div>
         ) : (
-          <div style={styles.happycallTopGrid}>
-            {previousDayHappycallTopList.map((card) => (
-              <div
-                key={`happycall-top-${card.rank}`}
-                style={{
-                  ...styles.kpiCard,
-                  borderColor:
-                    card.rank === 1 ? "#fca5a5" : card.rank === 2 ? "#93c5fd" : card.rank === 3 ? "#86efac" : "#e5e7eb",
-                }}
-              >
-                <div style={styles.topRankRow}>
-                  {getTopMedal(card.rank) ? (
-                    <span style={styles.topMedal}>{getTopMedal(card.rank)}</span>
-                  ) : (
-                    <span style={styles.topMedalPlaceholder} />
-                  )}
-                  <div
-                    style={{
-                      ...styles.kpiLabel,
-                      marginBottom: 0,
-                      fontWeight: 900,
-                      color:
-                        card.rank === 1 ? "#b91c1c" : card.rank === 2 ? "#1d4ed8" : card.rank === 3 ? "#15803d" : "#64748b",
-                    }}
-                  >
-                    {card.rank <= 3 ? `TOP.${card.rank}` : ""}
+          <div style={styles.happycallShowcase}>
+            {happycallHeroCard ? (
+              <div style={styles.heroTopCard}>
+                <div style={styles.heroTopCopy}>
+                  <div style={styles.heroTopBadge}>
+                    <span style={styles.heroTopMedal}>{getTopMedal(happycallHeroCard.rank)}</span>
+                    <span style={styles.heroTopBadgeText}>TOP {happycallHeroCard.rank}</span>
+                  </div>
+                  <div style={styles.heroTopName}>{happycallHeroCard.productName}</div>
+                  <div style={styles.heroTopMeta}>
+                    {happycallHeroCard.count.toLocaleString("ko-KR")}건 · {formatPercent(happycallHeroCard.share)}
+                  </div>
+                  <div style={styles.heroProgressRow}>
+                    <div style={styles.heroProgressTrack}>
+                      <div
+                        style={{
+                          ...styles.heroProgressFill,
+                          width: `${Math.max(14, Math.min(100, happycallHeroCard.share * 100))}%`,
+                        }}
+                      />
+                    </div>
+                    <div style={styles.heroProgressValue}>{formatPercent(happycallHeroCard.share)}</div>
                   </div>
                 </div>
-                <div
-                  style={{
-                    ...styles.kpiValue,
-                    fontSize: 18,
-                    fontWeight: 900,
-                    color:
-                      card.rank === 1 ? "#b91c1c" : card.rank === 2 ? "#1d4ed8" : card.rank === 3 ? "#15803d" : "#0f172a",
-                  }}
-                >
-                  {card.productName}
-                </div>
-                <div style={styles.topCardMeta}>
-                  {card.count.toLocaleString("ko-KR")}건 · {formatPercent(card.share)}
+                <div style={styles.heroImageFrame}>
+                  {happycallHeroCard.imageSrc ? (
+                    <img
+                      src={happycallHeroCard.imageSrc}
+                      alt={happycallHeroCard.productName}
+                      style={styles.heroImage}
+                    />
+                  ) : (
+                    <div style={styles.heroFallbackImage}>📦</div>
+                  )}
                 </div>
               </div>
-            ))}
+            ) : null}
+
+            {happycallMiniCards.length ? (
+              <div style={styles.heroMiniGrid}>
+                {happycallMiniCards.map((card) => (
+                  <div
+                    key={`happycall-top-${card.rank}`}
+                    style={{
+                      ...styles.heroMiniCard,
+                      borderColor:
+                        card.rank === 2 ? "#93c5fd" : card.rank === 3 ? "#86efac" : "#dbe3f0",
+                    }}
+                  >
+                    <div style={styles.heroMiniLabel}>
+                      <span>{getTopMedal(card.rank) || "•"}</span>
+                      <span>{card.rank <= 3 ? `TOP ${card.rank}` : ""}</span>
+                    </div>
+                    <div style={styles.heroMiniContent}>
+                      <div style={styles.heroMiniCopy}>
+                        <div style={styles.heroMiniName}>{card.productName}</div>
+                        <div style={styles.heroMiniMeta}>
+                          {card.count.toLocaleString("ko-KR")}건 · {formatPercent(card.share)}
+                        </div>
+                      </div>
+                      {card.imageSrc ? (
+                        <div style={styles.heroMiniThumbFrame}>
+                          <img src={card.imageSrc} alt={card.productName} style={styles.heroMiniThumbImage} />
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+
+            <div style={styles.heroActionRow}>
+              <button
+                type="button"
+                onClick={() => downloadPhotoZip("movement")}
+                style={styles.heroActionButton}
+              >
+                {zipDownloading === "movement" ? "ZIP 생성 중..." : "📷 불량사진"}
+              </button>
+              <button
+                type="button"
+                onClick={() => downloadPhotoZip("inspection")}
+                style={styles.heroActionButton}
+              >
+                {zipDownloading === "inspection" ? "ZIP 생성 중..." : "🧾 검품사진"}
+              </button>
+              <button
+                type="button"
+                onClick={() => downloadPhotoZip("photoOnly")}
+                style={styles.heroActionButton}
+              >
+                {zipDownloading === "photoOnly" ? "ZIP 생성 중..." : "🔗 참고사진"}
+              </button>
+            </div>
           </div>
         )}
       </div>
 
-      <div style={styles.countRow}>
-        <div style={styles.countText}>총 {groupedPartners.reduce((sum, item) => sum + item.products.length, 0)}건</div>
-        <div style={styles.countActions}>
-          <button
-            type="button"
-            onClick={() => downloadPhotoZip("movement")}
-            style={styles.historyButton}
-          >
-            {zipDownloading === "movement" ? "ZIP 생성 중..." : "불량사진 저장"}
-          </button>
-          <button
-            type="button"
-            onClick={() => downloadPhotoZip("inspection")}
-            style={styles.historyButton}
-          >
-            {zipDownloading === "inspection" ? "ZIP 생성 중..." : "검품사진 저장"}
-          </button>
-          <button
-            type="button"
-            onClick={() => downloadPhotoZip("photoOnly")}
-            style={styles.historyButton}
-          >
-            {zipDownloading === "photoOnly" ? "ZIP 생성 중..." : "참고사진 저장"}
-          </button>
+      <div style={styles.partnerPanel}>
+        <div style={styles.partnerSectionHeader}>
+          <div style={styles.sectionTitle}>협력사 목록</div>
+          <div style={styles.partnerSectionCount}>총 {totalVisibleProducts}건</div>
         </div>
-      </div>
 
       <div style={styles.list}>
         {groupedPartners.length === 0 ? (
@@ -1900,7 +2085,10 @@ function App() {
                 }
               >
                 <div style={styles.partnerTitle}>{partnerGroup.partner}</div>
-                <div style={styles.partnerCount}>{partnerGroup.products.length}건</div>
+                <div style={styles.partnerHeaderRight}>
+                  <div style={styles.partnerCount}>{partnerGroup.products.length}건</div>
+                  <div style={styles.partnerChevron}>›</div>
+                </div>
               </button>
 
               {expandedPartner === partnerGroup.partner && (
@@ -1957,26 +2145,37 @@ function App() {
                           <div style={styles.cardInlineInspection}>
                             <div style={styles.cardInlineInfo}>
                               <div style={styles.cardTopRowInline}>
-                                <div style={styles.cardTitle}>{product.productName || "상품명 없음"}</div>
-                                {product.eventInfo?.행사여부 ? (
-                                  <span style={styles.eventBadge}>
-                                    {product.eventInfo.행사명 || "행사"}
-                                  </span>
+                                {happycallBadges.length ? (
+                                  <div style={styles.happycallBadgeRow}>
+                                    {happycallBadges.map((badge) => (
+                                      <span key={badge.key} style={{ ...styles.happycallBadge, ...getHappycallRankStyle(badge.rank) }}>
+                                        {badge.label}
+                                      </span>
+                                    ))}
+                                  </div>
                                 ) : null}
                               </div>
-                              <div style={styles.cardMeta}>코드 {product.productCode}</div>
-                              {happycallBadges.length ? (
-                                <div style={styles.happycallBadgeRow}>
-                                  {happycallBadges.map((badge) => (
-                                    <span key={badge.key} style={{ ...styles.happycallBadge, ...getHappycallRankStyle(badge.rank) }}>
-                                      {badge.label}
-                                    </span>
-                                  ))}
+                              <div style={styles.cardContentRow}>
+                                <div style={styles.cardMainCopy}>
+                                  <div style={styles.cardTitleRow}>
+                                    <div style={styles.cardTitle}>{product.productName || "상품명 없음"}</div>
+                                    {product.eventInfo?.행사여부 ? (
+                                      <span style={styles.eventBadge}>
+                                        {product.eventInfo.행사명 || "행사"}
+                                      </span>
+                                    ) : null}
+                                  </div>
+                                  <div style={styles.cardMeta}>코드 {product.productCode}</div>
+                                  <div style={styles.qtyRow}>
+                                    <span style={styles.qtyChip}>총 발주 {product.totalQty}개</span>
+                                    {historySummary ? <span style={styles.qtyChip}>{historySummary}</span> : null}
+                                  </div>
                                 </div>
-                              ) : null}
-                              <div style={styles.qtyRow}>
-                                <span style={styles.qtyChip}>총 발주 {product.totalQty}개</span>
-                                {historySummary ? <span style={styles.qtyChip}>{historySummary}</span> : null}
+                                {product.imageSrc ? (
+                                  <div style={styles.cardThumbFrame}>
+                                    <img src={product.imageSrc} alt={product.productName} style={styles.cardThumbImage} />
+                                  </div>
+                                ) : null}
                               </div>
                             </div>
 
@@ -2082,26 +2281,37 @@ function App() {
                               }}
                             >
                               <div style={styles.cardTopRow}>
-                                <div style={styles.cardTitle}>{product.productName || "상품명 없음"}</div>
-                                {product.eventInfo?.행사여부 ? (
-                                  <span style={styles.eventBadge}>
-                                    {product.eventInfo.행사명 || "행사"}
-                                  </span>
+                                {happycallBadges.length ? (
+                                  <div style={styles.happycallBadgeRow}>
+                                    {happycallBadges.map((badge) => (
+                                      <span key={badge.key} style={{ ...styles.happycallBadge, ...getHappycallRankStyle(badge.rank) }}>
+                                        {badge.label}
+                                      </span>
+                                    ))}
+                                  </div>
                                 ) : null}
                               </div>
-                              <div style={styles.cardMeta}>코드 {product.productCode}</div>
-                              {happycallBadges.length ? (
-                                <div style={styles.happycallBadgeRow}>
-                                  {happycallBadges.map((badge) => (
-                                    <span key={badge.key} style={{ ...styles.happycallBadge, ...getHappycallRankStyle(badge.rank) }}>
-                                      {badge.label}
-                                    </span>
-                                  ))}
+                              <div style={styles.cardContentRow}>
+                                <div style={styles.cardMainCopy}>
+                                  <div style={styles.cardTitleRow}>
+                                    <div style={styles.cardTitle}>{product.productName || "상품명 없음"}</div>
+                                    {product.eventInfo?.행사여부 ? (
+                                      <span style={styles.eventBadge}>
+                                        {product.eventInfo.행사명 || "행사"}
+                                      </span>
+                                    ) : null}
+                                  </div>
+                                  <div style={styles.cardMeta}>코드 {product.productCode}</div>
+                                  <div style={styles.qtyRow}>
+                                    <span style={styles.qtyChip}>총 발주 {product.totalQty}개</span>
+                                    {historySummary ? <span style={styles.qtyChip}>{historySummary}</span> : null}
+                                  </div>
                                 </div>
-                              ) : null}
-                              <div style={styles.qtyRow}>
-                                <span style={styles.qtyChip}>총 발주 {product.totalQty}개</span>
-                                {historySummary ? <span style={styles.qtyChip}>{historySummary}</span> : null}
+                                {product.imageSrc ? (
+                                  <div style={styles.cardThumbFrame}>
+                                    <img src={product.imageSrc} alt={product.productName} style={styles.cardThumbImage} />
+                                  </div>
+                                ) : null}
                               </div>
                             </button>
 
@@ -2222,6 +2432,7 @@ function App() {
             </div>
           ))
         )}
+      </div>
       </div>
 
       {showHistory && (
@@ -2384,23 +2595,39 @@ function App() {
 const styles = {
   app: {
     minHeight: "100vh",
-    background: "#f4f6fb",
-    padding: 14,
+    background: "linear-gradient(180deg, #f8fbff 0%, #eef3fb 100%)",
+    padding: "16px 14px 24px",
     color: "#1f2937",
-    fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, sans-serif",
+    fontFamily: "\"Pretendard\", -apple-system, BlinkMacSystemFont, sans-serif",
     boxSizing: "border-box",
-    maxWidth: 760,
+    maxWidth: 460,
     margin: "0 auto",
   },
   hiddenInput: {
     display: "none",
   },
+  brandBlock: {
+    minWidth: 0,
+    flex: 1,
+  },
+  brandRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+  },
+  brandLogo: {
+    width: 34,
+    height: "auto",
+    flexShrink: 0,
+  },
   headerCard: {
-    background: "#ffffff",
-    borderRadius: 18,
-    padding: 16,
-    marginBottom: 12,
-    border: "1px solid #e5e7eb",
+    background: "linear-gradient(180deg, rgba(255,255,255,0.97) 0%, rgba(250,252,255,0.94) 100%)",
+    backdropFilter: "blur(14px)",
+    borderRadius: 26,
+    padding: 18,
+    marginBottom: 14,
+    border: "1px solid #dfe7f5",
+    boxShadow: "0 14px 40px rgba(101, 130, 184, 0.14)",
   },
   headerTopRow: {
     display: "flex",
@@ -2411,8 +2638,9 @@ const styles = {
   },
   title: {
     margin: 0,
-    fontSize: 24,
+    fontSize: 18,
     fontWeight: 800,
+    lineHeight: 1.25,
   },
   subtitle: {
     marginTop: 8,
@@ -2428,27 +2656,28 @@ const styles = {
     flexWrap: "wrap",
   },
   headerLink: {
-    color: "#2563eb",
-    fontSize: 13,
+    color: "#8b98b8",
+    fontSize: 12,
     textDecoration: "none",
     wordBreak: "break-all",
   },
   copyButton: {
-    minHeight: 32,
-    padding: "0 10px",
+    minHeight: 34,
+    padding: "0 12px",
     borderRadius: 999,
-    border: "1px solid #cbd5e1",
-    background: "#fff",
-    color: "#0f172a",
+    border: "1px solid #d7deec",
+    background: "#ffffff",
+    color: "#2d4ea1",
     fontSize: 12,
     fontWeight: 800,
     cursor: "pointer",
+    boxShadow: "0 4px 10px rgba(37, 99, 235, 0.06)",
   },
   headerModeBadge: {
-    background: "#e0e7ff",
-    color: "#3730a3",
+    background: "#eef3ff",
+    color: "#6377b9",
     borderRadius: 999,
-    padding: "8px 12px",
+    padding: "8px 14px",
     fontSize: 12,
     fontWeight: 800,
     flexShrink: 0,
@@ -2459,23 +2688,24 @@ const styles = {
     gap: 10,
   },
   quickActionCard: {
-    minHeight: 74,
-    borderRadius: 16,
-    border: "1px solid #dbe3f0",
-    background: "#f8fafc",
+    minHeight: 72,
+    borderRadius: 18,
+    border: "1px solid #e2e8f5",
+    background: "#ffffff",
     display: "flex",
     flexDirection: "column",
     alignItems: "center",
     justifyContent: "center",
     gap: 6,
     cursor: "pointer",
-    color: "#0f172a",
+    color: "#405074",
     fontWeight: 800,
+    boxShadow: "0 8px 20px rgba(106, 132, 179, 0.08)",
   },
   quickActionCardActive: {
-    background: "#111827",
+    background: "linear-gradient(135deg, #3c6fdc 0%, #2454c3 100%)",
     color: "#fff",
-    borderColor: "#111827",
+    borderColor: "#2454c3",
   },
   quickActionIcon: {
     fontSize: 20,
@@ -2504,11 +2734,12 @@ const styles = {
     borderColor: "#111827",
   },
   panel: {
-    background: "#ffffff",
-    borderRadius: 16,
-    padding: 14,
-    marginBottom: 12,
-    border: "1px solid #e5e7eb",
+    background: "linear-gradient(180deg, rgba(255,255,255,0.97) 0%, rgba(249,251,255,0.94) 100%)",
+    borderRadius: 24,
+    padding: 16,
+    marginBottom: 14,
+    border: "1px solid #e4eaf5",
+    boxShadow: "0 12px 30px rgba(101, 130, 184, 0.08)",
   },
   happycallHeader: {
     display: "flex",
@@ -2516,11 +2747,16 @@ const styles = {
     gap: 12,
     alignItems: "flex-start",
     flexWrap: "wrap",
-    marginBottom: 12,
+    marginBottom: 10,
+  },
+  heroSubtext: {
+    marginTop: 4,
+    fontSize: 12,
+    color: "#8391b1",
   },
   happycallBadge: {
     borderRadius: 999,
-    padding: "6px 10px",
+    padding: "7px 11px",
     background: "#fee2e2",
     color: "#b91c1c",
     fontSize: 11,
@@ -2555,22 +2791,24 @@ const styles = {
     padding: "0 16px",
     borderRadius: 14,
     border: "none",
-    background: "#2563eb",
+    background: "linear-gradient(135deg, #3c6fdc 0%, #2454c3 100%)",
     color: "#fff",
     fontSize: 15,
     fontWeight: 800,
     cursor: "pointer",
+    boxShadow: "0 10px 20px rgba(50, 95, 203, 0.18)",
   },
   secondaryButton: {
     minHeight: 48,
     padding: "0 16px",
     borderRadius: 14,
-    border: "1px solid #d1d5db",
-    background: "#fff",
-    color: "#111827",
+    border: "1px solid #dbe4f3",
+    background: "#ffffff",
+    color: "#34486f",
     fontSize: 15,
     fontWeight: 800,
     cursor: "pointer",
+    boxShadow: "0 8px 16px rgba(106, 132, 179, 0.06)",
   },
   label: {
     display: "block",
@@ -2647,7 +2885,7 @@ const styles = {
   metaText: {
     marginTop: 8,
     fontSize: 12,
-    color: "#6b7280",
+    color: "#8b98b8",
     wordBreak: "break-all",
     lineHeight: 1.5,
   },
@@ -2669,6 +2907,176 @@ const styles = {
     border: "1px solid #fecaca",
     fontSize: 14,
   },
+  happycallShowcase: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 12,
+  },
+  heroTopCard: {
+    display: "grid",
+    gridTemplateColumns: "minmax(0, 1fr) 116px",
+    gap: 12,
+    padding: 16,
+    borderRadius: 22,
+    background: "linear-gradient(180deg, #fff8e7 0%, #ffe8b5 100%)",
+    border: "1px solid #f2ddb0",
+    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.7), 0 12px 24px rgba(214, 167, 72, 0.12)",
+    alignItems: "center",
+  },
+  heroTopCopy: {
+    minWidth: 0,
+  },
+  heroTopBadge: {
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
+    color: "#d18a00",
+    fontSize: 13,
+    fontWeight: 800,
+    marginBottom: 6,
+  },
+  heroTopMedal: {
+    fontSize: 20,
+    lineHeight: 1,
+  },
+  heroTopBadgeText: {
+    letterSpacing: 0.2,
+  },
+  heroTopName: {
+    fontSize: 20,
+    lineHeight: 1.2,
+    fontWeight: 900,
+    color: "#24324d",
+    wordBreak: "keep-all",
+  },
+  heroTopMeta: {
+    marginTop: 8,
+    fontSize: 15,
+    fontWeight: 700,
+    color: "#495976",
+  },
+  heroProgressRow: {
+    display: "grid",
+    gridTemplateColumns: "minmax(0, 1fr) auto",
+    alignItems: "center",
+    gap: 10,
+    marginTop: 12,
+  },
+  heroProgressTrack: {
+    height: 12,
+    borderRadius: 999,
+    background: "rgba(37, 84, 195, 0.12)",
+    overflow: "hidden",
+  },
+  heroProgressFill: {
+    height: "100%",
+    borderRadius: 999,
+    background: "linear-gradient(90deg, #3f73e6 0%, #2454c3 100%)",
+  },
+  heroProgressValue: {
+    fontSize: 14,
+    fontWeight: 800,
+    color: "#50607f",
+  },
+  heroImageFrame: {
+    height: 104,
+    borderRadius: 18,
+    background: "rgba(255,255,255,0.45)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden",
+  },
+  heroImage: {
+    width: "100%",
+    height: "100%",
+    objectFit: "contain",
+    mixBlendMode: "multiply",
+  },
+  heroFallbackImage: {
+    fontSize: 48,
+  },
+  heroMiniGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+    gap: 10,
+  },
+  heroMiniCard: {
+    background: "linear-gradient(180deg, #ffffff 0%, #fbfcff 100%)",
+    border: "1px solid #e4eaf5",
+    borderRadius: 18,
+    padding: 14,
+    minHeight: 120,
+    boxShadow: "0 8px 20px rgba(106, 132, 179, 0.06)",
+  },
+  heroMiniContent: {
+    display: "grid",
+    gridTemplateColumns: "minmax(0, 1fr) 58px",
+    gap: 10,
+    alignItems: "end",
+  },
+  heroMiniCopy: {
+    minWidth: 0,
+  },
+  heroMiniLabel: {
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
+    color: "#6377b9",
+    fontSize: 12,
+    fontWeight: 800,
+    marginBottom: 8,
+  },
+  heroMiniName: {
+    fontSize: 17,
+    lineHeight: 1.24,
+    fontWeight: 900,
+    color: "#22314b",
+    wordBreak: "keep-all",
+  },
+  heroMiniMeta: {
+    marginTop: 8,
+    fontSize: 13,
+    color: "#687694",
+    fontWeight: 700,
+  },
+  heroMiniThumbFrame: {
+    width: 58,
+    height: 58,
+    borderRadius: 14,
+    background: "#f8fbff",
+    border: "1px solid #e4eaf5",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden",
+  },
+  heroMiniThumbImage: {
+    width: "100%",
+    height: "100%",
+    objectFit: "contain",
+    mixBlendMode: "multiply",
+  },
+  heroActionRow: {
+    display: "grid",
+    gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+    gap: 8,
+  },
+  heroActionButton: {
+    minHeight: 42,
+    border: "1px solid #dce4f4",
+    borderRadius: 14,
+    background: "#f8fbff",
+    color: "#3e5a98",
+    fontSize: 13,
+    fontWeight: 800,
+    cursor: "pointer",
+    boxShadow: "0 6px 14px rgba(106, 132, 179, 0.05)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+  },
   countRow: {
     display: "flex",
     justifyContent: "space-between",
@@ -2689,12 +3097,6 @@ const styles = {
     overflowX: "auto",
     paddingBottom: 2,
     whiteSpace: "nowrap",
-  },
-  happycallTopGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(5, minmax(0, 1fr))",
-    gap: 10,
-    marginBottom: 12,
   },
   kpiGrid: {
     display: "grid",
@@ -2760,7 +3162,27 @@ const styles = {
     display: "flex",
     flexDirection: "column",
     gap: 12,
-    paddingBottom: 18,
+    paddingBottom: 6,
+  },
+  partnerPanel: {
+    background: "linear-gradient(180deg, rgba(255,255,255,0.97) 0%, rgba(248,251,255,0.94) 100%)",
+    borderRadius: 24,
+    padding: 16,
+    marginBottom: 14,
+    border: "1px solid #e4eaf5",
+    boxShadow: "0 12px 30px rgba(101, 130, 184, 0.08)",
+  },
+  partnerSectionHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 10,
+    marginBottom: 10,
+  },
+  partnerSectionCount: {
+    fontSize: 13,
+    color: "#6f7fa4",
+    fontWeight: 700,
   },
   partnerGroup: {
     display: "flex",
@@ -2768,8 +3190,8 @@ const styles = {
     gap: 8,
   },
   partnerHeader: {
-    border: "1px solid #dbe3f0",
-    background: "#eef4ff",
+    border: "1px solid #dfe7f5",
+    background: "linear-gradient(180deg, #f7f9ff 0%, #eff4ff 100%)",
     borderRadius: 16,
     padding: "14px 16px",
     cursor: "pointer",
@@ -2777,6 +3199,12 @@ const styles = {
     justifyContent: "space-between",
     alignItems: "center",
     textAlign: "left",
+  },
+  partnerHeaderRight: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    flexShrink: 0,
   },
   partnerTitle: {
     fontSize: 16,
@@ -2787,17 +3215,23 @@ const styles = {
     color: "#475569",
     fontWeight: 700,
   },
+  partnerChevron: {
+    fontSize: 20,
+    lineHeight: 1,
+    color: "#9aa8c7",
+    fontWeight: 700,
+  },
   partnerBody: {
     display: "flex",
     flexDirection: "column",
     gap: 12,
   },
   card: {
-    background: "#fff",
-    borderRadius: 18,
-    border: "1px solid #e5e7eb",
+    background: "linear-gradient(180deg, #ffffff 0%, #fbfcff 100%)",
+    borderRadius: 20,
+    border: "1px solid #e4eaf5",
     overflow: "hidden",
-    boxShadow: "0 6px 20px rgba(15,23,42,0.04)",
+    boxShadow: "0 10px 24px rgba(101, 130, 184, 0.08)",
   },
   cardButton: {
     width: "100%",
@@ -2829,24 +3263,56 @@ const styles = {
   },
   cardTopRow: {
     display: "flex",
-    justifyContent: "space-between",
     alignItems: "flex-start",
     gap: 8,
-    paddingRight: 28,
+    marginBottom: 8,
   },
   cardTopRowInline: {
     display: "flex",
+    alignItems: "flex-start",
+    gap: 8,
+    marginBottom: 8,
+  },
+  cardTitleRow: {
+    display: "flex",
     justifyContent: "space-between",
     alignItems: "flex-start",
+    gap: 10,
+  },
+  cardContentRow: {
+    display: "grid",
+    gridTemplateColumns: "minmax(0, 1fr) 84px",
     gap: 12,
+    alignItems: "center",
+  },
+  cardMainCopy: {
+    minWidth: 0,
   },
   cardTitle: {
-    flex: 1,
-    minWidth: 0,
     fontSize: 17,
     fontWeight: 800,
     lineHeight: 1.45,
-    textAlign: "left",
+    color: "#16233d",
+    wordBreak: "keep-all",
+    flex: 1,
+  },
+  cardThumbFrame: {
+    width: 84,
+    height: 84,
+    borderRadius: 16,
+    background: "#f8fbff",
+    border: "1px solid #e4eaf5",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden",
+    boxShadow: "0 8px 16px rgba(106, 132, 179, 0.08)",
+  },
+  cardThumbImage: {
+    width: "100%",
+    height: "100%",
+    objectFit: "contain",
+    mixBlendMode: "multiply",
   },
   cardMeta: {
     marginTop: 6,
