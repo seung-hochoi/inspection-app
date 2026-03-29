@@ -10,6 +10,7 @@
   returnCenter: "검품 회송내역 (센터포함)",
   returnSummary: "검품 회송내역 (센터미포함)",
   happycall: "happycall_data",
+  productImages: "product_image_map",
 };
 const ADMIN_RESET_PASSWORD = "0000";
 const JOB_CACHE_MAX_DATA_ROWS = 30000;
@@ -32,6 +33,7 @@ function doGet(e) {
           worksheet_url: SpreadsheetApp.getActiveSpreadsheet().getUrl(),
           summary: getDashboardSummary_(),
           happycall: getHappycallAnalytics_(),
+          product_images: loadProductImageMappings_(),
         },
       });
     }
@@ -171,6 +173,14 @@ function doPost(e) {
       });
     }
 
+    if (action === "saveProductImageMapping") {
+      return jsonOutput_({
+        ok: true,
+        data: saveProductImageMapping_(body.payload || {}),
+        product_images: loadProductImageMappings_(),
+      });
+    }
+
     return jsonOutput_({
       ok: false,
       message: "지원하지 않는 action입니다.",
@@ -220,6 +230,24 @@ function makeEntityKey_(jobKey, productCode, partnerName) {
 
 function makeSkuKey_(productCode, partnerName) {
   return [normalizeCode_(productCode || ""), normalizeText_(partnerName || "")].join("||");
+}
+
+function normalizeImageLookupText_(value) {
+  return String(value || "")
+    .replace(/\uFEFF/g, "")
+    .toLowerCase()
+    .replace(/\s+/g, "")
+    .replace(/[^\u3131-\uD79Da-z0-9]/gi, "")
+    .trim();
+}
+
+function makeProductImageMapKey_(productCode, partnerName, productName) {
+  var code = normalizeCode_(productCode || "");
+  var partner = normalizeText_(partnerName || "");
+  if (code || partner) {
+    return "sku::" + makeSkuKey_(code, partner);
+  }
+  return "name::" + normalizeImageLookupText_(productName || "") + "||" + normalizeImageLookupText_(partnerName || "");
 }
 
 function isExcludedByRules_(productCode, partnerName, excludedCodes, excludedPairs, excludedPartners) {
@@ -2939,6 +2967,138 @@ function updateInspectionDashboard_(ss) {
       summarySheet.setColumnWidth(col, 110);
     }
   });
+}
+
+function productImageHeaders_() {
+  return [
+    "맵키",
+    "상품코드",
+    "협력사명",
+    "상품명",
+    "이미지URL",
+    "파일ID",
+    "파일명",
+    "생성일시",
+    "수정일시",
+  ];
+}
+
+function getProductImageSheet_(ss) {
+  var sheet = getOrCreateSheet_(ss, SHEET_NAMES.productImages);
+  ensureHeaderRow_(sheet, productImageHeaders_());
+  return sheet;
+}
+
+function loadProductImageMappings_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = getProductImageSheet_(ss);
+  if (!sheet || sheet.getLastRow() < 2) return [];
+
+  var values = sheet.getDataRange().getValues();
+  var headers = values[0].map(function (header) {
+    return String(header || "").trim();
+  });
+
+  return values.slice(1).map(function (row, index) {
+    var item = {};
+    headers.forEach(function (header, headerIndex) {
+      item[header] = row[headerIndex];
+    });
+    item.__rowNumber = index + 2;
+    return item;
+  }).filter(function (row) {
+    return String(row["맵키"] || "").trim();
+  });
+}
+
+function saveProductImageMapping_(payload) {
+  var productCode = normalizeCode_(payload.productCode || payload["상품코드"] || "");
+  var partnerName = normalizeText_(payload.partnerName || payload["협력사명"] || payload["협력사"] || "");
+  var productName = String(payload.productName || payload["상품명"] || "").trim();
+  var photo = payload.photo || payload.image || null;
+
+  if (!productName && !productCode) {
+    throw new Error("상품 정보가 없습니다.");
+  }
+
+  if (!photo || !photo.imageBase64) {
+    throw new Error("등록할 이미지 파일이 없습니다.");
+  }
+
+  var mapKey = makeProductImageMapKey_(productCode, partnerName, productName);
+  if (!mapKey || mapKey === "name::||") {
+    throw new Error("이미지 매핑 키를 만들 수 없습니다.");
+  }
+
+  var savedFile = saveProductImageAssetToDrive_(photo, partnerName + "_" + productName, 0);
+  var now = new Date().toISOString();
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = getProductImageSheet_(ss);
+  var headers = productImageHeaders_();
+  var existingRows = loadProductImageMappings_();
+  var target = null;
+
+  for (var i = 0; i < existingRows.length; i += 1) {
+    if (String(existingRows[i]["맵키"] || "") === mapKey) {
+      target = existingRows[i];
+      break;
+    }
+  }
+
+  var rowObject = {
+    "맵키": mapKey,
+    "상품코드": productCode,
+    "협력사명": partnerName,
+    "상품명": productName,
+    "이미지URL": savedFile.viewUrl || "",
+    "파일ID": savedFile.fileId || "",
+    "파일명": savedFile.fileName || "",
+    "생성일시": target && target["생성일시"] ? target["생성일시"] : now,
+    "수정일시": now,
+  };
+
+  var rowValues = headers.map(function (header) {
+    return rowObject[header] || "";
+  });
+
+  if (target && target.__rowNumber) {
+    sheet.getRange(target.__rowNumber, 1, 1, rowValues.length).setValues([rowValues]);
+  } else {
+    sheet.appendRow(rowValues);
+  }
+
+  return rowObject;
+}
+
+function saveProductImageAssetToDrive_(photo, baseName, index) {
+  var folderId =
+    PropertiesService.getScriptProperties().getProperty("PRODUCT_IMAGE_FOLDER_ID") ||
+    PropertiesService.getScriptProperties().getProperty("PHOTO_FOLDER_ID");
+
+  if (!folderId) {
+    throw new Error("이미지 업로드 실패: PRODUCT_IMAGE_FOLDER_ID 또는 PHOTO_FOLDER_ID가 설정되지 않았습니다.");
+  }
+
+  var folder = DriveApp.getFolderById(folderId);
+  var safeBaseName = sanitizeFileName_(baseName || "product_image");
+  var extension =
+    getExtensionFromMimeType_(photo.mimeType || "") ||
+    getExtensionFromFileName_(photo.fileName || "") ||
+    "jpg";
+  var blob = Utilities.newBlob(
+    Utilities.base64Decode(photo.imageBase64),
+    photo.mimeType || "application/octet-stream",
+    safeBaseName + (index > 0 ? "_" + (index + 1) : "") + "." + extension
+  );
+
+  var file = folder.createFile(blob);
+  file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+
+  return {
+    fileId: file.getId(),
+    fileName: file.getName(),
+    viewUrl: "https://drive.google.com/uc?export=view&id=" + file.getId(),
+  };
 }
 
 function syncReturnSheets_(ss) {

@@ -132,145 +132,279 @@ const buildVisibleHappycallRanks = (analytics) => {
   return rankMap;
 };
 
+const normalizeImageMapLookupText = (value) => normalizeHappycallLookupText(value || "");
+
+const makeProductImageMapKey = ({ productCode, partner, productName }) => {
+  const code = normalizeProductCode(productCode || "");
+  const partnerText = String(partner || "").trim();
+  if (code || partnerText) {
+    return `sku::${code}||${partnerText}`;
+  }
+  return `name::${normalizeImageMapLookupText(productName || "")}||${normalizeImageMapLookupText(partner || "")}`;
+};
+
+const normalizeImageToken = (value) => normalizeHappycallLookupText(value || "");
+
+const buildImageMatcher = ({ partnerKeywords = [], productKeywords = [], excludeKeywords = [] }) => {
+  const normalizedPartners = partnerKeywords.map(normalizeImageToken).filter(Boolean);
+  const normalizedProducts = productKeywords.map(normalizeImageToken).filter(Boolean);
+  const normalizedExcludes = excludeKeywords.map(normalizeImageToken).filter(Boolean);
+
+  return (product) => {
+    const partnerText = normalizeImageToken(product?.partner || "");
+    const productText = normalizeImageToken(product?.productName || "");
+    const lookupText = `${partnerText} ${productText}`;
+
+    if (normalizedExcludes.some((keyword) => lookupText.includes(keyword))) {
+      return false;
+    }
+
+    if (normalizedPartners.length && !normalizedPartners.some((keyword) => partnerText.includes(keyword))) {
+      return false;
+    }
+
+    return normalizedProducts.every((keyword) => productText.includes(keyword));
+  };
+};
+
+// 새 상품 이미지를 추가할 때:
+// 1) public/assets/products 에 파일을 넣고
+// 2) 아래 목록에 partnerKeywords / productKeywords / src 를 한 줄 추가하면 됩니다.
+// 애매한 상품은 억지로 넣지 말고 비워두는 편이 오매칭을 줄입니다.
 const PRODUCT_IMAGE_MAP = [
   {
-    match: (product) =>
-      /델몬트/i.test(product.partner || "") &&
-      /킹사이즈/.test(product.productName || ""),
+    match: buildImageMatcher({
+      partnerKeywords: ["델몬트"],
+      productKeywords: ["킹사이즈", "바나나"],
+    }),
     src: "/assets/products/delmonte-king-banana.jpeg",
   },
   {
-    match: (product) =>
-      /(돌코리아|dole)/i.test(product.partner || "") &&
-      /스위티오/.test(product.productName || "") &&
-      /2입/.test(product.productName || ""),
+    match: buildImageMatcher({
+      partnerKeywords: ["돌코리아", "dole"],
+      productKeywords: ["스위티오", "바나나", "2입"],
+      excludeKeywords: ["파인애플"],
+    }),
     src: "/assets/products/dole-sweetio-banana-2.jpeg",
   },
   {
-    match: (product) =>
-      /(돌코리아|dole)/i.test(product.partner || "") &&
-      /스위티오/.test(product.productName || ""),
+    match: buildImageMatcher({
+      partnerKeywords: ["돌코리아", "dole"],
+      productKeywords: ["스위티오", "바나나"],
+      excludeKeywords: ["파인애플", "2입"],
+    }),
     src: "/assets/products/dole-sweetio-banana-scene.jpeg",
   },
   {
-    match: (product) =>
-      /델몬트/i.test(product.partner || "") &&
-      /프리미엄/.test(product.productName || ""),
-    src: "/assets/products/delmonte-banana-pack.png",
-  },
-  {
-    match: (product) =>
-      /델몬트/i.test(product.partner || "") &&
-      /바나나/.test(product.productName || ""),
+    match: buildImageMatcher({
+      partnerKeywords: ["델몬트"],
+      productKeywords: ["프리미엄", "바나나"],
+      excludeKeywords: ["클래식"],
+    }),
     src: "/assets/products/delmonte-banana-bag.jpeg",
   },
   {
-    match: (product) => /바나나/.test(product.productName || ""),
+    match: buildImageMatcher({
+      partnerKeywords: ["델몬트"],
+      productKeywords: ["클래식", "바나나"],
+    }),
+    src: "/assets/products/delmonte-banana-pack.png",
+  },
+  {
+    match: buildImageMatcher({
+      productKeywords: ["바나나"],
+      excludeKeywords: ["파인애플"],
+    }),
     src: "/assets/products/banana-generic.jpeg",
   },
   {
-    match: (product) => /오이맛고추|한끼딱오이맛고추/.test(product.productName || ""),
+    match: buildImageMatcher({
+      productKeywords: ["오이맛고추"],
+    }),
     src: "/assets/products/cucumber-spicy.jpeg",
   },
   {
-    match: (product) => /청양고추/.test(product.productName || ""),
+    match: buildImageMatcher({
+      productKeywords: ["청양고추"],
+    }),
     src: "/assets/products/green-chili-pack.jpeg",
   },
   {
-    match: (product) => /고추/.test(product.productName || ""),
+    match: buildImageMatcher({
+      productKeywords: ["매운고추"],
+    }),
     src: "/assets/products/pepper-hot-pack.jpeg",
   },
   {
-    match: (product) => /천안오이|한끼딱오이|오이/.test(product.productName || ""),
+    match: (product) => {
+      const productText = normalizeImageToken(product?.productName || "");
+      if (productText.includes(normalizeImageToken("오이맛고추"))) return false;
+      return [
+        "천안오이",
+        "한끼딱오이",
+        "오이1입",
+        "오이2입",
+        "오이",
+      ].some((keyword) => productText.includes(normalizeImageToken(keyword)));
+    },
     src: "/assets/products/cucumber-plain.jpeg",
   },
   {
-    match: (product) => /애호박|주키니/.test(product.productName || ""),
+    match: buildImageMatcher({
+      productKeywords: ["애호박"],
+      excludeKeywords: ["못난이"],
+    }),
     src: "/assets/products/aehobak-single.jpeg",
   },
   {
-    match: (product) => /손질대파|대파/.test(product.productName || ""),
+    match: buildImageMatcher({
+      productKeywords: ["손질대파"],
+    }),
     src: "/assets/products/green-onion-bundle.jpeg",
   },
   {
-    match: (product) => /부추/.test(product.productName || ""),
+    match: buildImageMatcher({
+      productKeywords: ["부추"],
+    }),
     src: "/assets/products/chives-bag.jpeg",
   },
   {
-    match: (product) => /달래/.test(product.productName || ""),
+    match: buildImageMatcher({
+      productKeywords: ["달래"],
+    }),
     src: "/assets/products/dalrae-bag.jpeg",
   },
   {
-    match: (product) => /냉이/.test(product.productName || ""),
+    match: buildImageMatcher({
+      productKeywords: ["냉이"],
+    }),
     src: "/assets/products/shepherds-purse-bag.jpeg",
   },
   {
-    match: (product) => /참나물/.test(product.productName || ""),
+    match: buildImageMatcher({
+      productKeywords: ["참나물"],
+    }),
     src: "/assets/products/chamnamul-bag.jpeg",
   },
   {
-    match: (product) => /깻잎|추부깻잎/.test(product.productName || ""),
+    match: (product) => {
+      const productText = normalizeImageToken(product?.productName || "");
+      return productText.includes(normalizeImageToken("깻잎"));
+    },
     src: "/assets/products/perilla-pack.jpeg",
   },
   {
-    match: (product) => /상추|쌈채소/.test(product.productName || ""),
+    match: (product) => {
+      const productText = normalizeImageToken(product?.productName || "");
+      return productText.includes(normalizeImageToken("쌈채소")) || productText.includes(normalizeImageToken("상추"));
+    },
     src: "/assets/products/ssam-pack.jpeg",
   },
   {
-    match: (product) => /꽃상추/.test(product.productName || ""),
+    match: buildImageMatcher({
+      productKeywords: ["꽃상추"],
+    }),
     src: "/assets/products/red-lettuce-pack.jpeg",
   },
   {
-    match: (product) => /시금치/.test(product.productName || ""),
+    match: buildImageMatcher({
+      productKeywords: ["시금치"],
+    }),
     src: "/assets/products/spinach-bag.jpeg",
   },
   {
-    match: (product) => /브로콜리/.test(product.productName || ""),
+    match: buildImageMatcher({
+      productKeywords: ["브로콜리"],
+    }),
     src: "/assets/products/broccoli.jpeg",
   },
   {
-    match: (product) => /양배추/.test(product.productName || ""),
+    match: buildImageMatcher({
+      productKeywords: ["양배추"],
+    }),
     src: "/assets/products/cabbage-half.jpeg",
   },
   {
-    match: (product) => /양파/.test(product.productName || ""),
+    match: buildImageMatcher({
+      productKeywords: ["양파"],
+    }),
     src: "/assets/products/onion-single.jpeg",
   },
   {
-    match: (product) => /마늘/.test(product.productName || ""),
+    match: (product) => {
+      const productText = normalizeImageToken(product?.productName || "");
+      return productText.includes(normalizeImageToken("깐마늘")) || productText.includes(normalizeImageToken("마늘"));
+    },
     src: "/assets/products/garlic-bag.jpeg",
   },
   {
-    match: (product) => /새송이버섯/.test(product.productName || ""),
+    match: buildImageMatcher({
+      productKeywords: ["새송이버섯"],
+    }),
     src: "/assets/products/mushroom-king-oyster.jpeg",
   },
   {
-    match: (product) => /참타리버섯|참타리/.test(product.productName || ""),
+    match: (product) => {
+      const productText = normalizeImageToken(product?.productName || "");
+      return productText.includes(normalizeImageToken("참타리버섯")) || productText.includes(normalizeImageToken("참타리"));
+    },
     src: "/assets/products/mushroom-king-oyster-bag.jpeg",
   },
   {
-    match: (product) => /팽이/.test(product.productName || ""),
+    match: buildImageMatcher({
+      productKeywords: ["팽이버섯"],
+    }),
     src: "/assets/products/enoki-pack.jpeg",
   },
   {
-    match: (product) => /고구마|꿀밤고구마|호박고구마/.test(product.productName || ""),
+    match: (product) => {
+      const productText = normalizeImageToken(product?.productName || "");
+      return (
+        productText.includes(normalizeImageToken("고구마")) ||
+        productText.includes(normalizeImageToken("꿀밤고구마")) ||
+        productText.includes(normalizeImageToken("호박고구마"))
+      );
+    },
     src: "/assets/products/sweetpotato-pink-bag.jpeg",
   },
   {
-    match: (product) => /감자/.test(product.productName || ""),
-    src: "/assets/products/pumpkin-sweetpotato-bag.jpeg",
-  },
-  {
-    match: (product) => /연어/.test(product.productName || ""),
+    match: buildImageMatcher({
+      productKeywords: ["연어"],
+    }),
     src: "/assets/products/salmon-pack.jpeg",
   },
   {
-    match: (product) => /목심|삼겹|한돈|돼지/.test(product.productName || ""),
+    match: (product) => {
+      const productText = normalizeImageToken(product?.productName || "");
+      return (
+        productText.includes(normalizeImageToken("목심")) ||
+        productText.includes(normalizeImageToken("삼겹")) ||
+        productText.includes(normalizeImageToken("한돈")) ||
+        productText.includes(normalizeImageToken("돼지"))
+      );
+    },
     src: "/assets/products/pork-neck-pack.jpeg",
   },
 ];
 
-const getProductImageSrc = (product) => {
+const getProductImageSrc = (product, customImageMap = {}) => {
+  const productText = normalizeImageToken(product?.productName || "");
+  if (!productText) return "";
+
+  if (productText.includes(normalizeImageToken("파인애플"))) {
+    return "";
+  }
+
+  const customKey = makeProductImageMapKey({
+    productCode: product?.productCode || "",
+    partner: product?.partner || "",
+    productName: product?.productName || "",
+  });
+
+  if (customKey && customImageMap[customKey]) {
+    return customImageMap[customKey];
+  }
+
   const matched = PRODUCT_IMAGE_MAP.find((entry) => entry.match(product || {}));
   return matched?.src || "";
 };
@@ -718,6 +852,11 @@ function App() {
   const [adminPassword, setAdminPassword] = useState("");
   const [adminResetting, setAdminResetting] = useState(false);
   const [uploadingHappycallCsv, setUploadingHappycallCsv] = useState(false);
+  const [productImageMap, setProductImageMap] = useState({});
+  const [showImageRegister, setShowImageRegister] = useState(false);
+  const [imageRegisterSearch, setImageRegisterSearch] = useState("");
+  const [selectedImageTargetKey, setSelectedImageTargetKey] = useState("");
+  const [uploadingImageKey, setUploadingImageKey] = useState("");
 
   const [isScannerOpen, setIsScannerOpen] = useState(false);
   const [scannerError, setScannerError] = useState("");
@@ -728,6 +867,7 @@ function App() {
 
   const fileInputRef = useRef(null);
   const happycallFileInputRef = useRef(null);
+  const imageRegisterInputRef = useRef(null);
   const searchInputRef = useRef(null);
   const scannerVideoRef = useRef(null);
   const scannerControlsRef = useRef(null);
@@ -1117,6 +1257,14 @@ function App() {
       setCurrentFileModifiedAt(job?.source_file_modified || "");
       setDashboardSummary(data.summary || {});
       setHappycallAnalytics(data.happycall || {});
+      setProductImageMap(
+        (Array.isArray(data.product_images) ? data.product_images : []).reduce((acc, item) => {
+          const key = String(item?.맵키 || "").trim();
+          const url = String(item?.이미지URL || "").trim();
+          if (key && url) acc[key] = url;
+          return acc;
+        }, {})
+      );
       setMessage(job ? "최근 작업을 불러왔습니다." : "CSV를 업로드해 주세요.");
     } catch (err) {
       setError(err.message || "초기 데이터를 불러오지 못했습니다.");
@@ -1265,7 +1413,7 @@ function App() {
         partner,
         products: products.map((product) => ({
           ...product,
-          imageSrc: getProductImageSrc(product),
+          imageSrc: getProductImageSrc(product, productImageMap),
           happycallStats: {
             "1d": visibleHappycallRankMap[`${product.partner}||${product.productCode}`]?.["1d"] || null,
             "7d": visibleHappycallRankMap[`${product.partner}||${product.productCode}`]?.["7d"] || null,
@@ -1274,7 +1422,7 @@ function App() {
           centers: product.centers.sort((a, b) => (b.totalQty || 0) - (a.totalQty || 0)),
         })),
       }));
-  }, [filteredRows, search, eventMap, happycallAnalytics]);
+  }, [filteredRows, search, eventMap, happycallAnalytics, productImageMap]);
 
   const historyCountMap = useMemo(() => {
     const map = {};
@@ -1312,14 +1460,47 @@ function App() {
           imageSrc: getProductImageSrc({
             productName: item?.productName || "",
             partner: item?.partnerName || "",
-          }),
+            productCode: item?.productCode || "",
+          }, productImageMap),
         })),
-    [happycallAnalytics]
+    [happycallAnalytics, productImageMap]
   );
 
   const happycallHeroCard = previousDayHappycallTopList[0] || null;
   const happycallMiniCards = previousDayHappycallTopList.slice(1, 5);
   const totalVisibleProducts = groupedPartners.reduce((sum, item) => sum + item.products.length, 0);
+  const imageRegistryProducts = useMemo(() => {
+    const keyword = normalizeText(imageRegisterSearch);
+    const flatList = groupedPartners.flatMap((group) =>
+      group.products.map((product) => ({
+        partner: group.partner,
+        productCode: product.productCode,
+        productName: product.productName,
+        imageSrc: product.imageSrc || "",
+        totalQty: product.totalQty || 0,
+        imageKey: makeProductImageMapKey({
+          productCode: product.productCode,
+          partner: group.partner,
+          productName: product.productName,
+        }),
+      }))
+    );
+
+    return flatList
+      .filter((item) => {
+        if (!keyword) return true;
+        return (
+          normalizeText(item.productName).includes(keyword) ||
+          normalizeText(item.partner).includes(keyword) ||
+          String(item.productCode || "").includes(imageRegisterSearch.trim())
+        );
+      })
+      .sort((a, b) => {
+        const partnerDiff = String(a.partner || "").localeCompare(String(b.partner || ""), "ko");
+        if (partnerDiff !== 0) return partnerDiff;
+        return String(a.productName || "").localeCompare(String(b.productName || ""), "ko");
+      });
+  }, [groupedPartners, imageRegisterSearch]);
 
   const updateDraft = (key, field, value) => {
     setDrafts((prev) => ({
@@ -1344,6 +1525,81 @@ function App() {
     const result = await response.json();
     if (!response.ok || result.ok === false) {
       throw new Error(result.message || "내역 삭제 실패");
+    }
+  };
+
+  const openImageRegisterPicker = (product) => {
+    const imageKey = makeProductImageMapKey({
+      productCode: product?.productCode || "",
+      partner: product?.partner || "",
+      productName: product?.productName || "",
+    });
+    setSelectedImageTargetKey(imageKey);
+    imageRegisterInputRef.current?.click();
+  };
+
+  const handleProductImageUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file || !selectedImageTargetKey) return;
+
+    const targetProduct = imageRegistryProducts.find((item) => item.imageKey === selectedImageTargetKey) ||
+      groupedPartners.flatMap((group) => group.products.map((product) => ({
+        partner: group.partner,
+        productCode: product.productCode,
+        productName: product.productName,
+        imageKey: makeProductImageMapKey({
+          productCode: product.productCode,
+          partner: group.partner,
+          productName: product.productName,
+        }),
+      }))).find((item) => item.imageKey === selectedImageTargetKey);
+
+    if (!targetProduct) {
+      setError("등록 대상 상품을 찾지 못했습니다.");
+      if (e.target) e.target.value = "";
+      return;
+    }
+
+    try {
+      setUploadingImageKey(selectedImageTargetKey);
+      setError("");
+      setMessage("");
+
+      const encoded = await fileToBase64(file);
+      const response = await fetch(SCRIPT_URL, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
+        body: JSON.stringify({
+          action: "saveProductImageMapping",
+          payload: {
+            productCode: targetProduct.productCode || "",
+            partnerName: targetProduct.partner || "",
+            productName: targetProduct.productName || "",
+            photo: encoded,
+          },
+        }),
+      });
+
+      const result = await response.json();
+      if (!response.ok || result.ok === false) {
+        throw new Error(result.message || "이미지 등록 실패");
+      }
+
+      const nextMap = (Array.isArray(result.product_images) ? result.product_images : []).reduce((acc, item) => {
+        const key = String(item?.맵키 || "").trim();
+        const url = String(item?.이미지URL || "").trim();
+        if (key && url) acc[key] = url;
+        return acc;
+      }, {});
+      setProductImageMap(nextMap);
+      setToast("이미지 등록 완료");
+      setMessage("상품 이미지가 등록되었습니다.");
+    } catch (err) {
+      setError(err.message || "이미지 등록 실패");
+    } finally {
+      setUploadingImageKey("");
+      setSelectedImageTargetKey("");
+      if (e.target) e.target.value = "";
     }
   };
 
@@ -1817,20 +2073,27 @@ function App() {
         onChange={handleCsvUpload}
         style={styles.hiddenInput}
       />
-      <input
-        ref={happycallFileInputRef}
-        type="file"
-        accept=".csv,.xls,.xlsx"
-        onChange={handleHappycallCsvUpload}
-        style={styles.hiddenInput}
-      />
+        <input
+          ref={happycallFileInputRef}
+          type="file"
+          accept=".csv,.xls,.xlsx"
+          onChange={handleHappycallCsvUpload}
+          style={styles.hiddenInput}
+        />
+        <input
+          ref={imageRegisterInputRef}
+          type="file"
+          accept="image/*"
+          onChange={handleProductImageUpload}
+          style={styles.hiddenInput}
+        />
 
       <div style={styles.headerCard}>
         <div style={styles.headerTopRow}>
           <div style={styles.brandBlock}>
             <div style={styles.brandRow}>
               <img src="/assets/gs-logo.svg" alt="GS 로고" style={styles.brandLogo} />
-              <h1 style={styles.title}>GS신선강화지원단 검품 시스템</h1>
+              <h1 style={styles.title}>GS신선강화지원팀 검품 시스템</h1>
             </div>
             <div style={styles.headerLinkRow}>
               <a href={worksheetUrl || "#"} target="_blank" rel="noreferrer" style={styles.headerLink}>
@@ -1915,6 +2178,18 @@ function App() {
               }}
             >
               {uploadingHappycallCsv ? "처리 중..." : "🗂 해피콜 업로드"}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setError("");
+                setMessage("");
+                setImageRegisterSearch("");
+                setShowImageRegister(true);
+              }}
+              style={styles.secondaryButton}
+            >
+              🖼 이미지 등록
             </button>
             <button
               type="button"
@@ -2543,6 +2818,68 @@ function App() {
             >
               {adminResetting ? "초기화 중..." : "현재 작업 입력 데이터 초기화"}
             </button>
+          </div>
+        </div>
+      )}
+
+      {showImageRegister && (
+        <div style={styles.sheetOverlay} onClick={() => !uploadingImageKey && setShowImageRegister(false)}>
+          <div style={styles.bottomSheet} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.sheetHandle} />
+            <div style={styles.sheetHeader}>
+              <h2 style={styles.sheetTitle}>상품 이미지 등록</h2>
+              <button
+                type="button"
+                onClick={() => !uploadingImageKey && setShowImageRegister(false)}
+                style={styles.sheetClose}
+              >
+                닫기
+              </button>
+            </div>
+
+            <div style={styles.infoBox}>
+              현재 CSV 기준 상품에 대해 이미지를 등록하거나 교체할 수 있습니다. 등록한 이미지는 같은 협력사/상품에 계속 자동 적용됩니다.
+            </div>
+
+            <div style={styles.searchRow}>
+              <input
+                value={imageRegisterSearch}
+                onChange={(e) => setImageRegisterSearch(e.target.value)}
+                placeholder="상품명 / 상품코드 / 협력사 검색"
+                style={styles.searchInput}
+              />
+            </div>
+
+                {imageRegistryProducts.length === 0 ? (
+              <div style={styles.emptyState}>표시할 상품이 없습니다.</div>
+            ) : (
+              <div style={styles.imageRegisterList}>
+                {imageRegistryProducts.map((product) => (
+                  <div key={product.imageKey} style={styles.imageRegisterCard}>
+                    <div style={styles.imageRegisterInfo}>
+                      <div style={styles.imageRegisterName}>{product.productName}</div>
+                      <div style={styles.metaText}>코드 {product.productCode || "-"}</div>
+                      <div style={styles.metaText}>협력사 {product.partner || "-"}</div>
+                      <div style={styles.metaText}>총 발주 {parseQty(product.totalQty).toLocaleString("ko-KR")}개</div>
+                      <div style={styles.metaText}>{product.imageSrc ? "현재 이미지 있음" : "현재 이미지 없음"}</div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => openImageRegisterPicker(product)}
+                      disabled={uploadingImageKey === product.imageKey}
+                      style={{
+                        ...styles.primaryButton,
+                        minHeight: 42,
+                        padding: "0 14px",
+                        opacity: uploadingImageKey === product.imageKey ? 0.7 : 1,
+                      }}
+                    >
+                      {uploadingImageKey === product.imageKey ? "등록 중..." : product.imageSrc ? "이미지 교체" : "이미지 등록"}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -3395,9 +3732,9 @@ const styles = {
     justifyContent: "center",
   },
   bottomSheet: {
-    width: "100%",
-    maxWidth: 760,
-    maxHeight: "78vh",
+      width: "100%",
+      maxWidth: 760,
+      maxHeight: "78vh",
     background: "#fff",
     borderTopLeftRadius: 22,
     borderTopRightRadius: 22,
@@ -3420,10 +3757,37 @@ const styles = {
     marginBottom: 12,
   },
   sheetTitle: {
-    margin: 0,
-    fontSize: 18,
-    fontWeight: 800,
-  },
+      margin: 0,
+      fontSize: 18,
+      fontWeight: 800,
+    },
+  imageRegisterList: {
+      display: "grid",
+      gap: 10,
+      marginTop: 12,
+    },
+  imageRegisterCard: {
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: 12,
+      padding: 14,
+      borderRadius: 18,
+      border: "1px solid #e5eaf5",
+      background: "#ffffff",
+      boxShadow: "0 8px 18px rgba(101, 130, 184, 0.06)",
+    },
+  imageRegisterInfo: {
+      minWidth: 0,
+      flex: 1,
+    },
+  imageRegisterName: {
+      fontSize: 15,
+      fontWeight: 800,
+      color: "#1f2f53",
+      marginBottom: 4,
+      wordBreak: "keep-all",
+    },
   sheetClose: {
     minHeight: 40,
     padding: "0 12px",
