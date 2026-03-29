@@ -1,89 +1,662 @@
-﻿import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Papa from "papaparse";
 import { BrowserCodeReader, BrowserMultiFormatReader } from "@zxing/browser";
-import {
-  clampText,
-  formatDateForFileName,
-  formatDateTime,
-  formatPercent,
-  normalizeProductCode,
-  parseQty,
-} from "./utils/formatters";
-import {
-  base64ToBlob,
-  buildNormalizedRows,
-  buildReservationRows,
-  buildVisibleHappycallRanks,
-  computeJobKey,
-  decodeCsvFile,
-  filesToBase64,
-  fileToBase64,
-  getHappycallProductMetrics,
-  getPhotoCandidatesFromRecord,
-  getRecordQtyText,
-  getRecordType,
-  getValue,
-  isClassifiedHappycallProduct,
-  isExplicitFalseUsage,
-  isTruthyUsage,
-  mergeJobRowsWithReservation,
-  mergeRowsWithReservation,
-  normalizeText,
-  parseHappycallSourceFile,
-} from "./utils/helpers";
-import { getProductImageSrc, makeProductImageMapKey } from "./utils/imageMap";
-import TopRankCard from "./components/TopRankCard";
-import ProductCard from "./components/ProductCard";
-import ScannerModal from "./components/ScannerModal";
-import ImageRegisterSheet from "./components/ImageRegisterSheet";
+import * as XLSX from "xlsx";
 
 const SCRIPT_URL = process.env.REACT_APP_GOOGLE_SCRIPT_URL || "https://script.google.com/macros/s/AKfycbzrPgqH8RoyY-7q2ZaDOZJqJo4aIJumTLtwmGSm-NgFnUzWyHavTi__CrwWbnwa5763wA/exec";
 
+const normalizeKey = (key) => String(key || "").replace(/\uFEFF/g, "").trim();
+
+const normalizeText = (value) =>
+  String(value ?? "")
+    .replace(/\uFEFF/g, "")
+    .normalize("NFKC")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+
+const normalizeHappycallLookupText = (value) =>
+  String(value ?? "")
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/\s+/g, "")
+    .replace(/[^\u3131-\uD79Da-z0-9]/gi, "")
+    .trim();
+
+const normalizeProductCode = (value) => {
+  if (value == null) return "";
+
+  let text = String(value).replace(/\uFEFF/g, "").trim();
+  const tMatch = text.match(/^=T\("(.+)"\)$/i);
+  if (tMatch) text = tMatch[1];
+
+  text = text.replace(/^"+|"+$/g, "").trim();
+  const numericText = text.replace(/,/g, "").trim();
+
+  if (/^\d+(\.0+)?$/.test(numericText)) {
+    return numericText.replace(/\.0+$/, "");
+  }
+
+  return text;
+};
+
+const parseQty = (value) => {
+  const num = Number(String(value ?? "").replace(/,/g, "").trim());
+  return Number.isNaN(num) ? 0 : num;
+};
+
+const clampText = (value, maxLength = 4000) => {
+  const text = String(value ?? "");
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, Math.max(0, maxLength - 7))}...(생략)`;
+};
+
+const makeSkuKey = (productCode, partnerName) =>
+  `${normalizeProductCode(productCode || "")}||${String(partnerName || "").trim()}`;
+
+const getHappycallProductMetrics = (analytics, product) => {
+  const periods = analytics?.periods || {};
+  const keys = [
+    `sku::${makeSkuKey(product?.productCode, product?.partner)}`,
+    `name::${normalizeHappycallLookupText(product?.productName)}||${normalizeHappycallLookupText(product?.partner)}`,
+    `code::${normalizeProductCode(product?.productCode || "")}`,
+    `nameOnly::${normalizeHappycallLookupText(product?.productName)}`,
+  ];
+
+  const result = {};
+
+  for (const [periodKey, periodValue] of Object.entries(periods)) {
+    const metricsMap = periodValue?.productMetrics || {};
+    for (const key of keys) {
+      if (key && metricsMap[key]) {
+        result[periodKey] = metricsMap[key];
+        break;
+      }
+    }
+  }
+
+  return result;
+};
+
+const formatPercent = (value) => {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? `${(numeric * 100).toFixed(1)}%` : "-";
+};
+
 const BarcodeScanIcon = ({ size = 24, color = "currentColor" }) => (
   <svg width={size} height={size} viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-    <rect x="10" y="8" width="44" height="30" rx="4" stroke={color} strokeWidth="4" />
-    <path d="M18 14V34" stroke={color} strokeWidth="4" strokeLinecap="round" />
-    <path d="M26 14V30" stroke={color} strokeWidth="4" strokeLinecap="round" />
-    <path d="M34 14V34" stroke={color} strokeWidth="4" strokeLinecap="round" />
-    <path d="M42 14V28" stroke={color} strokeWidth="4" strokeLinecap="round" />
-    <path d="M18 46C22 42 31 41 36 46" stroke={color} strokeWidth="4" strokeLinecap="round" />
-    <path d="M14 52C20 46 34 45 42 52" stroke={color} strokeWidth="4" strokeLinecap="round" />
-    <path d="M41 41C47 41 52 46 52 52V56H34V52C34 46 35 41 41 41Z" fill={color} />
+    <path
+      d="M8 18C8 12.4772 12.4772 8 18 8H46C51.5228 8 56 12.4772 56 18V22H50V18C50 15.7909 48.2091 14 46 14H18C15.7909 14 14 15.7909 14 18V22H8V18Z"
+      fill={color}
+    />
+    <rect x="16" y="20" width="4" height="22" rx="1.5" fill={color} />
+    <rect x="24" y="20" width="6" height="18" rx="1.5" fill={color} />
+    <rect x="34" y="20" width="3" height="24" rx="1.5" fill={color} />
+    <rect x="41" y="20" width="7" height="16" rx="1.5" fill={color} />
+    <path
+      d="M36.8 44.4C40.6953 44.4 43.8511 47.5557 43.8511 51.4511V53.6C43.8511 54.9255 42.7766 56 41.4511 56H32.1489C30.8234 56 29.7489 54.9255 29.7489 53.6V51.4511C29.7489 47.5557 32.9047 44.4 36.8 44.4Z"
+      fill={color}
+    />
+    <path d="M21 43C26.5228 43 31 47.4772 31 53H25C25 50.7909 23.2091 49 21 49H18V43H21Z" fill={color} />
+    <path
+      d="M10.5 42.5C15.7467 42.5 20 46.7533 20 52H16C16 48.9624 13.5376 46.5 10.5 46.5H8V42.5H10.5Z"
+      fill={color}
+      opacity="0.75"
+    />
   </svg>
 );
 
 const FlashlightIcon = ({ size = 20, color = "currentColor", active = false }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
     <path
-      d="M9 2H15L14 8H10L9 2Z"
-      fill={active ? "#f59e0b" : color}
-      stroke={active ? "#f59e0b" : color}
-      strokeWidth="1.5"
+      d="M9 2H15L13.4 8H17L9.8 22L11.2 13H7L9 2Z"
+      fill={active ? "#f8c84b" : color}
+      stroke={active ? "#f8c84b" : color}
+      strokeWidth="1.2"
       strokeLinejoin="round"
     />
-    <path
-      d="M10 8H14V16C14 17.1046 13.1046 18 12 18C10.8954 18 10 17.1046 10 16V8Z"
-      fill={active ? "#fde68a" : "none"}
-      stroke={active ? "#f59e0b" : color}
-      strokeWidth="1.5"
-    />
-    <path d="M12 18V22" stroke={active ? "#f59e0b" : color} strokeWidth="1.5" strokeLinecap="round" />
-    <path d="M6 10L4 12" stroke={active ? "#f59e0b" : color} strokeWidth="1.5" strokeLinecap="round" />
-    <path d="M18 10L20 12" stroke={active ? "#f59e0b" : color} strokeWidth="1.5" strokeLinecap="round" />
   </svg>
 );
+
+const getHappycallRankStyle = (rank) => {
+  if (rank === 1) {
+    return { background: "#fee2e2", color: "#b91c1c" };
+  }
+  if (rank === 2) {
+    return { background: "#dbeafe", color: "#1d4ed8" };
+  }
+  if (rank === 3) {
+    return { background: "#dcfce7", color: "#15803d" };
+  }
+  return { background: "#f3f4f6", color: "#374151" };
+};
+
+const getTopMedal = (rank) => {
+  if (rank === 1) return "🥇";
+  if (rank === 2) return "🥈";
+  if (rank === 3) return "🥉";
+  return null;
+};
+
+const isClassifiedHappycallProduct = (item) => {
+  const name = String(item?.productName || "").trim();
+  return !!name && name !== "미분류상품";
+};
+
+const buildVisibleHappycallRanks = (analytics) => {
+  const periods = analytics?.periods || {};
+  const rankMap = {};
+
+  Object.entries(periods).forEach(([periodKey, periodValue]) => {
+    (periodValue?.topProducts || [])
+      .filter(isClassifiedHappycallProduct)
+      .slice(0, 10)
+      .forEach((item, index) => {
+        const key = `${item?.partnerName || ""}||${item?.productCode || ""}`;
+        rankMap[key] = {
+          ...(rankMap[key] || {}),
+          [periodKey]: {
+            rank: index + 1,
+            count: parseQty(item?.count || 0),
+            share: Number(item?.share || 0),
+          },
+        };
+      });
+  });
+
+  return rankMap;
+};
+
+const normalizeImageMapLookupText = (value) => normalizeHappycallLookupText(value || "");
+
+const makeProductImageMapKey = ({ productCode, partner, productName }) => {
+  const code = normalizeProductCode(productCode || "");
+  const partnerText = String(partner || "").trim();
+  if (code || partnerText) {
+    return `sku::${code}||${partnerText}`;
+  }
+  return `name::${normalizeImageMapLookupText(productName || "")}||${normalizeImageMapLookupText(partner || "")}`;
+};
+
+const normalizeImageToken = (value) => normalizeHappycallLookupText(value || "");
+
+const buildImageMatcher = ({ partnerKeywords = [], productKeywords = [], excludeKeywords = [] }) => {
+  const normalizedPartners = partnerKeywords.map(normalizeImageToken).filter(Boolean);
+  const normalizedProducts = productKeywords.map(normalizeImageToken).filter(Boolean);
+  const normalizedExcludes = excludeKeywords.map(normalizeImageToken).filter(Boolean);
+
+  return (product) => {
+    const partnerText = normalizeImageToken(product?.partner || "");
+    const productText = normalizeImageToken(product?.productName || "");
+    const lookupText = `${partnerText} ${productText}`;
+
+    if (normalizedExcludes.some((keyword) => lookupText.includes(keyword))) return false;
+    if (normalizedPartners.length && !normalizedPartners.some((keyword) => partnerText.includes(keyword))) {
+      return false;
+    }
+    return normalizedProducts.every((keyword) => productText.includes(keyword));
+  };
+};
+
+const PRODUCT_IMAGE_MAP = [
+  {
+    match: buildImageMatcher({
+      partnerKeywords: ["델몬트", "delmonte"],
+      productKeywords: ["프리미엄", "바나나"],
+      excludeKeywords: ["파인애플", "클래식", "킹사이즈"],
+    }),
+    src: "/assets/products/delmonte-banana-pack.png",
+  },
+  {
+    match: buildImageMatcher({
+      partnerKeywords: ["델몬트", "delmonte"],
+      productKeywords: ["클래식", "바나나"],
+      excludeKeywords: ["파인애플"],
+    }),
+    src: "/assets/products/delmonte-banana-bag.jpeg",
+  },
+  {
+    match: buildImageMatcher({
+      partnerKeywords: ["델몬트", "delmonte"],
+      productKeywords: ["킹사이즈", "바나나"],
+    }),
+    src: "/assets/products/delmonte-king-banana.jpeg",
+  },
+  {
+    match: buildImageMatcher({
+      partnerKeywords: ["돌", "dole", "스위티오"],
+      productKeywords: ["바나나", "2입"],
+      excludeKeywords: ["파인애플"],
+    }),
+    src: "/assets/products/dole-sweetio-banana-2.jpeg",
+  },
+  {
+    match: buildImageMatcher({
+      partnerKeywords: ["돌", "dole", "스위티오"],
+      productKeywords: ["바나나"],
+      excludeKeywords: ["파인애플", "2입"],
+    }),
+    src: "/assets/products/dole-sweetio-banana-scene.jpeg",
+  },
+  { match: buildImageMatcher({ productKeywords: ["파인애플"] }), src: "" },
+  { match: buildImageMatcher({ productKeywords: ["오이맛고추"] }), src: "/assets/products/cucumber-spicy.jpeg" },
+  { match: buildImageMatcher({ productKeywords: ["청양고추"] }), src: "/assets/products/pepper-hot-pack.jpeg" },
+  { match: buildImageMatcher({ productKeywords: ["고추"] }), src: "/assets/products/green-chili-pack.jpeg" },
+  { match: buildImageMatcher({ productKeywords: ["오이"] }), src: "/assets/products/cucumber-plain.jpeg" },
+  { match: buildImageMatcher({ productKeywords: ["애호박"] }), src: "/assets/products/aehobak-single.jpeg" },
+  { match: buildImageMatcher({ productKeywords: ["마늘"] }), src: "/assets/products/garlic-bowl.jpeg" },
+  { match: buildImageMatcher({ productKeywords: ["양파"] }), src: "/assets/products/onion-single.jpeg" },
+  { match: buildImageMatcher({ productKeywords: ["새송이버섯"] }), src: "/assets/products/mushroom-king-oyster.jpeg" },
+  { match: buildImageMatcher({ productKeywords: ["팽이버섯"] }), src: "/assets/products/enoki-pack.jpeg" },
+  { match: buildImageMatcher({ productKeywords: ["꽃상추"] }), src: "/assets/products/red-lettuce-pack.jpeg" },
+  { match: buildImageMatcher({ productKeywords: ["상추"] }), src: "/assets/products/lettuce-green.jpeg" },
+  { match: buildImageMatcher({ productKeywords: ["부추"] }), src: "/assets/products/chives-bag.jpeg" },
+  { match: buildImageMatcher({ productKeywords: ["시금치"] }), src: "/assets/products/spinach-bag.jpeg" },
+  { match: buildImageMatcher({ productKeywords: ["깻잎"] }), src: "/assets/products/perilla-pack.jpeg" },
+  { match: buildImageMatcher({ productKeywords: ["참나물"] }), src: "/assets/products/chamnamul-bag.jpeg" },
+  { match: buildImageMatcher({ productKeywords: ["달래"] }), src: "/assets/products/dalrae-bag.jpeg" },
+  { match: buildImageMatcher({ productKeywords: ["냉이"] }), src: "/assets/products/shepherds-purse-bag.jpeg" },
+  { match: buildImageMatcher({ productKeywords: ["브로콜리"] }), src: "/assets/products/broccoli.jpeg" },
+  { match: buildImageMatcher({ productKeywords: ["양배추"] }), src: "/assets/products/cabbage-half.jpeg" },
+  { match: buildImageMatcher({ productKeywords: ["고구마"] }), src: "/assets/products/sweetpotato-pink-bag.jpeg" },
+  { match: buildImageMatcher({ productKeywords: ["연어"] }), src: "/assets/products/salmon-pack.jpeg" },
+  { match: buildImageMatcher({ productKeywords: ["목심"] }), src: "/assets/products/pork-neck-pack.jpeg" },
+  { match: buildImageMatcher({ productKeywords: ["삼겹"] }), src: "/assets/products/pork-neck-pack.jpeg" },
+  { match: buildImageMatcher({ productKeywords: ["바나나"] }), src: "/assets/products/banana-generic.jpeg" },
+];
+
+const getProductImageSrc = (product, customImageMap = {}) => {
+  const productText = normalizeImageToken(product?.productName || "");
+  if (!productText) return "";
+  if (productText.includes(normalizeImageToken("미분류상품"))) return "";
+
+  const customKey = makeProductImageMapKey({
+    productCode: product?.productCode || "",
+    partner: product?.partner || "",
+    productName: product?.productName || "",
+  });
+
+  if (customKey && customImageMap[customKey]) return customImageMap[customKey];
+  const matched = PRODUCT_IMAGE_MAP.find((entry) => entry.match(product || {}));
+  return matched?.src || "";
+};
+
+const getValue = (row, candidates) => {
+  for (const key of candidates) {
+    if (row[key] !== undefined && row[key] !== null && row[key] !== "") {
+      return row[key];
+    }
+  }
+  return "";
+};
+
+const isTruthyUsage = (value) => {
+  if (value === true) return true;
+  const text = normalizeText(value);
+  return ["true", "y", "yes", "1", "사용", "활성"].includes(text);
+};
+
+const isExplicitFalseUsage = (value) => {
+  if (value === false) return true;
+  const text = normalizeText(value);
+  return ["false", "n", "no", "0"].includes(text);
+};
+
+const decodeCsvFile = async (file) => {
+  const buffer = await file.arrayBuffer();
+
+  const tryDecode = (encoding) => {
+    const decoder = new TextDecoder(encoding);
+    return decoder.decode(buffer);
+  };
+
+  const isBrokenText = (text) => (text.match(/�/g) || []).length > 5;
+
+  let text = tryDecode("utf-8");
+  if (isBrokenText(text)) text = tryDecode("euc-kr");
+  return { text };
+};
+
+const parseHappycallSourceFile = async (file) => {
+  const fileName = String(file?.name || "").toLowerCase();
+
+  if (fileName.endsWith(".xls") || fileName.endsWith(".xlsx")) {
+    const buffer = await file.arrayBuffer();
+    const workbook = XLSX.read(buffer, { type: "array" });
+    const firstSheetName = workbook.SheetNames?.[0];
+    if (!firstSheetName) return [];
+    const sheet = workbook.Sheets[firstSheetName];
+    return XLSX.utils.sheet_to_json(sheet, { defval: "" });
+  }
+
+  const { text } = await decodeCsvFile(file);
+  const parsed = Papa.parse(text, {
+    header: true,
+    skipEmptyLines: true,
+  });
+  return Array.isArray(parsed.data) ? parsed.data : [];
+};
+
+const buildNormalizedRows = (parsedRows) =>
+  parsedRows.map((rawRow, index) => {
+    const row = {};
+
+    Object.keys(rawRow || {}).forEach((key) => {
+      row[normalizeKey(key)] = rawRow[key];
+    });
+
+    const productCode = normalizeProductCode(
+      getValue(row, ["상품코드", "상품 코드", "바코드", "코드"])
+    );
+    const productName = String(
+      getValue(row, ["상품명", "상품 명", "품목명", "품명"]) || ""
+    ).trim();
+    const partner = String(
+      getValue(row, ["거래처명(구매조건명)", "거래처명", "협력사명", "협력사"]) || ""
+    ).trim();
+    const center = String(getValue(row, ["센터명", "센터"]) || "").trim();
+    const qty = parseQty(getValue(row, ["총 발주수량", "발주수량", "수량"]));
+
+    return {
+      ...row,
+      __id: `${productCode || "empty"}-${center || "nocenter"}-${partner || "nopartner"}-${index}`,
+      __index: index,
+      __productCode: productCode,
+      __productName: productName,
+      __partner: partner,
+      __center: center,
+      __qty: qty,
+      __productNameNormalized: normalizeText(productName),
+      __partnerNormalized: normalizeText(partner),
+    };
+  });
+
+const buildReservationRows = (reservationRows) =>
+  (reservationRows || []).map((rawRow, index) => {
+    const row = {};
+
+    Object.keys(rawRow || {}).forEach((key) => {
+      row[normalizeKey(key)] = rawRow[key];
+    });
+
+    const productCode = normalizeProductCode(
+      getValue(row, ["상품코드", "상품 코드", "바코드", "코드"])
+    );
+    const productName = String(getValue(row, ["상품명", "상품 명", "품목명", "품명"]) || "").trim();
+    const partner = String(getValue(row, ["협력사명", "협력사", "거래처명"]) || "").trim();
+    const center = String(getValue(row, ["센터명", "센터"]) || "").trim();
+    const qty = parseQty(getValue(row, ["발주수량", "수량"]));
+    const incomingCost = parseQty(getValue(row, ["입고원가", "원가"]));
+
+    return {
+      ...row,
+      __id: `reservation-${productCode || "empty"}-${center || "nocenter"}-${partner || "nopartner"}-${index}`,
+      __index: index,
+      __productCode: productCode,
+      __productName: productName,
+      __partner: partner,
+      __center: center,
+      __qty: qty,
+      __incomingCost: incomingCost,
+      __reservationRow: true,
+      __productNameNormalized: normalizeText(productName),
+      __partnerNormalized: normalizeText(partner),
+    };
+  });
+
+const mergeRowsWithReservation = (baseRows, reservationRows) => {
+  const mergedMap = new Map();
+
+  (baseRows || []).forEach((row) => {
+    const key = [row.__center || "", row.__partner || "", row.__productCode || ""].join("||");
+    mergedMap.set(key, {
+      ...row,
+      __incomingCost: parseQty(row.__incomingCost || 0),
+    });
+  });
+
+  (reservationRows || []).forEach((row) => {
+    const key = [row.__center || "", row.__partner || "", row.__productCode || ""].join("||");
+    const existing = mergedMap.get(key);
+
+    if (existing) {
+      mergedMap.set(key, {
+        ...existing,
+        ...row,
+        __id: existing.__id,
+        __index: existing.__index,
+        __qty: parseQty(existing.__qty) + parseQty(row.__qty),
+        __incomingCost: parseQty(row.__incomingCost || existing.__incomingCost || 0),
+      });
+      return;
+    }
+
+    mergedMap.set(key, {
+      ...row,
+      __incomingCost: parseQty(row.__incomingCost || 0),
+    });
+  });
+
+  return Array.from(mergedMap.values());
+};
+
+const mergeJobRowsWithReservation = (jobRows, reservationRows) =>
+  mergeRowsWithReservation(
+    (jobRows || []).filter((row) => !row.__reservationRow),
+    reservationRows
+  );
+
+const hashString = (text) => {
+  let hash = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    hash = (hash * 31 + text.charCodeAt(i)) >>> 0;
+  }
+  return String(hash);
+};
+
+const computeJobKey = (rows) =>
+  `job_${hashString(
+    JSON.stringify(
+      (rows || []).map((row) => ({
+        productCode: row.__productCode,
+        productName: row.__productName,
+        center: row.__center,
+        partner: row.__partner,
+        qty: row.__qty,
+      }))
+    )
+  )}`;
+
+const fileToBase64 = (file) =>
+  new Promise((resolve, reject) => {
+    if (!file) {
+      resolve(null);
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = String(reader.result || "");
+      const base64 = result.includes(",") ? result.split(",")[1] : result;
+      resolve({
+        fileName: file.name,
+        mimeType: file.type || "application/octet-stream",
+        imageBase64: base64,
+      });
+    };
+    reader.onerror = () => reject(new Error("사진 읽기 실패"));
+    reader.readAsDataURL(file);
+  });
+
+const filesToBase64 = async (files) => {
+  const list = Array.isArray(files) ? files : [];
+  const results = [];
+
+  for (const file of list) {
+    const encoded = await fileToBase64(file);
+    if (encoded) {
+      results.push(encoded);
+    }
+  }
+
+  return results;
+};
+
+const formatDateTime = (value) => {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleString("ko-KR");
+};
+
+const formatDashboardValue = (label, value) => {
+  if (value == null || value === "") return "-";
+  if (String(label).includes("율") || String(label).includes("률") || String(label).includes("커버리지")) {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? `${(numeric * 100).toFixed(1)}%` : String(value);
+  }
+  if (typeof value === "number") {
+    return value.toLocaleString("ko-KR");
+  }
+  const numeric = Number(value);
+  if (Number.isFinite(numeric) && String(value).trim() !== "") {
+    return numeric.toLocaleString("ko-KR");
+  }
+  return String(value);
+};
+
+void formatDashboardValue;
+
+const getRecordType = (record) => {
+  const type = String(record.처리유형 || "").trim();
+  if (type) return type;
+  if (parseQty(record.회송수량) > 0) return "회송";
+  if (parseQty(record.교환수량) > 0) return "교환";
+  return "기타";
+};
+
+const getRecordQtyText = (record) => {
+  const type = getRecordType(record);
+  if (type === "회송" || type === "RETURN") return `${parseQty(record.회송수량)}개`;
+  if (type === "교환" || type === "EXCHANGE") return `${parseQty(record.교환수량)}개`;
+
+  const returnQty = parseQty(record.회송수량);
+  const exchangeQty = parseQty(record.교환수량);
+  if (returnQty > 0 && exchangeQty > 0) {
+    return `회송 ${returnQty}개 / 교환 ${exchangeQty}개`;
+  }
+  return `${Math.max(returnQty, exchangeQty, 0)}개`;
+};
+
+const formatDateForFileName = () => new Date().toLocaleDateString("sv-SE");
+
+const base64ToBlob = (base64, mimeType = "application/octet-stream") => {
+  const binary = window.atob(String(base64 || ""));
+  const chunkSize = 1024;
+  const bytes = [];
+
+  for (let offset = 0; offset < binary.length; offset += chunkSize) {
+    const slice = binary.slice(offset, offset + chunkSize);
+    const array = new Uint8Array(slice.length);
+
+    for (let i = 0; i < slice.length; i += 1) {
+      array[i] = slice.charCodeAt(i);
+    }
+
+    bytes.push(array);
+  }
+
+  return new Blob(bytes, { type: mimeType });
+};
+
+const extractImageFormulaUrl = (value) => {
+  const text = String(value || "").trim();
+  const match = text.match(/^=IMAGE\("(.+)"\)$/i);
+  return match ? match[1] : text;
+};
+
+const extractGoogleDriveId = (value) => {
+  const text = String(value || "").trim();
+  if (!text) return "";
+
+  const directId = text.match(/^[a-zA-Z0-9_-]{20,}$/);
+  if (directId) return directId[0];
+
+  const fileMatch = text.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+  if (fileMatch) return fileMatch[1];
+
+  const openMatch = text.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  if (openMatch) return openMatch[1];
+
+  const ucMatch = text.match(/\/d\/([a-zA-Z0-9_-]+)/);
+  if (ucMatch) return ucMatch[1];
+
+  return "";
+};
+
+const buildPhotoCandidate = (rawValue) => {
+  const normalized = extractImageFormulaUrl(rawValue);
+  const text = String(normalized || "").trim();
+  if (!text) return null;
+
+  const driveId = extractGoogleDriveId(text);
+  if (driveId) {
+    return {
+      key: driveId,
+      previewUrl: `https://drive.google.com/thumbnail?id=${driveId}&sz=w1200`,
+      downloadUrl: `https://drive.google.com/uc?export=download&id=${driveId}`,
+    };
+  }
+
+  if (/^https?:\/\//i.test(text)) {
+    return {
+      key: text,
+      previewUrl: text,
+      downloadUrl: text,
+    };
+  }
+
+  return null;
+};
+
+const splitPhotoSourceText = (value) =>
+  String(value || "")
+    .split(/\r?\n|[,;]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+const getPhotoCandidatesFromRecord = (record) => {
+  const rawItems = [
+    record?.사진URL,
+    record?.사진링크,
+    ...splitPhotoSourceText(record?.사진링크목록),
+    ...splitPhotoSourceText(record?.사진파일ID목록),
+  ];
+
+  const seen = {};
+  const candidates = [];
+
+  rawItems.forEach((item) => {
+    const candidate = buildPhotoCandidate(item);
+    if (!candidate || seen[candidate.key]) return;
+    seen[candidate.key] = true;
+    candidates.push(candidate);
+  });
+
+  return candidates;
+};
 
 function HistoryPhotoItem({ candidate, index, onOpen, styles }) {
   const [failed, setFailed] = useState(false);
 
   if (failed) {
-    return <div style={styles.photoThumbEmpty}>誘몃━蹂닿린 遺덇?</div>;
+    return <div style={styles.photoThumbEmpty}>미리보기 불가</div>;
   }
 
   return (
     <img
       src={candidate.previewUrl}
-      alt={`泥⑤? ?ъ쭊 ${index + 1}`}
+      alt={`첨부 사진 ${index + 1}`}
       style={styles.photoThumb}
       onClick={() => onOpen(candidate.previewUrl)}
       onError={() => setFailed(true)}
@@ -95,7 +668,7 @@ function HistoryPhotoPreview({ record, onOpen, styles }) {
   const candidates = useMemo(() => getPhotoCandidatesFromRecord(record), [record]);
 
   if (!candidates.length) {
-    return <div style={styles.photoEmpty}>?ъ쭊 ?놁쓬</div>;
+    return <div style={styles.photoEmpty}>사진 없음</div>;
   }
 
   return (
@@ -159,7 +732,7 @@ function App() {
 
   const [isScannerOpen, setIsScannerOpen] = useState(false);
   const [scannerError, setScannerError] = useState("");
-  const [scannerStatus, setScannerStatus] = useState("移대찓?쇰? 以鍮꾪븯怨??덉뒿?덈떎...");
+  const [scannerStatus, setScannerStatus] = useState("카메라를 준비하고 있습니다...");
   const [scannerReady, setScannerReady] = useState(false);
   const [torchSupported, setTorchSupported] = useState(false);
   const [torchOn, setTorchOn] = useState(false);
@@ -239,10 +812,10 @@ function App() {
         };
 
         if (entry.type === "inspection") {
-          merged["?뚯넚?섎웾"] = prevEntry["?뚯넚?섎웾"] || 0;
-          merged["援먰솚?섎웾"] = prevEntry["援먰솚?섎웾"] || 0;
-          merged["?쇳꽣紐?"] = prevEntry["?쇳꽣紐?"] || merged["?쇳꽣紐?"] || "";
-          merged["鍮꾧퀬"] = prevEntry["鍮꾧퀬"] || merged["鍮꾧퀬"] || "";
+          merged.회송수량 = prevEntry.회송수량 || 0;
+          merged.교환수량 = prevEntry.교환수량 || 0;
+          merged.센터명 = prevEntry.센터명 || merged.센터명 || "";
+          merged.비고 = prevEntry.비고 || merged.비고 || "";
           merged.photoFiles =
             (Array.isArray(entry.photoFiles) && entry.photoFiles.length
               ? entry.photoFiles
@@ -250,14 +823,14 @@ function App() {
         }
 
         if (entry.type === "return" || entry.type === "exchange") {
-          merged["寃?덉닔??"] = prevEntry["寃?덉닔??"] || merged["寃?덉닔??"] || 0;
+          merged.검품수량 = prevEntry.검품수량 || merged.검품수량 || 0;
         }
 
         if (entry.type === "movement") {
           merged.qty = parseQty(prevEntry.qty) + parseQty(entry.qty);
-          merged["?뚯넚?섎웾"] = parseQty(prevEntry["?뚯넚?섎웾"]) + parseQty(entry["?뚯넚?섎웾"]);
-          merged["援먰솚?섎웾"] = parseQty(prevEntry["援먰솚?섎웾"]) + parseQty(entry["援먰솚?섎웾"]);
-          merged.鍮꾧퀬 = entry.鍮꾧퀬 || prevEntry.鍮꾧퀬 || "";
+          merged.회송수량 = parseQty(prevEntry.회송수량) + parseQty(entry.회송수량);
+          merged.교환수량 = parseQty(prevEntry.교환수량) + parseQty(entry.교환수량);
+          merged.비고 = entry.비고 || prevEntry.비고 || "";
           merged.photoFiles = [
             ...(Array.isArray(prevEntry.photoFiles) ? prevEntry.photoFiles : []),
             ...(Array.isArray(entry.photoFiles) ? entry.photoFiles : []),
@@ -325,7 +898,7 @@ function App() {
     try {
       setScannerError("");
       setScannerReady(false);
-      setScannerStatus("移대찓?쇰? 以鍮꾪븯怨??덉뒿?덈떎...");
+      setScannerStatus("카메라를 준비하고 있습니다...");
 
       const reader = new BrowserMultiFormatReader();
       const devices = await BrowserCodeReader.listVideoInputDevices();
@@ -399,16 +972,16 @@ function App() {
 
       scannerStatusTimerRef.current = setInterval(() => {
         setScannerStatus((prev) =>
-          prev === "諛붿퐫???몄떇 以?.."
-            ? "諛붿퐫?쒕? ?붾㈃ 以묒븰??留욎떠二쇱꽭??"
-            : "諛붿퐫???몄떇 以?.."
+          prev === "바코드 인식 중..."
+            ? "바코드를 화면 중앙에 맞춰주세요."
+            : "바코드 인식 중..."
         );
       }, 2200);
 
-      setScannerStatus("諛붿퐫???몄떇 以?..");
+      setScannerStatus("바코드 인식 중...");
     } catch (err) {
-      setScannerError(err.message || "移대찓?쇰? ?쒖옉?????놁뒿?덈떎.");
-      setScannerStatus("移대찓?쇰? ?ъ슜?????놁뒿?덈떎.");
+      setScannerError(err.message || "카메라를 시작할 수 없습니다.");
+      setScannerStatus("카메라를 사용할 수 없습니다.");
       stopScanner();
     }
   }, [closeScanner, stopScanner]);
@@ -448,7 +1021,7 @@ function App() {
 
       const result = await response.json();
       if (!response.ok || result.ok === false) {
-        throw new Error(result.message || "CSV 罹먯떆 ????ㅽ뙣");
+        throw new Error(result.message || "CSV 캐시 저장 실패");
       }
 
       const nextJob = result.job || {
@@ -464,9 +1037,9 @@ function App() {
       setCurrentFileModifiedAt(new Date(file.lastModified).toISOString());
       setDashboardSummary(result.summary || {});
   
-      setMessage("CSV ?낅줈???꾨즺");
+      setMessage("CSV 업로드 완료");
     } catch (err) {
-      setError(err.message || "CSV 泥섎━ ?ㅽ뙣");
+      setError(err.message || "CSV 처리 실패");
     } finally {
       setUploadingCsv(false);
       if (e.target) {
@@ -488,7 +1061,7 @@ function App() {
   const loadBootstrap = useCallback(async () => {
     if (!SCRIPT_URL.trim()) {
       setBootLoading(false);
-      setError("REACT_APP_GOOGLE_SCRIPT_URL ?섍꼍蹂?섍? ?꾩슂?⑸땲??");
+      setError("REACT_APP_GOOGLE_SCRIPT_URL 환경변수가 필요합니다.");
       return;
     }
 
@@ -500,7 +1073,7 @@ function App() {
       const result = await response.json();
 
       if (!response.ok || result.ok === false) {
-        throw new Error(result.message || "珥덇린 ?곗씠?곕? 遺덈윭?ㅼ? 紐삵뻽?듬땲??");
+        throw new Error(result.message || "초기 데이터를 불러오지 못했습니다.");
       }
 
       const data = result.data || {};
@@ -514,10 +1087,10 @@ function App() {
 
       (config.exclude_rows || []).forEach((row) => {
         const productCode = normalizeProductCode(
-          getValue(row, ["?곹뭹肄붾뱶", "?곹뭹 肄붾뱶", "肄붾뱶", "諛붿퐫??"])
+          getValue(row, ["상품코드", "상품 코드", "코드", "바코드"])
         );
-        const partner = String(getValue(row, ["?묐젰??", "?묐젰?щ챸"]) || "").trim();
-        const useFlag = getValue(row, ["?ъ슜?щ?"]);
+        const partner = String(getValue(row, ["협력사", "협력사명"]) || "").trim();
+        const useFlag = getValue(row, ["사용여부"]);
 
         if (!isTruthyUsage(useFlag)) return;
         if (!productCode) return;
@@ -532,17 +1105,17 @@ function App() {
       const nextEventMap = {};
       (config.event_rows || []).forEach((row) => {
         const productCode = normalizeProductCode(
-          getValue(row, ["?곹뭹肄붾뱶", "?곹뭹 肄붾뱶", "肄붾뱶", "諛붿퐫??"])
+          getValue(row, ["상품코드", "상품 코드", "코드", "바코드"])
         );
-        const eventName = String(getValue(row, ["?됱궗紐?"]) || "").trim();
-        const useFlag = getValue(row, ["?ъ슜?щ?"]);
+        const eventName = String(getValue(row, ["행사명"]) || "").trim();
+        const useFlag = getValue(row, ["사용여부"]);
 
         if (!productCode) return;
         if (isExplicitFalseUsage(useFlag)) return;
 
         nextEventMap[productCode] = {
-          "?됱궗?щ?": "?됱궗",
-          "?됱궗紐?": eventName,
+          행사여부: "행사",
+          행사명: eventName,
         };
       });
 
@@ -558,18 +1131,18 @@ function App() {
       setHappycallAnalytics(data.happycall || {});
       setProductImageMap(
         (Array.isArray(data.product_images) ? data.product_images : []).reduce((acc, item) => {
-          const key = String(item?.["?대?吏留ㅽ븨??"] || "").trim();
-          const fileId = String(item?.["?쒕씪?대툕?뚯씪ID"] || "").trim();
+          const key = String(item?.["이미지매핑키"] || "").trim();
+          const fileId = String(item?.["드라이브파일ID"] || "").trim();
           const url = fileId
             ? `https://drive.google.com/thumbnail?id=${fileId}&sz=w1200`
-            : String(item?.["?대?吏URL"] || "").trim();
+            : String(item?.["이미지URL"] || "").trim();
           if (key && url) acc[key] = url;
           return acc;
         }, {})
       );
-      setMessage(job ? "理쒓렐 ?묒뾽??遺덈윭?붿뒿?덈떎." : "CSV瑜??낅줈?쒗빐 二쇱꽭??");
+      setMessage(job ? "최근 작업을 불러왔습니다." : "CSV를 업로드해 주세요.");
     } catch (err) {
-      setError(err.message || "珥덇린 ?곗씠?곕? 遺덈윭?ㅼ? 紐삵뻽?듬땲??");
+      setError(err.message || "초기 데이터를 불러오지 못했습니다.");
     } finally {
       setBootLoading(false);
     }
@@ -580,11 +1153,11 @@ function App() {
     const result = await response.json();
 
     if (!response.ok || result.ok === false) {
-      throw new Error(result.message || "?댁뿭 遺덈윭?ㅺ린 ?ㅽ뙣");
+      throw new Error(result.message || "내역 불러오기 실패");
     }
 
     return (Array.isArray(result.records) ? result.records : []).sort((a, b) =>
-      String(b["?묒꽦?쇱떆"] || "").localeCompare(String(a["?묒꽦?쇱떆"] || ""), "ko")
+      String(b.작성일시 || "").localeCompare(String(a.작성일시 || ""), "ko")
     );
   }, []);
 
@@ -596,7 +1169,7 @@ function App() {
       setHistoryRows(nextRows);
       return nextRows;
     } catch (err) {
-      setError(err.message || "?댁뿭??遺덈윭?ㅼ? 紐삵뻽?듬땲??");
+      setError(err.message || "내역을 불러오지 못했습니다.");
       setHistoryRows([]);
       return [];
     } finally {
@@ -625,13 +1198,12 @@ function App() {
   const groupedPartners = useMemo(() => {
     const keyword = normalizeText(search);
     const map = new Map();
-    const visibleHappycallRankMap = buildVisibleHappycallRanks(happycallAnalytics);
 
     filteredRows.forEach((row) => {
       const productCode = row.__productCode;
-      const productName = row.__productName || "?곹뭹紐??놁쓬";
-      const partner = row.__partner || "?묐젰???놁쓬";
-      const center = row.__center || "?쇳꽣 ?놁쓬";
+      const productName = row.__productName || "상품명 없음";
+      const partner = row.__partner || "협력사 없음";
+      const center = row.__center || "센터 없음";
       const qty = row.__qty || 0;
 
       const matched =
@@ -682,6 +1254,8 @@ function App() {
       centerInfo.rows.push(row);
     });
 
+    const visibleHappycallRankMap = buildVisibleHappycallRanks(happycallAnalytics);
+
     return Array.from(map.entries())
       .sort((a, b) => a[0].localeCompare(b[0], "ko"))
       .map(([partner, products]) => ({
@@ -703,16 +1277,16 @@ function App() {
     const map = {};
 
     (historyRows || []).forEach((record) => {
-      const key = `${record["?묐젰?щ챸"] || ""}||${record["?곹뭹肄붾뱶"] || ""}`;
+      const key = `${record.협력사명 || ""}||${record.상품코드 || ""}`;
       if (!map[key]) {
         map[key] = { returnCount: 0, exchangeCount: 0 };
       }
 
-      if (parseQty(record["?뚯넚?섎웾"]) > 0) {
+      if (parseQty(record.회송수량) > 0) {
         map[key].returnCount += 1;
       }
 
-      if (parseQty(record["援먰솚?섎웾"]) > 0) {
+      if (parseQty(record.교환수량) > 0) {
         map[key].exchangeCount += 1;
       }
     });
@@ -799,7 +1373,7 @@ function App() {
 
     const result = await response.json();
     if (!response.ok || result.ok === false) {
-      throw new Error(result.message || "?댁뿭 ??젣 ?ㅽ뙣");
+      throw new Error(result.message || "내역 삭제 실패");
     }
   };
 
@@ -819,7 +1393,7 @@ function App() {
 
     const targetProduct = imageRegistryProducts.find((item) => item.imageKey === selectedImageTargetKey);
     if (!targetProduct) {
-      setError("?곹뭹 ?뺣낫瑜?李얠? 紐삵뻽?듬땲??");
+      setError("?곹뭹 ?뺣낫瑜?李얠? 紐삳뻽?듬땲??");
       if (e.target) e.target.value = "";
       return;
     }
@@ -846,23 +1420,24 @@ function App() {
 
       const result = await response.json();
       if (!response.ok || result.ok === false) {
-        throw new Error(result.message || "?대?吏 ????ㅽ뙣");
+        throw new Error(result.message || "?대?吏 ??? ?ㅽ뙣");
       }
 
       const nextMap = (Array.isArray(result.product_images) ? result.product_images : []).reduce((acc, item) => {
-        const key = String(item?.["?대?吏留ㅽ븨??"] || "").trim();
-        const fileId = String(item?.["?쒕씪?대툕?뚯씪ID"] || "").trim();
+        const key = String(item?.["이미지매핑키"] || "").trim();
+        const fileId = String(item?.["드라이브파일ID"] || "").trim();
         const url = fileId
           ? `https://drive.google.com/thumbnail?id=${fileId}&sz=w1200`
-          : String(item?.["?대?吏URL"] || "").trim();
+          : String(item?.["이미지URL"] || "").trim();
         if (key && url) acc[key] = url;
         return acc;
       }, {});
+
       setProductImageMap(nextMap);
-      setToast("?대?吏 ????꾨즺");
+      setToast("?대?吏 ??? ?꾨즺");
       setMessage("?곹뭹 ?대?吏媛 ??λ릺?덉뒿?덈떎.");
     } catch (err) {
-      setError(err.message || "?대?吏 ????ㅽ뙣");
+      setError(err.message || "?대?吏 ??? ?ㅽ뙣");
     } finally {
       setUploadingImageKey("");
       setSelectedImageTargetKey("");
@@ -897,7 +1472,7 @@ function App() {
 
         requestRows.push({
           ...rest,
-          "?ъ쭊??": photosPayload,
+          사진들: photosPayload,
         });
       }
 
@@ -912,7 +1487,7 @@ function App() {
 
       const result = await response.json();
       if (!response.ok || result.ok === false) {
-        throw new Error(result.message || "諛곗튂 ????ㅽ뙣");
+        throw new Error(result.message || "배치 저장 실패");
       }
 
       removePendingKeys(targetKeys);
@@ -920,7 +1495,7 @@ function App() {
 
       if (Array.isArray(result.records)) {
         const nextRows = [...result.records].sort((a, b) =>
-          String(b["?묒꽦?쇱떆"] || "").localeCompare(String(a["?묒꽦?쇱떆"] || ""), "ko")
+          String(b.작성일시 || "").localeCompare(String(a.작성일시 || ""), "ko")
         );
         setHistoryRows(nextRows);
       }
@@ -929,10 +1504,10 @@ function App() {
         setDashboardSummary(result.summary);
       }
 
-      setToast("????꾨즺");
+      setToast("저장 완료");
     } catch (err) {
       setItemStatuses(targetKeys, "failed");
-      setError(err.message || "諛곗튂 ????ㅽ뙣");
+      setError(err.message || "배치 저장 실패");
     } finally {
       savingRef.current = false;
       setSaving(false);
@@ -973,7 +1548,7 @@ function App() {
     const entityKey = makeEntityKey(currentJob?.job_key, product.productCode, product.partner);
 
     if (qty <= 0) {
-      setError("寃?덉닔?됱쓣 ?낅젰??二쇱꽭??");
+      setError("검품수량을 입력해 주세요.");
       return;
     }
 
@@ -983,30 +1558,30 @@ function App() {
       {
         key: entityKey,
         type: "inspection",
-        "?묒뾽湲곗??쇰삉?봀SV?앸퀎媛?": currentJob?.job_key || "",
-        "?묒꽦?쇱떆": new Date().toISOString(),
-        "?곹뭹肄붾뱶": product.productCode,
-        "?곹뭹紐?": product.productName,
-        "?묐젰?щ챸": product.partner,
-        "?꾩껜諛쒖＜?섎웾": product.totalQty || 0,
-        "諛쒖＜?섎웾": product.totalQty || 0,
-        "寃?덉닔??": qty,
-        "?뚯넚?섎웾": pendingMap[entityKey]?.["?뚯넚?섎웾"] || 0,
-        "援먰솚?섎웾": pendingMap[entityKey]?.["援먰솚?섎웾"] || 0,
-        "?쇳꽣紐?": pendingMap[entityKey]?.["?쇳꽣紐?"] || "",
-        "鍮꾧퀬": pendingMap[entityKey]?.["鍮꾧퀬"] || "",
-        "?됱궗?щ?": product.eventInfo?.["?됱궗?щ?"] || "",
-        "?됱궗紐?": product.eventInfo?.["?됱궗紐?"] || "",
+        작업기준일또는CSV식별값: currentJob?.job_key || "",
+        작성일시: new Date().toISOString(),
+        상품코드: product.productCode,
+        상품명: product.productName,
+        협력사명: product.partner,
+        전체발주수량: product.totalQty || 0,
+        발주수량: product.totalQty || 0,
+        검품수량: qty,
+        회송수량: pendingMap[entityKey]?.회송수량 || 0,
+        교환수량: pendingMap[entityKey]?.교환수량 || 0,
+        센터명: pendingMap[entityKey]?.센터명 || "",
+        비고: pendingMap[entityKey]?.비고 || "",
+        행사여부: product.eventInfo?.행사여부 || "",
+        행사명: product.eventInfo?.행사명 || "",
         photoFiles: photoFiles.length ? photoFiles : pendingMap[entityKey]?.photoFiles || [],
       },
     ]);
-    setToast("??λ릺?덉뒿?덈떎.");
+    setToast("저장되었습니다.");
   };
 
   const saveReturnExchange = async (product, centerName) => {
     const centerInfo = product.centers.find((item) => item.center === centerName);
     if (!centerInfo) {
-      setError("?쇳꽣瑜??좏깮??二쇱꽭??");
+      setError("센터를 선택해 주세요.");
       return;
     }
 
@@ -1018,12 +1593,12 @@ function App() {
     const photoFiles = Array.isArray(draft.photoFiles) ? draft.photoFiles : [];
 
     if (!currentJob?.job_key) {
-      setError("???媛?ν븳 ?묒뾽 湲곗? CSV媛 ?놁뒿?덈떎.");
+      setError("저장 가능한 작업 기준 CSV가 없습니다.");
       return;
     }
 
     if (returnQty <= 0 && exchangeQty <= 0 && !memo && photoFiles.length === 0) {
-      setError("?뚯넚?섎웾, 援먰솚?섎웾, 鍮꾧퀬, ?ъ쭊 以??섎굹 ?댁긽 ?낅젰??二쇱꽭??");
+      setError("회송수량, 교환수량, 비고, 사진 중 하나 이상 입력해 주세요.");
       return;
     }
 
@@ -1043,22 +1618,22 @@ function App() {
         ),
         type: "movement",
         movementType: "RETURN",
-        "?묒뾽湲곗??쇰삉?봀SV?앸퀎媛?": currentJob?.job_key || "",
-        "?묒꽦?쇱떆": new Date().toISOString(),
-        "?곹뭹紐?": product.productName,
-        "?곹뭹肄붾뱶": product.productCode,
-        "?쇳꽣紐?": centerName,
-        "?묐젰?щ챸": product.partner,
-        "諛쒖＜?섎웾": centerInfo.totalQty || 0,
-        "?됱궗?щ?": product.eventInfo?.["?됱궗?щ?"] || "",
-        "?됱궗紐?": product.eventInfo?.["?됱궗紐?"] || "",
-        "泥섎━?좏삎": "?뚯넚",
-        "?뚯넚?섎웾": returnQty,
-        "援먰솚?섎웾": 0,
+        작업기준일또는CSV식별값: currentJob?.job_key || "",
+        작성일시: new Date().toISOString(),
+        상품명: product.productName,
+        상품코드: product.productCode,
+        센터명: centerName,
+        협력사명: product.partner,
+        발주수량: centerInfo.totalQty || 0,
+        행사여부: product.eventInfo?.행사여부 || "",
+        행사명: product.eventInfo?.행사명 || "",
+        처리유형: "회송",
+        회송수량: returnQty,
+        교환수량: 0,
         qty: returnQty,
-        鍮꾧퀬: memo,
+        비고: memo,
         photoFiles,
-        "?꾩껜諛쒖＜?섎웾": product.totalQty || 0,
+        전체발주수량: product.totalQty || 0,
       });
     }
 
@@ -1073,22 +1648,22 @@ function App() {
         ),
         type: "movement",
         movementType: "EXCHANGE",
-        "?묒뾽湲곗??쇰삉?봀SV?앸퀎媛?": currentJob?.job_key || "",
-        "?묒꽦?쇱떆": new Date().toISOString(),
-        "?곹뭹紐?": product.productName,
-        "?곹뭹肄붾뱶": product.productCode,
-        "?쇳꽣紐?": "",
-        "?묐젰?щ챸": product.partner,
-        "諛쒖＜?섎웾": product.totalQty || 0,
-        "?됱궗?щ?": product.eventInfo?.["?됱궗?щ?"] || "",
-        "?됱궗紐?": product.eventInfo?.["?됱궗紐?"] || "",
-        "泥섎━?좏삎": "援먰솚",
-        "?뚯넚?섎웾": 0,
-        "援먰솚?섎웾": exchangeQty,
+        작업기준일또는CSV식별값: currentJob?.job_key || "",
+        작성일시: new Date().toISOString(),
+        상품명: product.productName,
+        상품코드: product.productCode,
+        센터명: "",
+        협력사명: product.partner,
+        발주수량: product.totalQty || 0,
+        행사여부: product.eventInfo?.행사여부 || "",
+        행사명: product.eventInfo?.행사명 || "",
+        처리유형: "교환",
+        회송수량: 0,
+        교환수량: exchangeQty,
         qty: exchangeQty,
-        鍮꾧퀬: memo,
+        비고: memo,
         photoFiles,
-        "?꾩껜諛쒖＜?섎웾": product.totalQty || 0,
+        전체발주수량: product.totalQty || 0,
       });
     }
 
@@ -1103,26 +1678,26 @@ function App() {
         photoNames: [],
       },
     }));
-    setToast("??λ릺?덉뒿?덈떎.");
+    setToast("저장되었습니다.");
   };
 
   const deleteHistoryRecord = async (record) => {
     const rowNumber = Number(record.__rowNumber || 0);
     if (!rowNumber) {
-      setError("??젣?????뺣낫瑜?李얠? 紐삵뻽?듬땲??");
+      setError("삭제할 행 정보를 찾지 못했습니다.");
       return;
     }
 
-    const ok = window.confirm("???댁뿭????젣?좉퉴??");
+    const ok = window.confirm("이 내역을 삭제할까요?");
     if (!ok) return;
 
     try {
       setDeletingRowNumber(rowNumber);
       await cancelMovementEventByRow(rowNumber);
       setHistoryRows((prev) => prev.filter((item) => Number(item.__rowNumber) !== rowNumber));
-      setToast("??젣 ?꾨즺");
+      setToast("삭제 완료");
     } catch (err) {
-      setError(err.message || "?댁뿭 ??젣 ?ㅽ뙣");
+      setError(err.message || "내역 삭제 실패");
     } finally {
       setDeletingRowNumber(null);
     }
@@ -1145,11 +1720,11 @@ function App() {
 
       const result = await response.json();
       if (!response.ok || result.ok === false) {
-        throw new Error(result.message || "ZIP ?ㅼ슫濡쒕뱶 ?ㅽ뙣");
+        throw new Error(result.message || "ZIP 다운로드 실패");
       }
 
       if (!result.zipBase64) {
-        setToast("?ㅼ슫濡쒕뱶 媛?ν븳 ?ъ쭊???놁뒿?덈떎.");
+        setToast("다운로드 가능한 사진이 없습니다.");
         return;
       }
 
@@ -1158,10 +1733,10 @@ function App() {
       const href = URL.createObjectURL(blob);
       const fileName = result.fileName ||
         (mode === "movement"
-          ? `?뚯넚_援먰솚_?ъ쭊_${formatDateForFileName()}.zip`
+          ? `회송_교환_사진_${formatDateForFileName()}.zip`
           : mode === "inspection"
-          ? `寃?덉궗吏?${formatDateForFileName()}.zip`
-          : `李멸퀬?ъ쭊_${formatDateForFileName()}.zip`);
+          ? `검품사진_${formatDateForFileName()}.zip`
+          : `참고사진_${formatDateForFileName()}.zip`);
 
       link.href = href;
       link.download = fileName;
@@ -1169,9 +1744,9 @@ function App() {
       link.click();
       link.remove();
       URL.revokeObjectURL(href);
-      setToast("ZIP ?ㅼ슫濡쒕뱶 ?꾨즺");
+      setToast("ZIP 다운로드 완료");
     } catch (err) {
-      setError(err.message || "ZIP ?ㅼ슫濡쒕뱶 ?ㅽ뙣");
+      setError(err.message || "ZIP 다운로드 실패");
     } finally {
       setZipDownloading("");
     }
@@ -1179,12 +1754,12 @@ function App() {
 
   const resetCurrentJobInputs = async () => {
     if (!currentJob?.job_key) {
-      setError("珥덇린?뷀븷 ?꾩옱 ?묒뾽???놁뒿?덈떎.");
+      setError("초기화할 현재 작업이 없습니다.");
       return;
     }
 
     if (!adminPassword.trim()) {
-      setError("愿由ъ옄 鍮꾨?踰덊샇瑜??낅젰??二쇱꽭??");
+      setError("관리자 비밀번호를 입력해 주세요.");
       return;
     }
 
@@ -1207,7 +1782,7 @@ function App() {
 
       const result = await response.json();
       if (!response.ok || result.ok === false) {
-        throw new Error(result.message || "珥덇린???ㅽ뙣");
+        throw new Error(result.message || "초기화 실패");
       }
 
       clearFlushTimer();
@@ -1224,9 +1799,9 @@ function App() {
       if (result.summary) {
         setDashboardSummary(result.summary);
       }
-      setToast("?꾩옱 ?묒뾽 ?낅젰 ?곗씠??珥덇린???꾨즺");
+      setToast("현재 작업 입력 데이터 초기화 완료");
     } catch (err) {
-      setError(err.message || "珥덇린???ㅽ뙣");
+      setError(err.message || "초기화 실패");
     } finally {
       setAdminResetting(false);
     }
@@ -1245,27 +1820,27 @@ function App() {
 
       const rawRows = (parsedRows || [])
         .map((row) => ({
-          "?쒕ぉ": clampText(row["?쒕ぉ"] || row["subject"] || "", 300),
-          "蹂몃Ц": clampText(row["蹂몃Ц"] || row["body"] || row["?댁슜(?뷀샇??"] || "", 8000),
-          "硫붿씪ID": clampText(row["?명꽣??硫붿떆吏 ID"] || row["硫붿씪ID"] || row["?묒닔踰덊샇"] || "", 200),
-          "蹂대궦?щ엺": clampText(row["蹂대궦?щ엺:(?대쫫)"] || row["senderName"] || "", 200),
-          "?묒닔?쇱떆": clampText(row["?묒닔?쇱떆"] || row["receivedAt"] || "", 100),
-          "?뚰듃?덉궗": clampText(row["泥섎━?뚰듃?덉궗"] || row["?뚰듃?덉궗"] || row["?묐젰?щ챸"] || "", 200),
-          "?μ븷?좏삎": clampText(
-            row["?μ븷?좏삎(??"] || row["?μ븷?좏삎(以?"] || row["?μ븷?좏삎(?)"] || row["?μ븷?좏삎"] || "",
+          제목: clampText(row["제목"] || row["subject"] || "", 300),
+          본문: clampText(row["본문"] || row["body"] || row["내용(암호화)"] || "", 8000),
+          메일ID: clampText(row["인터넷 메시지 ID"] || row["메일ID"] || row["접수번호"] || "", 200),
+          보낸사람: clampText(row["보낸사람:(이름)"] || row["senderName"] || "", 200),
+          접수일시: clampText(row["접수일시"] || row["receivedAt"] || "", 100),
+          파트너사: clampText(row["처리파트너사"] || row["파트너사"] || row["협력사명"] || "", 200),
+          장애유형: clampText(
+            row["장애유형(소)"] || row["장애유형(중)"] || row["장애유형(대)"] || row["장애유형"] || "",
             200
           ),
         }))
-        .filter((row) => String(row["?쒕ぉ"] || "").trim() || String(row["蹂몃Ц"] || "").trim());
+        .filter((row) => String(row.제목 || "").trim() || String(row.본문 || "").trim());
 
       const dedupedMap = new Map();
       rawRows.forEach((row) => {
         const dedupeKey = [
-          String(row["硫붿씪ID"] || "").trim(),
-          String(row["?뚰듃?덉궗"] || "").trim(),
-          String(row["?묒닔?쇱떆"] || "").trim(),
-          String(row["?쒕ぉ"] || "").trim(),
-          String(row["蹂몃Ц"] || "").trim().slice(0, 300),
+          String(row.메일ID || "").trim(),
+          String(row.파트너사 || "").trim(),
+          String(row.접수일시 || "").trim(),
+          String(row.제목 || "").trim(),
+          String(row.본문 || "").trim().slice(0, 300),
         ].join("||");
         dedupedMap.set(dedupeKey, row);
       });
@@ -1274,7 +1849,7 @@ function App() {
       const skippedCount = Math.max(0, rawRows.length - rows.length);
 
       if (!rows.length) {
-        throw new Error("?댄뵾肄?CSV?먯꽌 媛?몄삱 ???덈뒗 ?됱씠 ?놁뒿?덈떎.");
+        throw new Error("해피콜 CSV에서 가져올 수 있는 행이 없습니다.");
       }
 
       const batchSize = rows.length >= 1500 ? 500 : 300;
@@ -1288,7 +1863,7 @@ function App() {
         const batchNumber = Math.floor(index / batchSize) + 1;
         const processedCount = Math.min(index + batchRows.length, rows.length);
         setMessage(
-          `?댄뵾肄?CSV 泥섎━ 以?.. ${batchNumber}/${totalBatches} 諛곗튂 (${processedCount} / ${rows.length})`
+          `해피콜 CSV 처리 중... ${batchNumber}/${totalBatches} 배치 (${processedCount} / ${rows.length})`
         );
 
         const response = await fetch(SCRIPT_URL, {
@@ -1303,7 +1878,7 @@ function App() {
         const result = await response.json();
         if (!response.ok || result.ok === false) {
           throw new Error(
-            result.message || `?댄뵾肄?CSV 媛?몄삤湲곗뿉 ?ㅽ뙣?덉뒿?덈떎. (${batchNumber}/${totalBatches} 諛곗튂)`
+            result.message || `해피콜 CSV 가져오기에 실패했습니다. (${batchNumber}/${totalBatches} 배치)`
           );
         }
 
@@ -1315,13 +1890,13 @@ function App() {
       setHappycallAnalytics(lastResult?.happycall || {});
       setMessage("");
       setToast(
-        `?댄뵾肄?CSV 諛섏쁺 ?꾨즺 쨌 ?좉퇋 ${insertedTotal}嫄?쨌 媛깆떊 ${updatedTotal}嫄?${
-          skippedCount > 0 ? ` 쨌 以묐났 ?쒖쇅 ${skippedCount}嫄?` : ""
+        `해피콜 CSV 반영 완료 · 신규 ${insertedTotal}건 · 갱신 ${updatedTotal}건${
+          skippedCount > 0 ? ` · 중복 제외 ${skippedCount}건` : ""
         }`
       );
     } catch (err) {
       setError(
-        `${err.message || "?댄뵾肄?CSV 媛?몄삤湲곗뿉 ?ㅽ뙣?덉뒿?덈떎."} 媛숈? CSV瑜??ㅼ떆 ?щ━硫??댁뼱??諛섏쁺?⑸땲??`
+        `${err.message || "해피콜 CSV 가져오기에 실패했습니다."} 같은 CSV를 다시 올리면 이어서 반영됩니다.`
       );
     } finally {
       setUploadingHappycallCsv(false);
@@ -1358,10 +1933,10 @@ function App() {
       <div style={styles.headerCard}>
         <div style={styles.headerTopRow}>
           <div>
-            <h1 style={styles.title}>GS?좎꽑媛뺥솕吏?먰?</h1>
+            <h1 style={styles.title}>GS신선강화지원팀</h1>
             <div style={styles.headerLinkRow}>
               <a href={worksheetUrl || "#"} target="_blank" rel="noreferrer" style={styles.headerLink}>
-                {worksheetUrl || "?뚰겕?쒗듃 URL ?놁쓬"}
+                {worksheetUrl || "워크시트 URL 없음"}
               </a>
               <button
                 type="button"
@@ -1369,18 +1944,18 @@ function App() {
                   if (!worksheetUrl) return;
                   try {
                     await navigator.clipboard.writeText(worksheetUrl);
-                    setToast("?뚰겕?쒗듃 留곹겕 蹂듭궗 ?꾨즺");
+                    setToast("워크시트 링크 복사 완료");
                   } catch (_) {
-                    setError("?뚰겕?쒗듃 留곹겕 蹂듭궗 ?ㅽ뙣");
+                    setError("워크시트 링크 복사 실패");
                   }
                 }}
                 style={styles.copyButton}
               >
-                蹂듭궗
+                복사
               </button>
             </div>
           </div>
-          <div style={styles.headerModeBadge}>{mode === "inspection" ? "寃??紐⑤뱶" : "?뚯넚/援먰솚 紐⑤뱶"}</div>
+          <div style={styles.headerModeBadge}>{mode === "inspection" ? "검품 모드" : "회송/교환 모드"}</div>
         </div>
         <div style={styles.quickActionGrid}>
           <button
@@ -1388,16 +1963,16 @@ function App() {
             onClick={() => setMode("inspection")}
             style={{ ...styles.quickActionCard, ...(mode === "inspection" ? styles.quickActionCardActive : {}) }}
           >
-            <span style={styles.quickActionIcon}>?뵊</span>
-            <span style={styles.quickActionText}>寃??</span>
+            <span style={styles.quickActionIcon}>🔎</span>
+            <span style={styles.quickActionText}>검품</span>
           </button>
           <button
             type="button"
             onClick={() => setMode("return")}
             style={{ ...styles.quickActionCard, ...(mode === "return" ? styles.quickActionCardActive : {}) }}
           >
-            <span style={styles.quickActionIcon}>?벀</span>
-            <span style={styles.quickActionText}>?뚯넚</span>
+            <span style={styles.quickActionIcon}>📦</span>
+            <span style={styles.quickActionText}>회송</span>
           </button>
           <button
             type="button"
@@ -1407,8 +1982,8 @@ function App() {
             }}
             style={styles.quickActionCard}
           >
-            <span style={styles.quickActionIcon}>?뱞</span>
-            <span style={styles.quickActionText}>?댁뿭</span>
+            <span style={styles.quickActionIcon}>📄</span>
+            <span style={styles.quickActionText}>내역</span>
           </button>
         </div>
       </div>
@@ -1416,12 +1991,12 @@ function App() {
       <div style={styles.panel}>
         <div style={styles.csvHeaderRow}>
           <div>
-            <div style={styles.sectionTitle}>CSV ?낅줈??</div>
+            <div style={styles.sectionTitle}>CSV 업로드</div>
             <div style={styles.metaText}>
-              ?꾩옱 ?묒뾽: {currentFileName || "?낅줈?쒕맂 ?뚯씪 ?놁쓬"}
+              현재 작업: {currentFileName || "업로드된 파일 없음"}
             </div>
             <div style={styles.metaText}>
-              ?뚯씪 ?섏젙?쇱옄: {currentFileModifiedAt ? formatDateTime(currentFileModifiedAt) : "-"}
+              파일 수정일자: {currentFileModifiedAt ? formatDateTime(currentFileModifiedAt) : "-"}
             </div>
           </div>
           <div style={styles.csvActionRow}>
@@ -1430,7 +2005,7 @@ function App() {
               onClick={() => fileInputRef.current?.click()}
               style={styles.primaryButton}
             >
-              {uploadingCsv ? "泥섎━ 以?.." : "寃??CSV ?좏깮"}
+              {uploadingCsv ? "처리 중..." : "검품 CSV 선택"}
             </button>
             <button
               type="button"
@@ -1441,7 +2016,7 @@ function App() {
                 opacity: uploadingHappycallCsv ? 0.7 : 1,
               }}
             >
-              {uploadingHappycallCsv ? "泥섎━ 以?.." : "?댄뵾肄??뚯씪 ?좏깮"}
+              {uploadingHappycallCsv ? "처리 중..." : "해피콜 파일 선택"}
             </button>
             <button
               type="button"
@@ -1452,7 +2027,8 @@ function App() {
               }}
               style={styles.secondaryButton}
             >
-              愿由ъ옄 珥덇린??            </button>
+              관리자 초기화
+            </button>
             <button
               type="button"
               onClick={() => {
@@ -1475,13 +2051,11 @@ function App() {
             ref={searchInputRef}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="?곹뭹紐?/ ?곹뭹肄붾뱶 / ?묐젰??寃??"
+            placeholder="상품명 / 상품코드 / 협력사 검색"
             style={styles.searchInput}
           />
-          <button type="button" onClick={() => setIsScannerOpen(true)} style={styles.scanButton} aria-label="諛붿퐫???ㅼ틪">
-            <span style={styles.scanIcon}>
-              <BarcodeScanIcon size={26} />
-            </span>
+          <button type="button" onClick={() => setIsScannerOpen(true)} style={styles.scanButton} aria-label="바코드 스캔">
+            <span style={styles.scanIcon}>스캔</span>
           </button>
         </div>
       </div>
@@ -1489,9 +2063,9 @@ function App() {
       {(bootLoading || uploadingCsv || error || message) && (
         <div style={error ? styles.errorBox : styles.infoBox}>
           {bootLoading
-            ? "珥덇린 ?곗씠?곕? 遺덈윭?ㅻ뒗 以?.."
+            ? "초기 데이터를 불러오는 중..."
             : uploadingCsv
-            ? "CSV 泥섎━ 以?.."
+            ? "CSV 처리 중..."
             : error || message}
         </div>
       )}
@@ -1499,57 +2073,92 @@ function App() {
       <div style={styles.panel}>
         <div style={styles.happycallHeader}>
           <div>
-            <div style={styles.sectionTitle}>?꾩씪 ?댄뵾肄?理쒕떎 TOP10</div>
-            <div style={styles.metaText}>?꾩씪 ?묒닔 ?댄뵾肄?湲곗?</div>
+            <div style={styles.sectionTitle}>전일 해피콜 최다 TOP10</div>
+            <div style={styles.metaText}>전일 접수 해피콜 기준</div>
           </div>
         </div>
 
         {previousDayHappycallTopList.length === 0 ? (
-          <div style={styles.emptyBox}>?꾩씪 ?댄뵾肄??곗씠?곌? ?놁뒿?덈떎.</div>
+          <div style={styles.emptyBox}>전일 해피콜 데이터가 없습니다.</div>
         ) : (
           <div style={styles.kpiGrid}>
             {previousDayHappycallTopList.map((card) => (
-              <TopRankCard
+              <div
                 key={`happycall-top-${card.rank}`}
-                card={card}
-                styles={styles}
-                metaText={`${card.count.toLocaleString("ko-KR")}건 · ${formatPercent(card.share)}`}
-              />
+                style={{
+                  ...styles.kpiCard,
+                  borderColor:
+                    card.rank === 1 ? "#fca5a5" : card.rank === 2 ? "#93c5fd" : card.rank === 3 ? "#86efac" : "#e5e7eb",
+                }}
+              >
+                <div style={styles.topRankRow}>
+                  {getTopMedal(card.rank) ? (
+                    <span style={styles.topMedal}>{getTopMedal(card.rank)}</span>
+                  ) : (
+                    <span style={styles.topMedalPlaceholder} />
+                  )}
+                  <div
+                    style={{
+                      ...styles.kpiLabel,
+                      marginBottom: 0,
+                      fontWeight: 900,
+                      color:
+                        card.rank === 1 ? "#b91c1c" : card.rank === 2 ? "#1d4ed8" : card.rank === 3 ? "#15803d" : "#64748b",
+                    }}
+                  >
+                    {`TOP.${card.rank}`}
+                  </div>
+                </div>
+                <div
+                  style={{
+                    ...styles.kpiValue,
+                    fontSize: 18,
+                    fontWeight: 900,
+                    color:
+                      card.rank === 1 ? "#b91c1c" : card.rank === 2 ? "#1d4ed8" : card.rank === 3 ? "#15803d" : "#0f172a",
+                  }}
+                >
+                  {card.productName}
+                </div>
+                <div style={styles.topCardMeta}>
+                  {card.count.toLocaleString("ko-KR")}건 · {formatPercent(card.share)}
+                </div>
+              </div>
             ))}
           </div>
         )}
       </div>
 
       <div style={styles.countRow}>
-        <div style={styles.countText}>珥?{groupedPartners.reduce((sum, item) => sum + item.products.length, 0)}嫄?</div>
+        <div style={styles.countText}>총 {groupedPartners.reduce((sum, item) => sum + item.products.length, 0)}건</div>
         <div style={styles.countActions}>
           <button
             type="button"
             onClick={() => downloadPhotoZip("movement")}
             style={styles.historyButton}
           >
-            {zipDownloading === "movement" ? "ZIP ?앹꽦 以?.." : "遺덈웾?ъ쭊 ???"}
+            {zipDownloading === "movement" ? "ZIP 생성 중..." : "불량사진 저장"}
           </button>
           <button
             type="button"
             onClick={() => downloadPhotoZip("inspection")}
             style={styles.historyButton}
           >
-            {zipDownloading === "inspection" ? "ZIP ?앹꽦 以?.." : "寃?덉궗吏????"}
+            {zipDownloading === "inspection" ? "ZIP 생성 중..." : "검품사진 저장"}
           </button>
           <button
             type="button"
             onClick={() => downloadPhotoZip("photoOnly")}
             style={styles.historyButton}
           >
-            {zipDownloading === "photoOnly" ? "ZIP ?앹꽦 以?.." : "李멸퀬?ъ쭊 ???"}
+            {zipDownloading === "photoOnly" ? "ZIP 생성 중..." : "참고사진 저장"}
           </button>
         </div>
       </div>
 
       <div style={styles.list}>
         {groupedPartners.length === 0 ? (
-          <div style={styles.emptyBox}>?쒖떆???곹뭹???놁뒿?덈떎.</div>
+          <div style={styles.emptyBox}>표시할 상품이 없습니다.</div>
         ) : (
           groupedPartners.map((partnerGroup) => (
             <div key={partnerGroup.partner} style={styles.partnerGroup}>
@@ -1561,7 +2170,7 @@ function App() {
                 }
               >
                 <div style={styles.partnerTitle}>{partnerGroup.partner}</div>
-                <div style={styles.partnerCount}>{partnerGroup.products.length}嫄?</div>
+                <div style={styles.partnerCount}>{partnerGroup.products.length}건</div>
               </button>
 
               {expandedPartner === partnerGroup.partner && (
@@ -1573,8 +2182,8 @@ function App() {
                       exchangeCount: 0,
                     };
                     const historySummary = [
-                      historyCounts.returnCount > 0 ? `?뚯넚 ${historyCounts.returnCount}` : "",
-                      historyCounts.exchangeCount > 0 ? `援먰솚 ${historyCounts.exchangeCount}` : "",
+                      historyCounts.returnCount > 0 ? `회송 ${historyCounts.returnCount}` : "",
+                      historyCounts.exchangeCount > 0 ? `교환 ${historyCounts.exchangeCount}` : "",
                     ]
                       .filter(Boolean)
                       .join(" / ");
@@ -1597,9 +2206,9 @@ function App() {
                       ? inspectionStatus
                       : returnStatus || exchangeStatus;
                     const happycallBadges = [
-                      ["1d", "?꾩씪"],
-                      ["7d", "?쇱＜??"],
-                      ["30d", "?쒕떖"],
+                      ["1d", "전일"],
+                      ["7d", "일주일"],
+                      ["30d", "한달"],
                     ]
                       .map(([periodKey, label]) => {
                         const stats = product.happycallStats?.[periodKey];
@@ -1607,36 +2216,41 @@ function App() {
                         return {
                           key: periodKey,
                           rank: stats.rank,
-                          label: `${label} ?댄뵾肄?TOP${stats.rank}`,
+                          label: `${label} 해피콜 TOP${stats.rank}`,
                         };
                       })
                       .filter(Boolean);
 
-                    const showEventBadge = !!product.eventInfo?.["?됱궗?щ?"];
-                    const eventBadgeText = product.eventInfo?.["?됱궗紐?"] || "?됱궗";
-
                     return (
-                      <ProductCard
-                        key={`${partnerGroup.partner}-${product.productCode}`}
-                        mode={mode}
-                        product={product}
-                        happycallBadges={happycallBadges}
-                        historySummary={historySummary}
-                        styles={styles}
-                        onToggleOpen={() => {
-                          const nextKey = productStateKey;
-                          setExpandedProductCode((prev) => (prev === nextKey ? "" : nextKey));
-                          setSelectedCenterByProduct((prev) => ({
-                            ...prev,
-                            [productStateKey]: prev[productStateKey] || product.centers[0]?.center || "",
-                          }));
-                        }}
-                        isOpen={isOpen}
-                        showEventBadge={showEventBadge}
-                        eventBadgeText={eventBadgeText}
-                        emptyProductNameText="?곹뭹紐??놁쓬"
-                        inspectionContent={
-                          <>
+                      <div key={`${partnerGroup.partner}-${product.productCode}`} style={styles.card}>
+                        {mode === "inspection" ? (
+                          <div style={styles.cardInlineInspection}>
+                            <div style={styles.cardInlineInfo}>
+                              <div style={styles.cardTopRowInline}>
+                                {happycallBadges.length ? (
+                                  <div style={styles.happycallBadgeRow}>
+                                    {happycallBadges.map((badge) => (
+                                      <span key={badge.key} style={{ ...styles.happycallBadge, ...getHappycallRankStyle(badge.rank) }}>
+                                        {badge.label}
+                                      </span>
+                                    ))}
+                                  </div>
+                                ) : null}
+                                <div style={styles.cardTitle}>{product.productName || "상품명 없음"}</div>
+                                {product.eventInfo?.행사여부 ? (
+                                  <span style={styles.eventBadge}>
+                                    {product.eventInfo.행사명 || "행사"}
+                                  </span>
+                                ) : null}
+                              </div>
+                              <div style={styles.cardMeta}>코드 {product.productCode}</div>
+                              <div style={styles.cardMeta}>협력사 {product.partner}</div>
+                              <div style={styles.qtyRow}>
+                                <span style={styles.qtyChip}>총 발주 {product.totalQty}개</span>
+                                {historySummary ? <span style={styles.qtyChip}>{historySummary}</span> : null}
+                              </div>
+                            </div>
+
                             <div style={styles.inlineInspectionRow}>
                               <input
                                 type="number"
@@ -1652,16 +2266,16 @@ function App() {
                                       {
                                         key: entityKey,
                                         type: "inspection",
-                                        "?묒뾽湲곗??쇰삉?봀SV?앸퀎媛?": currentJob?.job_key || "",
-                                        "?묒꽦?쇱떆": new Date().toISOString(),
-                                        "?곹뭹肄붾뱶": product.productCode,
-                                        "?곹뭹紐?": product.productName,
-                                        "?묐젰?щ챸": product.partner,
-                                        "?꾩껜諛쒖＜?섎웾": product.totalQty || 0,
-                                        "諛쒖＜?섎웾": product.totalQty || 0,
-                                        "寃?덉닔??": qty,
-                                        "?뚯넚?섎웾": 0,
-                                        "援먰솚?섎웾": 0,
+                                        작업기준일또는CSV식별값: currentJob?.job_key || "",
+                                        작성일시: new Date().toISOString(),
+                                        상품코드: product.productCode,
+                                        상품명: product.productName,
+                                        협력사명: product.partner,
+                                        전체발주수량: product.totalQty || 0,
+                                        발주수량: product.totalQty || 0,
+                                        검품수량: qty,
+                                        회송수량: 0,
+                                        교환수량: 0,
                                       },
                                     ]);
                                   } else {
@@ -1669,11 +2283,11 @@ function App() {
                                   }
                                 }}
                                 style={styles.inlineQtyInput}
-                                placeholder="寃?덉닔??"
+                                placeholder="검품수량"
                               />
                             </div>
                             <div style={styles.formGroup}>
-                              <label style={styles.label}>寃???ъ쭊</label>
+                              <label style={styles.label}>검품 사진</label>
                               <input
                                 type="file"
                                 accept="image/*"
@@ -1692,16 +2306,16 @@ function App() {
                                       {
                                         key: entityKey,
                                         type: "inspection",
-                                        "?묒뾽湲곗??쇰삉?봀SV?앸퀎媛?": currentJob?.job_key || "",
-                                        "?묒꽦?쇱떆": new Date().toISOString(),
-                                        "?곹뭹肄붾뱶": product.productCode,
-                                        "?곹뭹紐?": product.productName,
-                                        "?묐젰?щ챸": product.partner,
-                                        "?꾩껜諛쒖＜?섎웾": product.totalQty || 0,
-                                        "諛쒖＜?섎웾": product.totalQty || 0,
-                                        "寃?덉닔??": parseQty(draft.inspectionQty),
-                                        "?뚯넚?섎웾": 0,
-                                        "援먰솚?섎웾": 0,
+                                        작업기준일또는CSV식별값: currentJob?.job_key || "",
+                                        작성일시: new Date().toISOString(),
+                                        상품코드: product.productCode,
+                                        상품명: product.productName,
+                                        협력사명: product.partner,
+                                        전체발주수량: product.totalQty || 0,
+                                        발주수량: product.totalQty || 0,
+                                        검품수량: parseQty(draft.inspectionQty),
+                                        회송수량: 0,
+                                        교환수량: 0,
                                         photoFiles: files,
                                       },
                                     ]);
@@ -1712,7 +2326,7 @@ function App() {
                               <div style={styles.metaText}>
                                 {Array.isArray(draft.photoNames) && draft.photoNames.length
                                   ? draft.photoNames.join(", ")
-                                  : "?좏깮???ъ쭊 ?놁쓬"}
+                                  : "선택된 사진 없음"}
                               </div>
                             </div>
                             <button
@@ -1720,14 +2334,53 @@ function App() {
                               onClick={() => saveInspectionQtySimple(product)}
                               style={styles.saveButton}
                             >
-                              {inspectionStatus === "saving" ? "??μ쨷..." : "???"}
+                              {inspectionStatus === "saving" ? "저장중..." : "저장"}
                             </button>
-                          </>
-                        }
-                        renderExpandedContent={() => (
+                          </div>
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              style={styles.cardButton}
+                              onClick={() => {
+                                const nextKey = productStateKey;
+                                setExpandedProductCode((prev) => (prev === nextKey ? "" : nextKey));
+                                setSelectedCenterByProduct((prev) => ({
+                                  ...prev,
+                                  [productStateKey]:
+                                    prev[productStateKey] || product.centers[0]?.center || "",
+                                }));
+                              }}
+                            >
+                              <div style={styles.cardTopRow}>
+                                {happycallBadges.length ? (
+                                  <div style={styles.happycallBadgeRow}>
+                                    {happycallBadges.map((badge) => (
+                                      <span key={badge.key} style={{ ...styles.happycallBadge, ...getHappycallRankStyle(badge.rank) }}>
+                                        {badge.label}
+                                      </span>
+                                    ))}
+                                  </div>
+                                ) : null}
+                                <div style={styles.cardTitle}>{product.productName || "상품명 없음"}</div>
+                                {product.eventInfo?.행사여부 ? (
+                                  <span style={styles.eventBadge}>
+                                    {product.eventInfo.행사명 || "행사"}
+                                  </span>
+                                ) : null}
+                              </div>
+                              <div style={styles.cardMeta}>코드 {product.productCode}</div>
+                              <div style={styles.cardMeta}>협력사 {product.partner}</div>
+                              <div style={styles.qtyRow}>
+                                <span style={styles.qtyChip}>총 발주 {product.totalQty}개</span>
+                                {historySummary ? <span style={styles.qtyChip}>{historySummary}</span> : null}
+                              </div>
+                            </button>
+
+                            {isOpen && (
                           <div style={styles.editorBox}>
                             <div style={styles.formGroup}>
-                              <label style={styles.label}>?쇳꽣 ?좏깮</label>
+                              <label style={styles.label}>센터 선택</label>
                               <select
                                 value={selectedCenter}
                                 onChange={(e) =>
@@ -1740,7 +2393,7 @@ function App() {
                               >
                                 {product.centers.map((center) => (
                                   <option key={center.center} value={center.center}>
-                                    {center.center} / {center.totalQty}媛?
+                                    {center.center} / {center.totalQty}개
                                   </option>
                                 ))}
                               </select>
@@ -1749,85 +2402,91 @@ function App() {
                             {selectedCenterInfo && (
                               <div style={styles.detailBlock}>
                                 <div style={styles.metaText}>
-                                  ?좏깮 ?쇳꽣 諛쒖＜?섎웾: {selectedCenterInfo.totalQty}媛?
+                                  선택 센터 발주수량: {selectedCenterInfo.totalQty}개
                                 </div>
                                 <div style={styles.metaText}>
-                                  ?됱궗: {product.eventInfo?.["?됱궗?щ?"] || ""}
-                                  {product.eventInfo?.["?됱궗紐?"] ? ` (${product.eventInfo["?됱궗紐?"]})` : ""}
+                                  행사: {product.eventInfo?.행사여부 || ""}
+                                  {product.eventInfo?.행사명 ? ` (${product.eventInfo.행사명})` : ""}
                                 </div>
                               </div>
                             )}
 
-                            <>
-                              <div style={styles.grid2}>
+                              <>
+                                <div style={styles.grid2}>
+                                  <div style={styles.formGroup}>
+                                    <label style={styles.label}>회송수량</label>
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      value={draft.returnQty || ""}
+                                      onChange={(e) =>
+                                        updateDraft(draftKey, "returnQty", e.target.value)
+                                      }
+                                      style={styles.input}
+                                    />
+                                  </div>
+                                  <div style={styles.formGroup}>
+                                    <label style={styles.label}>교환수량</label>
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      value={draft.exchangeQty || ""}
+                                      onChange={(e) =>
+                                        updateDraft(draftKey, "exchangeQty", e.target.value)
+                                      }
+                                      style={styles.input}
+                                    />
+                                  </div>
+                                </div>
+
                                 <div style={styles.formGroup}>
-                                  <label style={styles.label}>?뚯넚?섎웾</label>
-                                  <input
-                                    type="number"
-                                    min="0"
-                                    value={draft.returnQty || ""}
-                                    onChange={(e) => updateDraft(draftKey, "returnQty", e.target.value)}
-                                    style={styles.input}
+                                  <label style={styles.label}>비고</label>
+                                  <textarea
+                                    value={draft.memo || ""}
+                                    onChange={(e) => updateDraft(draftKey, "memo", e.target.value)}
+                                    style={styles.textarea}
+                                    rows={3}
+                                    placeholder="불량 사유 / 전달 사항"
                                   />
                                 </div>
+
                                 <div style={styles.formGroup}>
-                                  <label style={styles.label}>援먰솚?섎웾</label>
+                                  <label style={styles.label}>사진 첨부</label>
                                   <input
-                                    type="number"
-                                    min="0"
-                                    value={draft.exchangeQty || ""}
-                                    onChange={(e) => updateDraft(draftKey, "exchangeQty", e.target.value)}
-                                    style={styles.input}
+                                    type="file"
+                                    accept="image/*"
+                                    multiple
+                                    onChange={(e) => {
+                                      const files = Array.from(e.target.files || []);
+                                      updateDraft(draftKey, "photoFiles", files);
+                                      updateDraft(
+                                        draftKey,
+                                        "photoNames",
+                                        files.map((file) => file.name)
+                                      );
+                                    }}
+                                    style={styles.fileInput}
                                   />
+                                  <div style={styles.metaText}>
+                                    {Array.isArray(draft.photoNames) && draft.photoNames.length
+                                      ? draft.photoNames.join(", ")
+                                      : "선택된 사진 없음"}
+                                  </div>
                                 </div>
-                              </div>
 
-                              <div style={styles.formGroup}>
-                                <label style={styles.label}>鍮꾧퀬</label>
-                                <textarea
-                                  value={draft.memo || ""}
-                                  onChange={(e) => updateDraft(draftKey, "memo", e.target.value)}
-                                  style={styles.textarea}
-                                  rows={3}
-                                  placeholder="遺덈웾 ?ъ쑀 / ?꾨떖 ?ы빆"
-                                />
-                              </div>
-
-                              <div style={styles.formGroup}>
-                                <label style={styles.label}>?ъ쭊 泥⑤?</label>
-                                <input
-                                  type="file"
-                                  accept="image/*"
-                                  multiple
-                                  onChange={(e) => {
-                                    const files = Array.from(e.target.files || []);
-                                    updateDraft(draftKey, "photoFiles", files);
-                                    updateDraft(
-                                      draftKey,
-                                      "photoNames",
-                                      files.map((file) => file.name)
-                                    );
-                                  }}
-                                  style={styles.fileInput}
-                                />
-                                <div style={styles.metaText}>
-                                  {Array.isArray(draft.photoNames) && draft.photoNames.length
-                                    ? draft.photoNames.join(", ")
-                                    : "?좏깮???ъ쭊 ?놁쓬"}
-                                </div>
-                              </div>
-
-                              <button
-                                type="button"
-                                onClick={() => saveReturnExchange(product, selectedCenter)}
-                                style={styles.saveButton}
-                              >
-                                {actionStatus === "saving" ? "??μ쨷..." : "???"}
-                              </button>
-                            </>
+                                <button
+                                  type="button"
+                                  onClick={() => saveReturnExchange(product, selectedCenter)}
+                                  style={styles.saveButton}
+                                >
+                                  {actionStatus === "saving" ? "저장중..." : "저장"}
+                                </button>
+                              </>
                           </div>
+                            )}
+                          </>
                         )}
-                      />
+                      </div>
                     );
                   })}
                 </div>
@@ -1842,21 +2501,21 @@ function App() {
           <div style={styles.bottomSheet} onClick={(e) => e.stopPropagation()}>
             <div style={styles.sheetHandle} />
             <div style={styles.sheetHeader}>
-              <h2 style={styles.sheetTitle}>????댁뿭</h2>
+              <h2 style={styles.sheetTitle}>저장 내역</h2>
               <button type="button" onClick={() => setShowHistory(false)} style={styles.sheetClose}>
-                ?リ린
+                닫기
               </button>
             </div>
 
             {historyLoading ? (
-              <div style={styles.infoBox}>?댁뿭 遺덈윭?ㅻ뒗 以?..</div>
+              <div style={styles.infoBox}>내역 불러오는 중...</div>
             ) : historyRows.length === 0 ? (
-              <div style={styles.emptyBox}>?쒖떆???댁뿭???놁뒿?덈떎.</div>
+              <div style={styles.emptyBox}>표시할 내역이 없습니다.</div>
             ) : (
               <div style={styles.sheetList}>
                 {historyRows.map((record, index) => (
                   <div
-                    key={`${record.__rowNumber || "row"}-${record["?묒꽦?쇱떆"] || "time"}-${index}`}
+                    key={`${record.__rowNumber || "row"}-${record.작성일시 || "time"}-${index}`}
                     style={styles.historyCard}
                   >
                     <button
@@ -1865,21 +2524,21 @@ function App() {
                       style={styles.deleteBtn}
                       disabled={deletingRowNumber === Number(record.__rowNumber)}
                     >
-                      {deletingRowNumber === Number(record.__rowNumber) ? "..." : "횞"}
+                      {deletingRowNumber === Number(record.__rowNumber) ? "..." : "×"}
                     </button>
 
                     <div style={styles.cardTopRow}>
-                      <div style={styles.cardTitle}>{record["?곹뭹紐?"] || "?곹뭹紐??놁쓬"}</div>
+                      <div style={styles.cardTitle}>{record.상품명 || "상품명 없음"}</div>
                       <span style={styles.typeBadge}>{getRecordType(record)}</span>
                     </div>
-                    <div style={styles.cardMeta}>肄붾뱶 {record["?곹뭹肄붾뱶"] || "-"}</div>
-                    <div style={styles.cardMeta}>?쇳꽣 {record["?쇳꽣紐?"] || "-"}</div>
-                    <div style={styles.cardMeta}>?묐젰??{record["?묐젰?щ챸"] || "-"}</div>
+                    <div style={styles.cardMeta}>코드 {record.상품코드 || "-"}</div>
+                    <div style={styles.cardMeta}>센터 {record.센터명 || "-"}</div>
+                    <div style={styles.cardMeta}>협력사 {record.협력사명 || "-"}</div>
                     <div style={styles.qtyRow}>
-                      <span style={styles.qtyChip}>泥섎━?섎웾 {getRecordQtyText(record)}</span>
-                      <span style={styles.qtyChip}>{formatDateTime(record["?묒꽦?쇱떆"])}</span>
+                      <span style={styles.qtyChip}>처리수량 {getRecordQtyText(record)}</span>
+                      <span style={styles.qtyChip}>{formatDateTime(record.작성일시)}</span>
                     </div>
-                    <div style={styles.historyMemo}>{record["鍮꾧퀬"] || "-"}</div>
+                    <div style={styles.historyMemo}>{record.비고 || "-"}</div>
 
                     <div style={styles.photoWrap}>
                       <HistoryPhotoPreview
@@ -1898,7 +2557,7 @@ function App() {
 
       {zoomPhotoUrl && (
         <div style={styles.photoOverlay} onClick={() => setZoomPhotoUrl("")}>
-          <img src={zoomPhotoUrl} alt="?뺣? ?ъ쭊" style={styles.photoZoom} />
+          <img src={zoomPhotoUrl} alt="확대 사진" style={styles.photoZoom} />
         </div>
       )}
 
@@ -1907,28 +2566,28 @@ function App() {
           <div style={styles.bottomSheet} onClick={(e) => e.stopPropagation()}>
             <div style={styles.sheetHandle} />
             <div style={styles.sheetHeader}>
-              <h2 style={styles.sheetTitle}>愿由ъ옄 珥덇린??</h2>
+              <h2 style={styles.sheetTitle}>관리자 초기화</h2>
               <button
                 type="button"
                 onClick={() => !adminResetting && setShowAdminReset(false)}
                 style={styles.sheetClose}
               >
-                ?リ린
+                닫기
               </button>
             </div>
 
             <div style={styles.infoBox}>
-              ?꾩옱 ?묒뾽??寃?덉닔?? ?뚯넚/援먰솚 ?댁뿭, ?곌껐???ъ쭊怨??쒕씪?대툕 ?먮낯源뚯? ??젣?⑸땲??
+              현재 작업의 검품수량, 회송/교환 내역, 연결된 사진과 드라이브 원본까지 삭제됩니다.
             </div>
 
             <div style={styles.formGroup}>
-              <label style={styles.label}>愿由ъ옄 鍮꾨?踰덊샇</label>
+              <label style={styles.label}>관리자 비밀번호</label>
               <input
                 type="password"
                 value={adminPassword}
                 onChange={(e) => setAdminPassword(e.target.value)}
                 style={styles.input}
-                placeholder="鍮꾨?踰덊샇 ?낅젰"
+                placeholder="비밀번호 입력"
                 disabled={adminResetting}
               />
             </div>
@@ -1943,37 +2602,51 @@ function App() {
                 marginTop: 4,
               }}
             >
-              {adminResetting ? "珥덇린??以?.." : "?꾩옱 ?묒뾽 ?낅젰 ?곗씠??珥덇린??"}
+              {adminResetting ? "초기화 중..." : "현재 작업 입력 데이터 초기화"}
             </button>
           </div>
         </div>
       )}
 
-      <ImageRegisterSheet
-        showImageRegister={showImageRegister}
-        uploadingImageKey={uploadingImageKey}
-        setShowImageRegister={setShowImageRegister}
-        styles={styles}
-        imageRegisterSearch={imageRegisterSearch}
-        setImageRegisterSearch={setImageRegisterSearch}
-        imageRegistryProducts={imageRegistryProducts}
-        openImageRegisterPicker={openImageRegisterPicker}
-      />
+      {isScannerOpen && (
+        <div style={styles.scannerOverlay} onClick={closeScanner}>
+          <div style={styles.scannerModal} onClick={(e) => e.stopPropagation()}>
+            <button type="button" onClick={closeScanner} style={styles.scannerCloseBtn}>
+              횞
+            </button>
 
-      <ScannerModal
-        isOpen={isScannerOpen}
-        closeScanner={closeScanner}
-        scannerReady={scannerReady}
-        scannerStatus={scannerStatus}
-        scannerVideoRef={scannerVideoRef}
-        scannerError={scannerError}
-        torchSupported={torchSupported}
-        toggleTorch={toggleTorch}
-        torchOn={torchOn}
-        FlashlightIcon={FlashlightIcon}
-        styles={styles}
-        focusSearchInput={focusSearchInput}
-      />
+            <div style={styles.scannerTopText}>{scannerReady ? scannerStatus : "바코드 인식 중..."}</div>
+
+            <div style={styles.scannerViewport}>
+              <video ref={scannerVideoRef} style={styles.scannerVideo} muted playsInline />
+              <div style={styles.scannerGuideBox} />
+            </div>
+
+            <div style={styles.scannerHelperText}>바코드를 화면 중앙에 맞춰주세요.</div>
+
+            {scannerError ? <div style={styles.errorBox}>{scannerError}</div> : null}
+
+            <div style={styles.scannerActions}>
+              {torchSupported ? (
+                <button type="button" onClick={toggleTorch} style={styles.secondaryButton}>
+                  {torchOn ? "플래시 끄기" : "플래시 켜기"}
+                </button>
+              ) : null}
+
+              <button
+                type="button"
+                onClick={() => {
+                  closeScanner();
+                  focusSearchInput();
+                }}
+                style={styles.primaryButton}
+              >
+                직접 입력
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {toast ? <div style={styles.toast}>{toast}</div> : null}
     </div>
@@ -2236,9 +2909,6 @@ const styles = {
   scanIcon: {
     fontSize: 22,
     lineHeight: 1,
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
   },
   formGroup: {
     marginBottom: 12,
@@ -2304,33 +2974,6 @@ const styles = {
     borderRadius: 16,
     padding: 14,
     boxShadow: "0 4px 14px rgba(15,23,42,0.04)",
-  },
-  cardContentRow: {
-    display: "grid",
-    gridTemplateColumns: "minmax(0, 1fr) 88px",
-    gap: 12,
-    alignItems: "center",
-  },
-  cardMainCopy: {
-    minWidth: 0,
-  },
-  cardThumbFrame: {
-    width: 88,
-    height: 88,
-    borderRadius: 16,
-    border: "1px solid #dbe3f0",
-    background: "#fff",
-    overflow: "hidden",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    flexShrink: 0,
-  },
-  cardThumbImage: {
-    width: "100%",
-    height: "100%",
-    objectFit: "contain",
-    display: "block",
   },
   kpiLabel: {
     fontSize: 12,
@@ -2587,32 +3230,6 @@ const styles = {
     cursor: "pointer",
     fontWeight: 700,
   },
-  imageRegisterList: {
-    display: "flex",
-    flexDirection: "column",
-    gap: 10,
-    marginTop: 12,
-  },
-  imageRegisterCard: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 12,
-    border: "1px solid #e5e7eb",
-    borderRadius: 16,
-    padding: 12,
-    background: "#fff",
-  },
-  imageRegisterInfo: {
-    minWidth: 0,
-    flex: 1,
-  },
-  imageRegisterName: {
-    fontSize: 15,
-    fontWeight: 800,
-    color: "#0f172a",
-    lineHeight: 1.4,
-  },
   sheetList: {
     display: "flex",
     flexDirection: "column",
@@ -2809,3 +3426,4 @@ const styles = {
 };
 
 export default App;
+
