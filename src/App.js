@@ -48,19 +48,19 @@ const parseQty = (value) => {
 const clampText = (value, maxLength = 4000) => {
   const text = String(value ?? "");
   if (text.length <= maxLength) return text;
-  return `${text.slice(0, Math.max(0, maxLength - 7))}...(생략)`;
+  return ${text.slice(0, Math.max(0, maxLength - 7))}...(생략);
 };
 
 const makeSkuKey = (productCode, partnerName) =>
-  `${normalizeProductCode(productCode || "")}||${String(partnerName || "").trim()}`;
+  ${normalizeProductCode(productCode || "")}||${String(partnerName || "").trim()};
 
 const getHappycallProductMetrics = (analytics, product) => {
   const periods = analytics?.periods || {};
   const keys = [
-    `sku::${makeSkuKey(product?.productCode, product?.partner)}`,
-    `name::${normalizeHappycallLookupText(product?.productName)}||${normalizeHappycallLookupText(product?.partner)}`,
-    `code::${normalizeProductCode(product?.productCode || "")}`,
-    `nameOnly::${normalizeHappycallLookupText(product?.productName)}`,
+    sku::${makeSkuKey(product?.productCode, product?.partner)},
+    name::${normalizeHappycallLookupText(product?.productName)}||${normalizeHappycallLookupText(product?.partner)},
+    code::${normalizeProductCode(product?.productCode || "")},
+    nameOnly::${normalizeHappycallLookupText(product?.productName)},
   ];
 
   const result = {};
@@ -80,7 +80,7 @@ const getHappycallProductMetrics = (analytics, product) => {
 
 const formatPercent = (value) => {
   const numeric = Number(value);
-  return Number.isFinite(numeric) ? `${(numeric * 100).toFixed(1)}%` : "-";
+  return Number.isFinite(numeric) ? ${(numeric * 100).toFixed(1)}% : "-";
 };
 
 const BarcodeScanIcon = ({ size = 24, color = "currentColor" }) => (
@@ -152,7 +152,7 @@ const buildVisibleHappycallRanks = (analytics) => {
       .filter(isClassifiedHappycallProduct)
       .slice(0, 10)
       .forEach((item, index) => {
-        const key = `${item?.partnerName || ""}||${item?.productCode || ""}`;
+        const key = ${item?.partnerName || ""}||${item?.productCode || ""};
         rankMap[key] = {
           ...(rankMap[key] || {}),
           [periodKey]: {
@@ -173,9 +173,9 @@ const makeProductImageMapKey = ({ productCode, partner, productName }) => {
   const code = normalizeProductCode(productCode || "");
   const partnerText = String(partner || "").trim();
   if (code || partnerText) {
-    return `sku::${code}||${partnerText}`;
+    return sku::${code}||${partnerText};
   }
-  return `name::${normalizeImageMapLookupText(productName || "")}||${normalizeImageMapLookupText(partner || "")}`;
+  return name::${normalizeImageMapLookupText(productName || "")}||${normalizeImageMapLookupText(partner || "")};
 };
 
 const normalizeImageToken = (value) => normalizeHappycallLookupText(value || "");
@@ -188,7 +188,7 @@ const buildImageMatcher = ({ partnerKeywords = [], productKeywords = [], exclude
   return (product) => {
     const partnerText = normalizeImageToken(product?.partner || "");
     const productText = normalizeImageToken(product?.productName || "");
-    const lookupText = `${partnerText} ${productText}`;
+    const lookupText = ${partnerText} ${productText};
 
     if (normalizedExcludes.some((keyword) => lookupText.includes(keyword))) return false;
     if (normalizedPartners.length && !normalizedPartners.some((keyword) => partnerText.includes(keyword))) {
@@ -359,7 +359,7 @@ const buildNormalizedRows = (parsedRows) =>
 
     return {
       ...row,
-      __id: `${productCode || "empty"}-${center || "nocenter"}-${partner || "nopartner"}-${index}`,
+      __id: ${productCode || "empty"}-${center || "nocenter"}-${partner || "nopartner"}-${index},
       __index: index,
       __productCode: productCode,
       __productName: productName,
@@ -390,7 +390,7 @@ const buildReservationRows = (reservationRows) =>
 
     return {
       ...row,
-      __id: `reservation-${productCode || "empty"}-${center || "nocenter"}-${partner || "nopartner"}-${index}`,
+      __id: reservation-${productCode || "empty"}-${center || "nocenter"}-${partner || "nopartner"}-${index},
       __index: index,
       __productCode: productCode,
       __productName: productName,
@@ -455,7 +455,7 @@ const hashString = (text) => {
 };
 
 const computeJobKey = (rows) =>
-  `job_${hashString(
+  job_${hashString(
     JSON.stringify(
       (rows || []).map((row) => ({
         productCode: row.__productCode,
@@ -465,7 +465,7 @@ const computeJobKey = (rows) =>
         qty: row.__qty,
       }))
     )
-  )}`;
+  )};
 
 const fileToBase64 = (file) =>
   new Promise((resolve, reject) => {
@@ -513,7 +513,7 @@ const formatDashboardValue = (label, value) => {
   if (value == null || value === "") return "-";
   if (String(label).includes("율") || String(label).includes("률") || String(label).includes("커버리지")) {
     const numeric = Number(value);
-    return Number.isFinite(numeric) ? `${(numeric * 100).toFixed(1)}%` : String(value);
+    return Number.isFinite(numeric) ? ${(numeric * 100).toFixed(1)}% : String(value);
   }
   if (typeof value === "number") {
     return value.toLocaleString("ko-KR");
@@ -537,15 +537,15 @@ const getRecordType = (record) => {
 
 const getRecordQtyText = (record) => {
   const type = getRecordType(record);
-  if (type === "회송" || type === "RETURN") return `${parseQty(record.회송수량)}개`;
-  if (type === "교환" || type === "EXCHANGE") return `${parseQty(record.교환수량)}개`;
+  if (type === "회송" || type === "RETURN") return ${parseQty(record.회송수량)}개;
+  if (type === "교환" || type === "EXCHANGE") return ${parseQty(record.교환수량)}개;
 
   const returnQty = parseQty(record.회송수량);
   const exchangeQty = parseQty(record.교환수량);
   if (returnQty > 0 && exchangeQty > 0) {
-    return `회송 ${returnQty}개 / 교환 ${exchangeQty}개`;
+    return 회송 ${returnQty}개 / 교환 ${exchangeQty}개;
   }
-  return `${Math.max(returnQty, exchangeQty, 0)}개`;
+  return ${Math.max(returnQty, exchangeQty, 0)}개;
 };
 
 const formatDateForFileName = () => new Date().toLocaleDateString("sv-SE");
@@ -603,8 +603,8 @@ const buildPhotoCandidate = (rawValue) => {
   if (driveId) {
     return {
       key: driveId,
-      previewUrl: `https://drive.google.com/thumbnail?id=${driveId}&sz=w1200`,
-      downloadUrl: `https://drive.google.com/uc?export=download&id=${driveId}`,
+      previewUrl: https://drive.google.com/thumbnail?id=${driveId}&sz=w1200,
+      downloadUrl: https://drive.google.com/uc?export=download&id=${driveId},
     };
   }
 
@@ -656,7 +656,7 @@ function HistoryPhotoItem({ candidate, index, onOpen, styles }) {
   return (
     <img
       src={candidate.previewUrl}
-      alt={`첨부 사진 ${index + 1}`}
+      alt={첨부 사진 ${index + 1}}
       style={styles.photoThumb}
       onClick={() => onOpen(candidate.previewUrl)}
       onError={() => setFailed(true)}
@@ -675,7 +675,7 @@ function HistoryPhotoPreview({ record, onOpen, styles }) {
     <div style={styles.photoGrid}>
       {candidates.map((candidate, index) => (
         <HistoryPhotoItem
-          key={candidate.key || `${record.__rowNumber || "row"}-${index}`}
+          key={candidate.key || ${record.__rowNumber || "row"}-${index}}
           candidate={candidate}
           index={index}
           onOpen={onOpen}
@@ -1069,7 +1069,7 @@ function App() {
       setBootLoading(true);
       setError("");
 
-      const response = await fetch(`${SCRIPT_URL}?action=bootstrap`);
+      const response = await fetch(${SCRIPT_URL}?action=bootstrap);
       const result = await response.json();
 
       if (!response.ok || result.ok === false) {
@@ -1096,7 +1096,7 @@ function App() {
         if (!productCode) return;
 
         if (partner) {
-          nextExcludedPairKeys.add(`${productCode}||${partner}`);
+          nextExcludedPairKeys.add(${productCode}||${partner});
         } else {
           nextExcludedProductCodes.add(productCode);
         }
@@ -1134,7 +1134,7 @@ function App() {
           const key = String(item?.["이미지매핑키"] || "").trim();
           const fileId = String(item?.["드라이브파일ID"] || "").trim();
           const url = fileId
-            ? `https://drive.google.com/thumbnail?id=${fileId}&sz=w1200`
+            ? https://drive.google.com/thumbnail?id=${fileId}&sz=w1200
             : String(item?.["이미지URL"] || "").trim();
           if (key && url) acc[key] = url;
           return acc;
@@ -1149,7 +1149,7 @@ function App() {
   }, []);
 
   const fetchHistoryRowsData = useCallback(async () => {
-    const response = await fetch(`${SCRIPT_URL}?action=getRecords`);
+    const response = await fetch(${SCRIPT_URL}?action=getRecords);
     const result = await response.json();
 
     if (!response.ok || result.ok === false) {
@@ -1189,7 +1189,7 @@ function App() {
 
       if (!code) return false;
       if (excludedProductCodes.has(code)) return false;
-      if (excludedPairKeys.has(`${code}||${partner}`)) return false;
+      if (excludedPairKeys.has(${code}||${partner})) return false;
 
       return true;
     });
@@ -1264,9 +1264,9 @@ function App() {
           ...product,
           imageSrc: getProductImageSrc(product, productImageMap),
           happycallStats: {
-            "1d": visibleHappycallRankMap[`${product.partner}||${product.productCode}`]?.["1d"] || null,
-            "7d": visibleHappycallRankMap[`${product.partner}||${product.productCode}`]?.["7d"] || null,
-            "30d": visibleHappycallRankMap[`${product.partner}||${product.productCode}`]?.["30d"] || null,
+            "1d": visibleHappycallRankMap[${product.partner}||${product.productCode}]?.["1d"] || null,
+            "7d": visibleHappycallRankMap[${product.partner}||${product.productCode}]?.["7d"] || null,
+            "30d": visibleHappycallRankMap[${product.partner}||${product.productCode}]?.["30d"] || null,
           },
           centers: product.centers.sort((a, b) => (b.totalQty || 0) - (a.totalQty || 0)),
         })),
@@ -1277,7 +1277,7 @@ function App() {
     const map = {};
 
     (historyRows || []).forEach((record) => {
-      const key = `${record.협력사명 || ""}||${record.상품코드 || ""}`;
+      const key = ${record.협력사명 || ""}||${record.상품코드 || ""};
       if (!map[key]) {
         map[key] = { returnCount: 0, exchangeCount: 0 };
       }
@@ -1427,7 +1427,7 @@ function App() {
         const key = String(item?.["이미지매핑키"] || "").trim();
         const fileId = String(item?.["드라이브파일ID"] || "").trim();
         const url = fileId
-          ? `https://drive.google.com/thumbnail?id=${fileId}&sz=w1200`
+          ? https://drive.google.com/thumbnail?id=${fileId}&sz=w1200
           : String(item?.["이미지URL"] || "").trim();
         if (key && url) acc[key] = url;
         return acc;
@@ -1542,7 +1542,7 @@ function App() {
   }, [pendingMap, saving, clearFlushTimer, flushPending]);
 
   const saveInspectionQtySimple = async (product) => {
-    const draftKey = `inspection||${product.partner}||${product.productCode}`;
+    const draftKey = inspection||${product.partner}||${product.productCode};
     const qty = parseQty(drafts[draftKey]?.inspectionQty);
     const photoFiles = Array.isArray(drafts[draftKey]?.photoFiles) ? drafts[draftKey].photoFiles : [];
     const entityKey = makeEntityKey(currentJob?.job_key, product.productCode, product.partner);
@@ -1585,7 +1585,7 @@ function App() {
       return;
     }
 
-    const draftKey = `return||${product.partner}||${product.productCode}||${centerName}`;
+    const draftKey = return||${product.partner}||${product.productCode}||${centerName};
     const draft = drafts[draftKey] || {};
     const returnQty = parseQty(draft.returnQty);
     const exchangeQty = parseQty(draft.exchangeQty);
@@ -1733,10 +1733,10 @@ function App() {
       const href = URL.createObjectURL(blob);
       const fileName = result.fileName ||
         (mode === "movement"
-          ? `회송_교환_사진_${formatDateForFileName()}.zip`
+          ? 회송_교환_사진_${formatDateForFileName()}.zip
           : mode === "inspection"
-          ? `검품사진_${formatDateForFileName()}.zip`
-          : `참고사진_${formatDateForFileName()}.zip`);
+          ? 검품사진_${formatDateForFileName()}.zip
+          : 참고사진_${formatDateForFileName()}.zip);
 
       link.href = href;
       link.download = fileName;
@@ -1863,7 +1863,7 @@ function App() {
         const batchNumber = Math.floor(index / batchSize) + 1;
         const processedCount = Math.min(index + batchRows.length, rows.length);
         setMessage(
-          `해피콜 CSV 처리 중... ${batchNumber}/${totalBatches} 배치 (${processedCount} / ${rows.length})`
+          해피콜 CSV 처리 중... ${batchNumber}/${totalBatches} 배치 (${processedCount} / ${rows.length})
         );
 
         const response = await fetch(SCRIPT_URL, {
@@ -1878,7 +1878,7 @@ function App() {
         const result = await response.json();
         if (!response.ok || result.ok === false) {
           throw new Error(
-            result.message || `해피콜 CSV 가져오기에 실패했습니다. (${batchNumber}/${totalBatches} 배치)`
+            result.message || 해피콜 CSV 가져오기에 실패했습니다. (${batchNumber}/${totalBatches} 배치)
           );
         }
 
@@ -1890,13 +1890,13 @@ function App() {
       setHappycallAnalytics(lastResult?.happycall || {});
       setMessage("");
       setToast(
-        `해피콜 CSV 반영 완료 · 신규 ${insertedTotal}건 · 갱신 ${updatedTotal}건${
-          skippedCount > 0 ? ` · 중복 제외 ${skippedCount}건` : ""
-        }`
+        해피콜 CSV 반영 완료 · 신규 ${insertedTotal}건 · 갱신 ${updatedTotal}건${
+          skippedCount > 0 ?  · 중복 제외 ${skippedCount}건 : ""
+        }
       );
     } catch (err) {
       setError(
-        `${err.message || "해피콜 CSV 가져오기에 실패했습니다."} 같은 CSV를 다시 올리면 이어서 반영됩니다.`
+        ${err.message || "해피콜 CSV 가져오기에 실패했습니다."} 같은 CSV를 다시 올리면 이어서 반영됩니다.
       );
     } finally {
       setUploadingHappycallCsv(false);
@@ -2016,7 +2016,7 @@ function App() {
                 opacity: uploadingHappycallCsv ? 0.7 : 1,
               }}
             >
-              {uploadingHappycallCsv ? "?? ?..." : "??? ?? ??"}
+              {uploadingHappycallCsv ? "처리 중..." : "해피콜 파일 선택"}
             </button>
             <button
               type="button"
@@ -2027,7 +2027,7 @@ function App() {
               }}
               style={styles.secondaryButton}
             >
-              ??? ???
+              관리자 초기화
             </button>
             <button
               type="button"
@@ -2039,7 +2039,7 @@ function App() {
               }}
               style={styles.secondaryButton}
             >
-              ??? ??
+              이미지 등록
             </button>
           </div>
         </div>
@@ -2086,7 +2086,7 @@ function App() {
           <div style={styles.kpiGrid}>
             {previousDayHappycallTopList.map((card) => (
               <div
-                key={`happycall-top-${card.rank}`}
+                key={happycall-top-${card.rank}}
                 style={{
                   ...styles.kpiCard,
                   borderColor:
@@ -2110,7 +2110,7 @@ function App() {
                             card.rank === 1 ? "#b91c1c" : card.rank === 2 ? "#1d4ed8" : card.rank === 3 ? "#15803d" : "#64748b",
                         }}
                       >
-                        {`TOP.${card.rank}`}
+                        {TOP.${card.rank}}
                       </div>
                     </div>
                     <div
@@ -2187,14 +2187,14 @@ function App() {
               {expandedPartner === partnerGroup.partner && (
                 <div style={styles.partnerBody}>
                   {partnerGroup.products.map((product) => {
-                    const productStateKey = `${product.partner}||${product.productCode}`;
-                    const historyCounts = historyCountMap[`${product.partner}||${product.productCode}`] || {
+                    const productStateKey = ${product.partner}||${product.productCode};
+                    const historyCounts = historyCountMap[${product.partner}||${product.productCode}] || {
                       returnCount: 0,
                       exchangeCount: 0,
                     };
                     const historySummary = [
-                      historyCounts.returnCount > 0 ? `회송 ${historyCounts.returnCount}` : "",
-                      historyCounts.exchangeCount > 0 ? `교환 ${historyCounts.exchangeCount}` : "",
+                      historyCounts.returnCount > 0 ? 회송 ${historyCounts.returnCount} : "",
+                      historyCounts.exchangeCount > 0 ? 교환 ${historyCounts.exchangeCount} : "",
                     ]
                       .filter(Boolean)
                       .join(" / ");
@@ -2206,8 +2206,8 @@ function App() {
 
                     const draftKey =
                       mode === "inspection"
-                        ? `inspection||${product.partner}||${product.productCode}`
-                        : `return||${product.partner}||${product.productCode}||${selectedCenter}`;
+                        ? inspection||${product.partner}||${product.productCode}
+                        : return||${product.partner}||${product.productCode}||${selectedCenter};
                     const draft = drafts[draftKey] || {};
                     const entityKey = makeEntityKey(currentJob?.job_key, product.productCode, product.partner);
                     const inspectionStatus = itemStatusMap[entityKey];
@@ -2227,13 +2227,13 @@ function App() {
                         return {
                           key: periodKey,
                           rank: stats.rank,
-                          label: `${label} 해피콜 TOP${stats.rank}`,
+                          label: ${label} 해피콜 TOP${stats.rank},
                         };
                       })
                       .filter(Boolean);
 
                     return (
-                      <div key={`${partnerGroup.partner}-${product.productCode}`} style={styles.card}>
+                      <div key={${partnerGroup.partner}-${product.productCode}} style={styles.card}>
                         {mode === "inspection" ? (
                           <div style={styles.cardInlineInspection}>
                             <div style={styles.cardInlineInfo}>
@@ -2438,7 +2438,7 @@ function App() {
                                 </div>
                                 <div style={styles.metaText}>
                                   행사: {product.eventInfo?.행사여부 || ""}
-                                  {product.eventInfo?.행사명 ? ` (${product.eventInfo.행사명})` : ""}
+                                  {product.eventInfo?.행사명 ?  (${product.eventInfo.행사명}) : ""}
                                 </div>
                               </div>
                             )}
@@ -2547,7 +2547,7 @@ function App() {
               <div style={styles.sheetList}>
                 {historyRows.map((record, index) => (
                   <div
-                    key={`${record.__rowNumber || "row"}-${record.작성일시 || "time"}-${index}`}
+                    key={${record.__rowNumber || "row"}-${record.작성일시 || "time"}-${index}}
                     style={styles.historyCard}
                   >
                     <button
@@ -2706,17 +2706,17 @@ function App() {
         <div style={styles.scannerOverlay} onClick={closeScanner}>
           <div style={styles.scannerModal} onClick={(e) => e.stopPropagation()}>
             <button type="button" onClick={closeScanner} style={styles.scannerCloseBtn}>
-              ?
+              ×
             </button>
 
-            <div style={styles.scannerTopText}>{scannerReady ? scannerStatus : "??? ?? ?..."}</div>
+            <div style={styles.scannerTopText}>{scannerReady ? scannerStatus : "바코드 인식 중..."}</div>
 
             <div style={styles.scannerViewport}>
               <video ref={scannerVideoRef} style={styles.scannerVideo} muted playsInline />
               <div style={styles.scannerGuideBox} />
             </div>
 
-            <div style={styles.scannerHelperText}>???? ?? ??? ?????.</div>
+            <div style={styles.scannerHelperText}>바코드를 화면 중앙에 맞춰주세요.</div>
 
             {scannerError ? <div style={styles.errorBox}>{scannerError}</div> : null}
 
@@ -2726,7 +2726,7 @@ function App() {
                   type="button"
                   onClick={toggleTorch}
                   style={{ ...styles.secondaryButton, width: 52, minWidth: 52, padding: 0 }}
-                  aria-label={torchOn ? "??? ??" : "??? ??"}
+                  aria-label={torchOn ? "플래시 끄기" : "플래시 켜기"}
                 >
                   <FlashlightIcon size={20} active={torchOn} />
                 </button>
@@ -2740,7 +2740,7 @@ function App() {
                 }}
                 style={styles.primaryButton}
               >
-                ?? ??
+                직접 입력
               </button>
             </div>
           </div>
@@ -3579,4 +3579,3 @@ const styles = {
 };
 
 export default App;
-
