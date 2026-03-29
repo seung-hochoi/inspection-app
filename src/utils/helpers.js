@@ -48,9 +48,15 @@ export const getHappycallProductMetrics = (analytics, product) => {
 };
 
 export const getHappycallRankStyle = (rank) => {
-  if (rank === 1) return { background: "#fee2e2", color: "#b91c1c" };
-  if (rank === 2) return { background: "#dbeafe", color: "#1d4ed8" };
-  if (rank === 3) return { background: "#dcfce7", color: "#15803d" };
+  if (rank === 1) {
+    return { background: "#fee2e2", color: "#b91c1c" };
+  }
+  if (rank === 2) {
+    return { background: "#dbeafe", color: "#1d4ed8" };
+  }
+  if (rank === 3) {
+    return { background: "#dcfce7", color: "#15803d" };
+  }
   return { background: "#f3f4f6", color: "#374151" };
 };
 
@@ -75,13 +81,14 @@ export const buildVisibleHappycallRanks = (analytics) => {
       .filter(isClassifiedHappycallProduct)
       .slice(0, 10)
       .forEach((item, index) => {
-        const key = `${String(item?.partnerName || "").trim()}||${normalizeProductCode(item?.productCode || "")}`;
-        if (!key.trim()) return;
-        if (!rankMap[key]) rankMap[key] = {};
-        rankMap[key][periodKey] = {
-          rank: index + 1,
-          count: parseQty(item?.count || 0),
-          share: Number(item?.share || 0),
+        const key = `${item?.partnerName || ""}||${item?.productCode || ""}`;
+        rankMap[key] = {
+          ...(rankMap[key] || {}),
+          [periodKey]: {
+            rank: index + 1,
+            count: parseQty(item?.count || 0),
+            share: Number(item?.share || 0),
+          },
         };
       });
   });
@@ -153,17 +160,11 @@ export const buildNormalizedRows = (parsedRows) =>
       row[normalizeKey(key)] = rawRow[key];
     });
 
-    const productCode = normalizeProductCode(
-      getValue(row, ["상품코드", "상품 코드", "코드", "바코드"])
-    );
-    const productName = String(
-      getValue(row, ["상품명", "상품 명", "품목명", "품목"]) || ""
-    ).trim();
-    const partner = String(
-      getValue(row, ["협력사명(거래처)", "협력사명", "파트너사", "파트너"]) || ""
-    ).trim();
+    const productCode = normalizeProductCode(getValue(row, ["상품코드", "상품 코드", "코드", "바코드"]));
+    const productName = String(getValue(row, ["상품명", "상품 명", "품목명", "품목"]) || "").trim();
+    const partner = String(getValue(row, ["협력사명(거래처)", "협력사명", "파트너사", "파트너"]) || "").trim();
     const center = String(getValue(row, ["센터명", "센터"]) || "").trim();
-    const qty = parseQty(getValue(row, ["입고량", "검품수량", "수량"]));
+    const qty = parseQty(getValue(row, ["입고량", "검품량", "수량"]));
 
     return {
       ...row,
@@ -187,14 +188,12 @@ export const buildReservationRows = (reservationRows) =>
       row[normalizeKey(key)] = rawRow[key];
     });
 
-    const productCode = normalizeProductCode(
-      getValue(row, ["상품코드", "상품 코드", "코드", "바코드"])
-    );
+    const productCode = normalizeProductCode(getValue(row, ["상품코드", "상품 코드", "코드", "바코드"]));
     const productName = String(getValue(row, ["상품명", "상품 명", "품목명", "품목"]) || "").trim();
     const partner = String(getValue(row, ["파트너사", "파트너명", "협력사명"]) || "").trim();
     const center = String(getValue(row, ["센터명", "센터"]) || "").trim();
     const qty = parseQty(getValue(row, ["수주수량", "수량"]));
-    const incomingCost = parseQty(getValue(row, ["입고단가", "단가"]));
+    const incomingCost = parseQty(getValue(row, ["입고가", "단가"]));
 
     return {
       ...row,
@@ -259,168 +258,123 @@ export const hashString = (text) => {
   for (let i = 0; i < text.length; i += 1) {
     hash = (hash * 31 + text.charCodeAt(i)) >>> 0;
   }
-  return String(hash);
+  return hash.toString(36);
 };
 
 export const computeJobKey = (rows) =>
-  `job_${hashString(
-    JSON.stringify(
-      (rows || []).map((row) => ({
-        productCode: row.__productCode,
-        productName: row.__productName,
-        center: row.__center,
-        partner: row.__partner,
-        qty: row.__qty,
-      }))
-    )
+  `job-${hashString(
+    (rows || [])
+      .map((row) => [row.__productCode, row.__partner, row.__center, row.__qty].join("|"))
+      .join("||")
   )}`;
 
 export const fileToBase64 = (file) =>
   new Promise((resolve, reject) => {
-    if (!file) {
-      resolve(null);
-      return;
-    }
-
     const reader = new FileReader();
     reader.onload = () => {
       const result = String(reader.result || "");
-      const base64 = result.includes(",") ? result.split(",")[1] : result;
+      const commaIndex = result.indexOf(",");
       resolve({
         fileName: file.name,
         mimeType: file.type || "application/octet-stream",
-        imageBase64: base64,
+        data: commaIndex >= 0 ? result.slice(commaIndex + 1) : result,
       });
     };
-    reader.onerror = () => reject(new Error("파일을 변환하지 못했습니다."));
+    reader.onerror = () => reject(reader.error || new Error("파일 읽기 실패"));
     reader.readAsDataURL(file);
   });
 
 export const filesToBase64 = async (files) => {
-  const list = Array.isArray(files) ? files : [];
-  const results = [];
-
-  for (const file of list) {
-    const encoded = await fileToBase64(file);
-    if (encoded) results.push(encoded);
+  const outputs = [];
+  for (const file of files || []) {
+    outputs.push(await fileToBase64(file));
   }
-
-  return results;
+  return outputs;
 };
 
 export const getRecordType = (record) => {
-  const type = String(record.처리유형 || "").trim();
-  if (type) return type;
-  if (parseQty(record.반품수량) > 0) return "반품";
   if (parseQty(record.교환수량) > 0) return "교환";
-  return "검품";
+  if (parseQty(record.회송수량) > 0) return "회송";
+  if (parseQty(record.검품수량) > 0) return "검품";
+  return "기타";
 };
 
 export const getRecordQtyText = (record) => {
-  const type = getRecordType(record);
-  if (type === "반품" || type === "RETURN") return `${parseQty(record.반품수량)}건`;
-  if (type === "교환" || type === "EXCHANGE") return `${parseQty(record.교환수량)}건`;
-
-  const returnQty = parseQty(record.반품수량);
-  const exchangeQty = parseQty(record.교환수량);
-  if (returnQty > 0 && exchangeQty > 0) {
-    return `반품 ${returnQty}건 / 교환 ${exchangeQty}건`;
-  }
-  return `${Math.max(returnQty, exchangeQty, 0)}건`;
+  if (parseQty(record.교환수량) > 0) return `교환 ${parseQty(record.교환수량)}개`;
+  if (parseQty(record.회송수량) > 0) return `회송 ${parseQty(record.회송수량)}개`;
+  if (parseQty(record.검품수량) > 0) return `검품 ${parseQty(record.검품수량)}개`;
+  return "-";
 };
 
 export const base64ToBlob = (base64, mimeType = "application/octet-stream") => {
-  const binary = window.atob(String(base64 || ""));
-  const chunkSize = 1024;
-  const bytes = [];
-
-  for (let offset = 0; offset < binary.length; offset += chunkSize) {
-    const slice = binary.slice(offset, offset + chunkSize);
-    const array = new Uint8Array(slice.length);
-
-    for (let i = 0; i < slice.length; i += 1) {
-      array[i] = slice.charCodeAt(i);
-    }
-
-    bytes.push(array);
+  const binary = atob(String(base64 || ""));
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
   }
-
-  return new Blob(bytes, { type: mimeType });
+  return new Blob([bytes], { type: mimeType });
 };
 
 export const extractImageFormulaUrl = (value) => {
-  const text = String(value || "").trim();
-  const match = text.match(/^=IMAGE\("(.+)"\)$/i);
-  return match ? match[1] : text;
+  const text = String(value || "");
+  const match = text.match(/=IMAGE\("([^"]+)"/i);
+  return match ? match[1] : "";
 };
 
 export const extractGoogleDriveId = (value) => {
-  const text = String(value || "").trim();
-  if (!text) return "";
-
-  const directId = text.match(/^[a-zA-Z0-9_-]{20,}$/);
-  if (directId) return directId[0];
-
-  const fileMatch = text.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
-  if (fileMatch) return fileMatch[1];
-
-  const openMatch = text.match(/[?&]id=([a-zA-Z0-9_-]+)/);
-  if (openMatch) return openMatch[1];
-
-  const ucMatch = text.match(/\/d\/([a-zA-Z0-9_-]+)/);
-  if (ucMatch) return ucMatch[1];
-
+  const text = String(value || "");
+  const patterns = [
+    /[?&]id=([a-zA-Z0-9_-]+)/,
+    /\/d\/([a-zA-Z0-9_-]+)/,
+    /\/thumbnail\?id=([a-zA-Z0-9_-]+)/,
+  ];
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match) return match[1];
+  }
   return "";
 };
 
 export const buildPhotoCandidate = (rawValue) => {
-  const normalized = extractImageFormulaUrl(rawValue);
-  const text = String(normalized || "").trim();
-  if (!text) return null;
+  const original = String(rawValue || "").trim();
+  if (!original) return null;
 
-  const driveId = extractGoogleDriveId(text);
-  if (driveId) {
-    return {
-      key: driveId,
-      previewUrl: `https://drive.google.com/thumbnail?id=${driveId}&sz=w1200`,
-      downloadUrl: `https://drive.google.com/uc?export=download&id=${driveId}`,
-    };
-  }
+  const formulaUrl = extractImageFormulaUrl(original);
+  const sourceUrl = formulaUrl || original;
+  const driveId = extractGoogleDriveId(sourceUrl);
+  const previewUrl = driveId
+    ? `https://drive.google.com/thumbnail?id=${driveId}&sz=w1600`
+    : sourceUrl;
 
-  if (/^https?:\/\//i.test(text)) {
-    return {
-      key: text,
-      previewUrl: text,
-      downloadUrl: text,
-    };
-  }
-
-  return null;
+  return {
+    key: driveId || sourceUrl,
+    sourceUrl,
+    previewUrl,
+  };
 };
 
 export const splitPhotoSourceText = (value) =>
   String(value || "")
-    .split(/\r?\n|[,;]+/)
+    .split(/\s*[,\n|]+\s*/)
     .map((item) => item.trim())
     .filter(Boolean);
 
 export const getPhotoCandidatesFromRecord = (record) => {
-  const rawItems = [
-    record?.사진URL,
-    record?.사진연결정보,
-    ...splitPhotoSourceText(record?.사진연결정보목록),
-    ...splitPhotoSourceText(record?.사진파일ID목록),
+  const rawValues = [
+    record.사진,
+    record.사진URL,
+    record.드라이브파일URL,
+    record.드라이브원본URL,
+    ...(Array.isArray(record.사진들) ? record.사진들 : []),
+    ...splitPhotoSourceText(record.사진목록 || ""),
   ];
 
-  const seen = {};
-  const candidates = [];
-
-  rawItems.forEach((item) => {
-    const candidate = buildPhotoCandidate(item);
-    if (!candidate || seen[candidate.key]) return;
-    seen[candidate.key] = true;
-    candidates.push(candidate);
+  const map = new Map();
+  rawValues.forEach((rawValue) => {
+    const candidate = buildPhotoCandidate(rawValue);
+    if (candidate?.key) {
+      map.set(candidate.key, candidate);
+    }
   });
-
-  return candidates;
+  return Array.from(map.values());
 };

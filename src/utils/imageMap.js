@@ -1,35 +1,30 @@
 import { normalizeProductCode } from "./formatters";
+import { normalizeHappycallLookupText } from "./helpers";
 
-export const normalizeImageMapLookupText = (value) =>
-  String(value ?? "")
-    .normalize("NFKC")
-    .replace(/\s+/g, "")
-    .replace(/[^\u3131-\uD79Da-zA-Z0-9]/g, "")
-    .toLowerCase()
-    .trim();
+export const normalizeImageMapLookupText = (value) => normalizeHappycallLookupText(value || "");
 
-export const makeProductImageMapKey = ({ productCode = "", partner = "", productName = "" }) =>
-  [
-    normalizeProductCode(productCode),
-    normalizeImageMapLookupText(partner),
-    normalizeImageMapLookupText(productName),
-  ].join("||");
+export const makeProductImageMapKey = ({ productCode, partner, productName }) => {
+  const code = normalizeProductCode(productCode || "");
+  const partnerText = String(partner || "").trim();
+  if (code || partnerText) {
+    return `sku::${code}||${partnerText}`;
+  }
+  return `name::${normalizeImageMapLookupText(productName || "")}||${normalizeImageMapLookupText(partner || "")}`;
+};
 
-export const normalizeImageToken = (value) => normalizeImageMapLookupText(value);
+export const normalizeImageToken = (value) => normalizeHappycallLookupText(value || "");
 
-export const buildImageMatcher = ({ productKeywords = [], partnerKeywords = [], excludeKeywords = [] }) => {
-  const normalizedProducts = productKeywords.map(normalizeImageToken).filter(Boolean);
+export const buildImageMatcher = ({ partnerKeywords = [], productKeywords = [], excludeKeywords = [] }) => {
   const normalizedPartners = partnerKeywords.map(normalizeImageToken).filter(Boolean);
+  const normalizedProducts = productKeywords.map(normalizeImageToken).filter(Boolean);
   const normalizedExcludes = excludeKeywords.map(normalizeImageToken).filter(Boolean);
 
   return (product) => {
+    const partnerText = normalizeImageToken(product?.partner || "");
     const productText = normalizeImageToken(product?.productName || "");
-    const partnerText = normalizeImageToken(product?.partner || product?.partnerName || "");
+    const lookupText = `${partnerText} ${productText}`;
 
-    if (!productText) return false;
-    if (normalizedExcludes.some((keyword) => productText.includes(keyword) || partnerText.includes(keyword))) {
-      return false;
-    }
+    if (normalizedExcludes.some((keyword) => lookupText.includes(keyword))) return false;
     if (normalizedPartners.length && !normalizedPartners.some((keyword) => partnerText.includes(keyword))) {
       return false;
     }
@@ -42,17 +37,17 @@ export const PRODUCT_IMAGE_MAP = [
     match: buildImageMatcher({
       partnerKeywords: ["델몬트", "delmonte"],
       productKeywords: ["프리미엄", "바나나"],
-      excludeKeywords: ["스위티오", "파인애플", "킹사이즈"],
+      excludeKeywords: ["파인애플", "클래식", "킹사이즈"],
     }),
-    src: "/assets/products/delmonte-banana-pack.png",
+    src: "/assets/products/delmonte-banana-bag.jpeg",
   },
   {
     match: buildImageMatcher({
       partnerKeywords: ["델몬트", "delmonte"],
       productKeywords: ["클래식", "바나나"],
-      excludeKeywords: ["스위티오", "파인애플"],
+      excludeKeywords: ["파인애플"],
     }),
-    src: "/assets/products/delmonte-banana-bag.jpeg",
+    src: "/assets/products/delmonte-banana-pack.png",
   },
   {
     match: buildImageMatcher({
@@ -136,7 +131,7 @@ export const PRODUCT_IMAGE_MAP = [
     match: buildImageMatcher({
       productKeywords: ["참타리버섯"],
     }),
-    src: "/assets/products/mushroom-king-oyster-bag.jpeg",
+    src: "/assets/products/mushroom-oyster-cluster.jpeg",
   },
   {
     match: buildImageMatcher({
@@ -153,7 +148,7 @@ export const PRODUCT_IMAGE_MAP = [
   {
     match: buildImageMatcher({
       productKeywords: ["상추"],
-      excludeKeywords: ["꽃상추", "쌈"],
+      excludeKeywords: ["꽃상추", "청상추"],
     }),
     src: "/assets/products/lettuce-green.jpeg",
   },

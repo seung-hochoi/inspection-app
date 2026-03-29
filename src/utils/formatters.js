@@ -42,11 +42,7 @@ export const formatDashboardValue = (label, value) => {
   if (value == null || value === "") return "-";
 
   const labelText = String(label || "");
-  if (
-    labelText.includes("율") ||
-    labelText.includes("비중") ||
-    labelText.includes("불량")
-  ) {
+  if (labelText.includes("률") || labelText.includes("비중") || labelText.includes("불량률")) {
     const numeric = Number(value);
     return Number.isFinite(numeric) ? `${(numeric * 100).toFixed(1)}%` : String(value);
   }
