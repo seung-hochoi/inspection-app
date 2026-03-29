@@ -1,9 +1,9 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+﻿import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Papa from "papaparse";
 import { BrowserCodeReader, BrowserMultiFormatReader } from "@zxing/browser";
 import * as XLSX from "xlsx";
 
-const SCRIPT_URL = process.env.REACT_APP_GOOGLE_SCRIPT_URL || "https://script.google.com/macros/s/AKfycbz2iQ-ZA0zXfgcXzmBNq1U0fkF-IpdbImDqHnJH1wWQVBc5AKp-GPWmIyafTe9qj6C_pw/exec";
+const SCRIPT_URL = process.env.REACT_APP_GOOGLE_SCRIPT_URL || "https://script.google.com/macros/s/AKfycbzIR8srYEDBgHOUKGfs0J3nk2BY4fsDPiw0J5cHfXUU7t77cEPWYw15mdUcW0T7oCw7Xg/exec";
 
 const normalizeKey = (key) => String(key || "").replace(/\uFEFF/g, "").trim();
 
@@ -48,7 +48,7 @@ const parseQty = (value) => {
 const clampText = (value, maxLength = 4000) => {
   const text = String(value ?? "");
   if (text.length <= maxLength) return text;
-  return `${text.slice(0, Math.max(0, maxLength - 7))}...(생략)`;
+  return `${text.slice(0, Math.max(0, maxLength - 7))}...(??嶺뚮ㅎ???`;
 };
 
 const makeSkuKey = (productCode, partnerName) =>
@@ -82,6 +82,58 @@ const formatPercent = (value) => {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? `${(numeric * 100).toFixed(1)}%` : "-";
 };
+
+const BarcodeScanIcon = ({ size = 24, color = "currentColor" }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 64 64"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    aria-hidden="true"
+  >
+    <path
+      d="M8 18C8 12.4772 12.4772 8 18 8H46C51.5228 8 56 12.4772 56 18V22H50V18C50 15.7909 48.2091 14 46 14H18C15.7909 14 14 15.7909 14 18V22H8V18Z"
+      fill={color}
+    />
+    <rect x="16" y="20" width="4" height="22" rx="1.5" fill={color} />
+    <rect x="24" y="20" width="6" height="18" rx="1.5" fill={color} />
+    <rect x="34" y="20" width="3" height="24" rx="1.5" fill={color} />
+    <rect x="41" y="20" width="7" height="16" rx="1.5" fill={color} />
+    <path
+      d="M36.8 44.4C40.6953 44.4 43.8511 47.5557 43.8511 51.4511V53.6C43.8511 54.9255 42.7766 56 41.4511 56H32.1489C30.8234 56 29.7489 54.9255 29.7489 53.6V51.4511C29.7489 47.5557 32.9047 44.4 36.8 44.4Z"
+      fill={color}
+    />
+    <path
+      d="M21 43C26.5228 43 31 47.4772 31 53H25C25 50.7909 23.2091 49 21 49H18V43H21Z"
+      fill={color}
+    />
+    <path
+      d="M10.5 42.5C15.7467 42.5 20 46.7533 20 52H16C16 48.9624 13.5376 46.5 10.5 46.5H8V42.5H10.5Z"
+      fill={color}
+      opacity="0.75"
+    />
+  </svg>
+);
+
+const FlashlightIcon = ({ size = 20, color = "currentColor", active = false }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    aria-hidden="true"
+  >
+    <path
+      d="M9 2H15L13.4 8H17L9.8 22L11.2 13H7L9 2Z"
+      fill={active ? "#f8c84b" : color}
+      stroke={active ? "#f8c84b" : color}
+      strokeWidth="1.2"
+      strokeLinejoin="round"
+    />
+  </svg>
+);
 
 const getHappycallRankStyle = (rank) => {
   if (rank === 1) {
@@ -167,223 +219,151 @@ const buildImageMatcher = ({ partnerKeywords = [], productKeywords = [], exclude
   };
 };
 
-// 새 상품 이미지를 추가할 때:
-// 1) public/assets/products 에 파일을 넣고
-// 2) 아래 목록에 partnerKeywords / productKeywords / src 를 한 줄 추가하면 됩니다.
-// 애매한 상품은 억지로 넣지 말고 비워두는 편이 오매칭을 줄입니다.
+// ??????브컯? ?????꿔꺂????????ㅻ쿋??????
+// 1) public/assets/products ?????????鶯ㅺ동????궰?
+// 2) ????썹땟???꿔꺂??袁ㅻ븶筌믠뫀萸??partnerKeywords / productKeywords / src ????嚥????ㅻ쿋??????????嶺뚮ㅎ????
+// ????リ뭡???????브컯??? ??????鶯ㅺ동?? ?꿔꺂????????????????癲ル슢???뼘??????욧쉥????嚥싳쉶瑗ч뇡癒?낟??????딅젩.
 const PRODUCT_IMAGE_MAP = [
   {
     match: buildImageMatcher({
-      partnerKeywords: ["델몬트"],
+      partnerKeywords: ["델몬트", "delmonte"],
+      productKeywords: ["프리미엄", "바나나"],
+      excludeKeywords: ["파인애플", "스위티오파인애플", "클래식", "킹사이즈"],
+    }),
+    src: "/assets/products/delmonte-banana-pack.png",
+  },
+  {
+    match: buildImageMatcher({
+      partnerKeywords: ["델몬트", "delmonte"],
+      productKeywords: ["클래식", "바나나"],
+      excludeKeywords: ["파인애플"],
+    }),
+    src: "/assets/products/delmonte-banana-bag.jpeg",
+  },
+  {
+    match: buildImageMatcher({
+      partnerKeywords: ["델몬트", "delmonte"],
       productKeywords: ["킹사이즈", "바나나"],
     }),
     src: "/assets/products/delmonte-king-banana.jpeg",
   },
   {
     match: buildImageMatcher({
-      partnerKeywords: ["돌코리아", "dole"],
-      productKeywords: ["스위티오", "바나나", "2입"],
+      partnerKeywords: ["돌", "dole", "스위티오"],
+      productKeywords: ["바나나", "2입"],
       excludeKeywords: ["파인애플"],
     }),
     src: "/assets/products/dole-sweetio-banana-2.jpeg",
   },
   {
     match: buildImageMatcher({
-      partnerKeywords: ["돌코리아", "dole"],
-      productKeywords: ["스위티오", "바나나"],
+      partnerKeywords: ["돌", "dole", "스위티오"],
+      productKeywords: ["바나나"],
       excludeKeywords: ["파인애플", "2입"],
     }),
     src: "/assets/products/dole-sweetio-banana-scene.jpeg",
   },
   {
     match: buildImageMatcher({
-      partnerKeywords: ["델몬트"],
-      productKeywords: ["프리미엄", "바나나"],
-      excludeKeywords: ["클래식"],
+      productKeywords: ["파인애플"],
     }),
-    src: "/assets/products/delmonte-banana-bag.jpeg",
+    src: "",
   },
   {
-    match: buildImageMatcher({
-      partnerKeywords: ["델몬트"],
-      productKeywords: ["클래식", "바나나"],
-    }),
-    src: "/assets/products/delmonte-banana-pack.png",
-  },
-  {
-    match: buildImageMatcher({
-      productKeywords: ["바나나"],
-      excludeKeywords: ["파인애플"],
-    }),
-    src: "/assets/products/banana-generic.jpeg",
-  },
-  {
-    match: buildImageMatcher({
-      productKeywords: ["오이맛고추"],
-    }),
+    match: buildImageMatcher({ productKeywords: ["오이맛고추"] }),
     src: "/assets/products/cucumber-spicy.jpeg",
   },
   {
-    match: buildImageMatcher({
-      productKeywords: ["청양고추"],
-    }),
-    src: "/assets/products/green-chili-pack.jpeg",
-  },
-  {
-    match: buildImageMatcher({
-      productKeywords: ["매운고추"],
-    }),
+    match: buildImageMatcher({ productKeywords: ["청양고추"] }),
     src: "/assets/products/pepper-hot-pack.jpeg",
   },
   {
-    match: (product) => {
-      const productText = normalizeImageToken(product?.productName || "");
-      if (productText.includes(normalizeImageToken("오이맛고추"))) return false;
-      return [
-        "천안오이",
-        "한끼딱오이",
-        "오이1입",
-        "오이2입",
-        "오이",
-      ].some((keyword) => productText.includes(normalizeImageToken(keyword)));
-    },
+    match: buildImageMatcher({ productKeywords: ["고추"] }),
+    src: "/assets/products/green-chili-pack.jpeg",
+  },
+  {
+    match: buildImageMatcher({ productKeywords: ["오이"] }),
     src: "/assets/products/cucumber-plain.jpeg",
   },
   {
-    match: buildImageMatcher({
-      productKeywords: ["애호박"],
-      excludeKeywords: ["못난이"],
-    }),
+    match: buildImageMatcher({ productKeywords: ["애호박"] }),
     src: "/assets/products/aehobak-single.jpeg",
   },
   {
-    match: buildImageMatcher({
-      productKeywords: ["손질대파"],
-    }),
-    src: "/assets/products/green-onion-bundle.jpeg",
+    match: buildImageMatcher({ productKeywords: ["마늘"] }),
+    src: "/assets/products/garlic-bowl.jpeg",
   },
   {
-    match: buildImageMatcher({
-      productKeywords: ["부추"],
-    }),
-    src: "/assets/products/chives-bag.jpeg",
-  },
-  {
-    match: buildImageMatcher({
-      productKeywords: ["달래"],
-    }),
-    src: "/assets/products/dalrae-bag.jpeg",
-  },
-  {
-    match: buildImageMatcher({
-      productKeywords: ["냉이"],
-    }),
-    src: "/assets/products/shepherds-purse-bag.jpeg",
-  },
-  {
-    match: buildImageMatcher({
-      productKeywords: ["참나물"],
-    }),
-    src: "/assets/products/chamnamul-bag.jpeg",
-  },
-  {
-    match: (product) => {
-      const productText = normalizeImageToken(product?.productName || "");
-      return productText.includes(normalizeImageToken("깻잎"));
-    },
-    src: "/assets/products/perilla-pack.jpeg",
-  },
-  {
-    match: (product) => {
-      const productText = normalizeImageToken(product?.productName || "");
-      return productText.includes(normalizeImageToken("쌈채소")) || productText.includes(normalizeImageToken("상추"));
-    },
-    src: "/assets/products/ssam-pack.jpeg",
-  },
-  {
-    match: buildImageMatcher({
-      productKeywords: ["꽃상추"],
-    }),
-    src: "/assets/products/red-lettuce-pack.jpeg",
-  },
-  {
-    match: buildImageMatcher({
-      productKeywords: ["시금치"],
-    }),
-    src: "/assets/products/spinach-bag.jpeg",
-  },
-  {
-    match: buildImageMatcher({
-      productKeywords: ["브로콜리"],
-    }),
-    src: "/assets/products/broccoli.jpeg",
-  },
-  {
-    match: buildImageMatcher({
-      productKeywords: ["양배추"],
-    }),
-    src: "/assets/products/cabbage-half.jpeg",
-  },
-  {
-    match: buildImageMatcher({
-      productKeywords: ["양파"],
-    }),
+    match: buildImageMatcher({ productKeywords: ["양파"] }),
     src: "/assets/products/onion-single.jpeg",
   },
   {
-    match: (product) => {
-      const productText = normalizeImageToken(product?.productName || "");
-      return productText.includes(normalizeImageToken("깐마늘")) || productText.includes(normalizeImageToken("마늘"));
-    },
-    src: "/assets/products/garlic-bag.jpeg",
-  },
-  {
-    match: buildImageMatcher({
-      productKeywords: ["새송이버섯"],
-    }),
+    match: buildImageMatcher({ productKeywords: ["새송이버섯"] }),
     src: "/assets/products/mushroom-king-oyster.jpeg",
   },
   {
-    match: (product) => {
-      const productText = normalizeImageToken(product?.productName || "");
-      return productText.includes(normalizeImageToken("참타리버섯")) || productText.includes(normalizeImageToken("참타리"));
-    },
-    src: "/assets/products/mushroom-king-oyster-bag.jpeg",
-  },
-  {
-    match: buildImageMatcher({
-      productKeywords: ["팽이버섯"],
-    }),
+    match: buildImageMatcher({ productKeywords: ["팽이버섯"] }),
     src: "/assets/products/enoki-pack.jpeg",
   },
   {
-    match: (product) => {
-      const productText = normalizeImageToken(product?.productName || "");
-      return (
-        productText.includes(normalizeImageToken("고구마")) ||
-        productText.includes(normalizeImageToken("꿀밤고구마")) ||
-        productText.includes(normalizeImageToken("호박고구마"))
-      );
-    },
+    match: buildImageMatcher({ productKeywords: ["꽃상추"] }),
+    src: "/assets/products/red-lettuce-pack.jpeg",
+  },
+  {
+    match: buildImageMatcher({ productKeywords: ["상추"] }),
+    src: "/assets/products/lettuce-green.jpeg",
+  },
+  {
+    match: buildImageMatcher({ productKeywords: ["부추"] }),
+    src: "/assets/products/chives-bag.jpeg",
+  },
+  {
+    match: buildImageMatcher({ productKeywords: ["시금치"] }),
+    src: "/assets/products/spinach-bag.jpeg",
+  },
+  {
+    match: buildImageMatcher({ productKeywords: ["깻잎"] }),
+    src: "/assets/products/perilla-pack.jpeg",
+  },
+  {
+    match: buildImageMatcher({ productKeywords: ["참나물"] }),
+    src: "/assets/products/chamnamul-bag.jpeg",
+  },
+  {
+    match: buildImageMatcher({ productKeywords: ["달래"] }),
+    src: "/assets/products/dalrae-bag.jpeg",
+  },
+  {
+    match: buildImageMatcher({ productKeywords: ["냉이"] }),
+    src: "/assets/products/shepherds-purse-bag.jpeg",
+  },
+  {
+    match: buildImageMatcher({ productKeywords: ["브로콜리"] }),
+    src: "/assets/products/broccoli.jpeg",
+  },
+  {
+    match: buildImageMatcher({ productKeywords: ["양배추"] }),
+    src: "/assets/products/cabbage-half.jpeg",
+  },
+  {
+    match: buildImageMatcher({ productKeywords: ["고구마"] }),
     src: "/assets/products/sweetpotato-pink-bag.jpeg",
   },
   {
-    match: buildImageMatcher({
-      productKeywords: ["연어"],
-    }),
+    match: buildImageMatcher({ productKeywords: ["연어"] }),
     src: "/assets/products/salmon-pack.jpeg",
   },
   {
-    match: (product) => {
-      const productText = normalizeImageToken(product?.productName || "");
-      return (
-        productText.includes(normalizeImageToken("목심")) ||
-        productText.includes(normalizeImageToken("삼겹")) ||
-        productText.includes(normalizeImageToken("한돈")) ||
-        productText.includes(normalizeImageToken("돼지"))
-      );
-    },
+    match: buildImageMatcher({ productKeywords: ["목심"] }),
     src: "/assets/products/pork-neck-pack.jpeg",
+  },
+  {
+    match: buildImageMatcher({ productKeywords: ["삼겹"] }),
+    src: "/assets/products/pork-neck-pack.jpeg",
+  },
+  {
+    match: buildImageMatcher({ productKeywords: ["바나나"] }),
+    src: "/assets/products/banana-generic.jpeg",
   },
 ];
 
@@ -391,7 +371,7 @@ const getProductImageSrc = (product, customImageMap = {}) => {
   const productText = normalizeImageToken(product?.productName || "");
   if (!productText) return "";
 
-  if (productText.includes(normalizeImageToken("파인애플"))) {
+  if (productText.includes(normalizeImageToken("미분류상품"))) {
     return "";
   }
 
@@ -408,7 +388,6 @@ const getProductImageSrc = (product, customImageMap = {}) => {
   const matched = PRODUCT_IMAGE_MAP.find((entry) => entry.match(product || {}));
   return matched?.src || "";
 };
-
 const getValue = (row, candidates) => {
   for (const key of candidates) {
     if (row[key] !== undefined && row[key] !== null && row[key] !== "") {
@@ -421,7 +400,7 @@ const getValue = (row, candidates) => {
 const isTruthyUsage = (value) => {
   if (value === true) return true;
   const text = normalizeText(value);
-  return ["true", "y", "yes", "1", "사용", "활성"].includes(text);
+  return ["true", "y", "yes", "1", "예", "사용"].includes(text);
 };
 
 const isExplicitFalseUsage = (value) => {
@@ -438,7 +417,7 @@ const decodeCsvFile = async (file) => {
     return decoder.decode(buffer);
   };
 
-  const isBrokenText = (text) => (text.match(/�/g) || []).length > 5;
+  const isBrokenText = (text) => (String(text || "").match(/�/g) || []).length > 5;
 
   let text = tryDecode("utf-8");
   if (isBrokenText(text)) text = tryDecode("euc-kr");
@@ -474,16 +453,16 @@ const buildNormalizedRows = (parsedRows) =>
     });
 
     const productCode = normalizeProductCode(
-      getValue(row, ["상품코드", "상품 코드", "바코드", "코드"])
+      getValue(row, ["상품코드", "상품 코드", "소분류코드", "코드"])
     );
     const productName = String(
-      getValue(row, ["상품명", "상품 명", "품목명", "품명"]) || ""
+      getValue(row, ["상품명", "상품 명", "소분류", "품목명", "상품"]) || ""
     ).trim();
     const partner = String(
-      getValue(row, ["거래처명(구매조건명)", "거래처명", "협력사명", "협력사"]) || ""
+      getValue(row, ["협력사", "파트너", "파트너사", "거래처", "처리파트너사", "파트너명"]) || ""
     ).trim();
-    const center = String(getValue(row, ["센터명", "센터"]) || "").trim();
-    const qty = parseQty(getValue(row, ["총 발주수량", "발주수량", "수량"]));
+    const center = String(getValue(row, ["센터", "물류센터", "점포명", "점포"]) || "").trim();
+    const qty = parseQty(getValue(row, ["입고량", "수주수량", "발주수량", "검품수량", "수량", "미출수량"]));
 
     return {
       ...row,
@@ -508,13 +487,13 @@ const buildReservationRows = (reservationRows) =>
     });
 
     const productCode = normalizeProductCode(
-      getValue(row, ["상품코드", "상품 코드", "바코드", "코드"])
+      getValue(row, ["상품코드", "상품 코드", "소분류코드", "코드"])
     );
-    const productName = String(getValue(row, ["상품명", "상품 명", "품목명", "품명"]) || "").trim();
-    const partner = String(getValue(row, ["협력사명", "협력사", "거래처명"]) || "").trim();
-    const center = String(getValue(row, ["센터명", "센터"]) || "").trim();
-    const qty = parseQty(getValue(row, ["발주수량", "수량"]));
-    const incomingCost = parseQty(getValue(row, ["입고원가", "원가"]));
+    const productName = String(getValue(row, ["상품명", "상품 명", "소분류", "품목명", "상품"]) || "").trim();
+    const partner = String(getValue(row, ["협력사", "파트너", "파트너사", "거래처", "처리파트너사", "파트너명"]) || "").trim();
+    const center = String(getValue(row, ["센터", "물류센터", "점포명", "점포"]) || "").trim();
+    const qty = parseQty(getValue(row, ["입고량", "수주수량", "발주수량", "검품수량", "수량", "미출수량"]));
+    const incomingCost = parseQty(getValue(row, ["입고가", "원가", "매입가", "비용"]));
 
     return {
       ...row,
@@ -612,7 +591,7 @@ const fileToBase64 = (file) =>
         imageBase64: base64,
       });
     };
-    reader.onerror = () => reject(new Error("사진 읽기 실패"));
+    reader.onerror = () => reject(new Error("??傭????ш끽諭욥??????곌숯"));
     reader.readAsDataURL(file);
   });
 
@@ -639,7 +618,11 @@ const formatDateTime = (value) => {
 
 const formatDashboardValue = (label, value) => {
   if (value == null || value === "") return "-";
-  if (String(label).includes("율") || String(label).includes("률") || String(label).includes("커버리지")) {
+  if (
+    String(label).includes("%") ||
+    String(label).includes("율") ||
+    String(label).includes("비중")
+  ) {
     const numeric = Number(value);
     return Number.isFinite(numeric) ? `${(numeric * 100).toFixed(1)}%` : String(value);
   }
@@ -656,20 +639,20 @@ const formatDashboardValue = (label, value) => {
 void formatDashboardValue;
 
 const getRecordType = (record) => {
-  const type = String(record.처리유형 || "").trim();
+  const type = String(record["기록유형"] || record["유형"] || "").trim();
   if (type) return type;
-  if (parseQty(record.회송수량) > 0) return "회송";
-  if (parseQty(record.교환수량) > 0) return "교환";
-  return "기타";
+  if (parseQty(record["회송량"]) > 0) return "RETURN";
+  if (parseQty(record["교환량"]) > 0) return "EXCHANGE";
+  return "UNKNOWN";
 };
 
 const getRecordQtyText = (record) => {
   const type = getRecordType(record);
-  if (type === "회송" || type === "RETURN") return `${parseQty(record.회송수량)}개`;
-  if (type === "교환" || type === "EXCHANGE") return `${parseQty(record.교환수량)}개`;
+  if (type === "회송" || type === "RETURN") return `${parseQty(record["회송량"])}개`;
+  if (type === "교환" || type === "EXCHANGE") return `${parseQty(record["교환량"])}개`;
 
-  const returnQty = parseQty(record.회송수량);
-  const exchangeQty = parseQty(record.교환수량);
+  const returnQty = parseQty(record["회송량"]);
+  const exchangeQty = parseQty(record["교환량"]);
   if (returnQty > 0 && exchangeQty > 0) {
     return `회송 ${returnQty}개 / 교환 ${exchangeQty}개`;
   }
@@ -755,10 +738,10 @@ const splitPhotoSourceText = (value) =>
 
 const getPhotoCandidatesFromRecord = (record) => {
   const rawItems = [
-    record?.사진URL,
-    record?.사진링크,
-    ...splitPhotoSourceText(record?.사진링크목록),
-    ...splitPhotoSourceText(record?.사진파일ID목록),
+    record?.["사진URL"],
+    record?.["사진파일ID"],
+    ...splitPhotoSourceText(record?.["사진목록"]),
+    ...splitPhotoSourceText(record?.["사진파일IDs"]),
   ];
 
   const seen = {};
@@ -778,13 +761,13 @@ function HistoryPhotoItem({ candidate, index, onOpen, styles }) {
   const [failed, setFailed] = useState(false);
 
   if (failed) {
-    return <div style={styles.photoThumbEmpty}>미리보기 불가</div>;
+    return <div style={styles.photoThumbEmpty}>사진을 불러오지 못했습니다.</div>;
   }
 
   return (
     <img
       src={candidate.previewUrl}
-      alt={`첨부 사진 ${index + 1}`}
+      alt={`등록 이미지 ${index + 1}`}
       style={styles.photoThumb}
       onClick={() => onOpen(candidate.previewUrl)}
       onError={() => setFailed(true)}
@@ -796,7 +779,7 @@ function HistoryPhotoPreview({ record, onOpen, styles }) {
   const candidates = useMemo(() => getPhotoCandidatesFromRecord(record), [record]);
 
   if (!candidates.length) {
-    return <div style={styles.photoEmpty}>사진 없음</div>;
+    return <div style={styles.photoEmpty}>등록된 사진이 없습니다.</div>;
   }
 
   return (
@@ -815,6 +798,9 @@ function HistoryPhotoPreview({ record, onOpen, styles }) {
 }
 
 function App() {
+  const [viewportWidth, setViewportWidth] = useState(() =>
+    typeof window !== "undefined" ? window.innerWidth : 1280
+  );
   const [rows, setRows] = useState([]);
   const [currentJob, setCurrentJob] = useState(null);
   const [currentFileName, setCurrentFileName] = useState("");
@@ -883,6 +869,18 @@ function App() {
     return () => clearTimeout(timer);
   }, [toast]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+
+    const handleResize = () => setViewportWidth(window.innerWidth);
+    handleResize();
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
+
+  const isPhoneLayout = viewportWidth <= 430;
+  const isVeryNarrowPhone = viewportWidth <= 390;
+
   const clearFlushTimer = useCallback(() => {
     if (flushTimerRef.current) {
       clearTimeout(flushTimerRef.current);
@@ -940,10 +938,10 @@ function App() {
         };
 
         if (entry.type === "inspection") {
-          merged.회송수량 = prevEntry.회송수량 || 0;
-          merged.교환수량 = prevEntry.교환수량 || 0;
-          merged.센터명 = prevEntry.센터명 || merged.센터명 || "";
-          merged.비고 = prevEntry.비고 || merged.비고 || "";
+          merged["회송량"] = prevEntry["회송량"] || 0;
+          merged["교환량"] = prevEntry["교환량"] || 0;
+          merged["센터"] = prevEntry["센터"] || merged["센터"] || "";
+          merged["비고"] = prevEntry["비고"] || merged["비고"] || "";
           merged.photoFiles =
             (Array.isArray(entry.photoFiles) && entry.photoFiles.length
               ? entry.photoFiles
@@ -951,14 +949,14 @@ function App() {
         }
 
         if (entry.type === "return" || entry.type === "exchange") {
-          merged.검품수량 = prevEntry.검품수량 || merged.검품수량 || 0;
+          merged["수량"] = prevEntry["수량"] || merged["수량"] || 0;
         }
 
         if (entry.type === "movement") {
           merged.qty = parseQty(prevEntry.qty) + parseQty(entry.qty);
-          merged.회송수량 = parseQty(prevEntry.회송수량) + parseQty(entry.회송수량);
-          merged.교환수량 = parseQty(prevEntry.교환수량) + parseQty(entry.교환수량);
-          merged.비고 = entry.비고 || prevEntry.비고 || "";
+          merged["회송량"] = parseQty(prevEntry["회송량"]) + parseQty(entry["회송량"]);
+          merged["교환량"] = parseQty(prevEntry["교환량"]) + parseQty(entry["교환량"]);
+          merged["비고"] = entry["비고"] || prevEntry["비고"] || "";
           merged.photoFiles = [
             ...(Array.isArray(prevEntry.photoFiles) ? prevEntry.photoFiles : []),
             ...(Array.isArray(entry.photoFiles) ? entry.photoFiles : []),
@@ -1022,16 +1020,56 @@ function App() {
     }
   };
 
-  const startScanner = useCallback(async () => {
+  const openRearCameraStream = async (reader, callback) => {
+    const videoElement = scannerVideoRef.current;
+    if (!videoElement) {
+      throw new Error("카메라 화면을 찾을 수 없습니다.");
+    }
+
+    try {
+      return await reader.decodeFromConstraints(
+        {
+          video: {
+            facingMode: { exact: "environment" },
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
+          },
+        },
+        videoElement,
+        callback
+      );
+    } catch (_) {
+      try {
+        return await reader.decodeFromConstraints(
+          {
+            video: {
+              facingMode: { ideal: "environment" },
+              width: { ideal: 1920 },
+              height: { ideal: 1080 },
+            },
+          },
+          videoElement,
+          callback
+        );
+      } catch (_) {
+        const devices = await BrowserCodeReader.listVideoInputDevices();
+        const backCamera = devices.find((device) =>
+          /back|rear|environment|후면|뒤/i.test(String(device.label || ""))
+        );
+        if (backCamera?.deviceId) {
+          return await reader.decodeFromVideoDevice(backCamera.deviceId, videoElement, callback);
+        }
+        throw new Error("후면 카메라를 찾을 수 없습니다.");
+      }
+    }
+  };
+const startScanner = useCallback(async () => {
     try {
       setScannerError("");
       setScannerReady(false);
       setScannerStatus("카메라를 준비하고 있습니다...");
 
       const reader = new BrowserMultiFormatReader();
-      const devices = await BrowserCodeReader.listVideoInputDevices();
-      const backCamera =
-        devices.find((device) => /back|rear|environment/i.test(String(device.label || ""))) || devices[0];
 
       const callback = (result, err, controls) => {
         if (controls) {
@@ -1074,45 +1112,25 @@ function App() {
           setScannerReady((prev) => prev || true);
           return;
         }
-
-        return;
       };
 
-      if (backCamera?.deviceId) {
-        scannerControlsRef.current = await reader.decodeFromVideoDevice(
-          backCamera.deviceId,
-          scannerVideoRef.current,
-          callback
-        );
-      } else {
-        scannerControlsRef.current = await reader.decodeFromConstraints(
-          {
-            video: {
-              facingMode: { ideal: "environment" },
-              width: { ideal: 1280 },
-              height: { ideal: 720 },
-            },
-          },
-          scannerVideoRef.current,
-          callback
-        );
-      }
+      scannerControlsRef.current = await openRearCameraStream(reader, callback);
 
       scannerStatusTimerRef.current = setInterval(() => {
         setScannerStatus((prev) =>
-          prev === "바코드 인식 중..."
-            ? "바코드를 화면 중앙에 맞춰주세요."
-            : "바코드 인식 중..."
+          prev === "바코드를 찾고 있습니다..."
+            ? "바코드를 화면 중앙에 맞춰 주세요."
+            : "바코드를 찾고 있습니다..."
         );
       }, 2200);
 
-      setScannerStatus("바코드 인식 중...");
+      setScannerStatus("바코드를 찾고 있습니다...");
     } catch (err) {
-      setScannerError(err.message || "카메라를 시작할 수 없습니다.");
+      setScannerError(err.message || "카메라를 시작하지 못했습니다.");
       setScannerStatus("카메라를 사용할 수 없습니다.");
       stopScanner();
     }
-  }, [closeScanner, stopScanner]);
+  }, [closeScanner, openRearCameraStream, stopScanner]);
   const handleCsvUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -1149,7 +1167,7 @@ function App() {
 
       const result = await response.json();
       if (!response.ok || result.ok === false) {
-        throw new Error(result.message || "CSV 캐시 저장 실패");
+        throw new Error(result.message || "CSV ??????????????곌숯");
       }
 
       const nextJob = result.job || {
@@ -1165,9 +1183,9 @@ function App() {
       setCurrentFileModifiedAt(new Date(file.lastModified).toISOString());
       setDashboardSummary(result.summary || {});
   
-      setMessage("CSV 업로드 완료");
+      setMessage("CSV ????寃??????썹땟??);
     } catch (err) {
-      setError(err.message || "CSV 처리 실패");
+      setError(err.message || "CSV ?꿔꺂??節뉖き???????곌숯");
     } finally {
       setUploadingCsv(false);
       if (e.target) {
@@ -1189,7 +1207,7 @@ function App() {
   const loadBootstrap = useCallback(async () => {
     if (!SCRIPT_URL.trim()) {
       setBootLoading(false);
-      setError("REACT_APP_GOOGLE_SCRIPT_URL 환경변수가 필요합니다.");
+      setError("REACT_APP_GOOGLE_SCRIPT_URL ?????ъ졒??⑤슢堉???? ????썹땟???嶺뚮ㅎ????");
       return;
     }
 
@@ -1201,7 +1219,7 @@ function App() {
       const result = await response.json();
 
       if (!response.ok || result.ok === false) {
-        throw new Error(result.message || "초기 데이터를 불러오지 못했습니다.");
+        throw new Error(result.message || "?潁??용끏???????????? ???곗뵯????? ?꿔꺂??쭫?묒쒜?壤??????");
       }
 
       const data = result.data || {};
@@ -1215,10 +1233,10 @@ function App() {
 
       (config.exclude_rows || []).forEach((row) => {
         const productCode = normalizeProductCode(
-          getValue(row, ["상품코드", "상품 코드", "코드", "바코드"])
+          getValue(row, ["???ㅺ강??熬곣뫀???, "???ㅺ강? ?熬곣뫀???, "?熬곣뫀???, "?袁⑸즴????])
         );
-        const partner = String(getValue(row, ["협력사", "협력사명"]) || "").trim();
-        const useFlag = getValue(row, ["사용여부"]);
+        const partner = String(getValue(row, ["???쑩???, "???쑩???嶺?]) || "").trim();
+        const useFlag = getValue(row, ["??????"]);
 
         if (!isTruthyUsage(useFlag)) return;
         if (!productCode) return;
@@ -1233,17 +1251,17 @@ function App() {
       const nextEventMap = {};
       (config.event_rows || []).forEach((row) => {
         const productCode = normalizeProductCode(
-          getValue(row, ["상품코드", "상품 코드", "코드", "바코드"])
+          getValue(row, ["???ㅺ강??熬곣뫀???, "???ㅺ강? ?熬곣뫀???, "?熬곣뫀???, "?袁⑸즴????])
         );
-        const eventName = String(getValue(row, ["행사명"]) || "").trim();
-        const useFlag = getValue(row, ["사용여부"]);
+        const eventName = String(getValue(row, ["??繹먭퍗?э┼?]) || "").trim();
+        const useFlag = getValue(row, ["??????"]);
 
         if (!productCode) return;
         if (isExplicitFalseUsage(useFlag)) return;
 
         nextEventMap[productCode] = {
-          행사여부: "행사",
-          행사명: eventName,
+          ??繹먭퍗????: "??繹먭퍗??,
+          ??繹먭퍗?э┼? eventName,
         };
       });
 
@@ -1259,15 +1277,18 @@ function App() {
       setHappycallAnalytics(data.happycall || {});
       setProductImageMap(
         (Array.isArray(data.product_images) ? data.product_images : []).reduce((acc, item) => {
-          const key = String(item?.맵키 || "").trim();
-          const url = String(item?.이미지URL || "").trim();
+          const key = String(item?.["癲ル슢???⑸눀??] || "").trim();
+          const fileId = String(item?.["????얠큸D"] || "").trim();
+          const url = fileId
+            ? `https://drive.google.com/thumbnail?id=${fileId}&sz=w1200`
+            : String(item?.["????癲ル슣??URL"] || "").trim();
           if (key && url) acc[key] = url;
           return acc;
         }, {})
       );
-      setMessage(job ? "최근 작업을 불러왔습니다." : "CSV를 업로드해 주세요.");
+      setMessage(job ? "?꿔꺂????쭍????????????곗뵯?????됰Ŋ?좂뜏?????딅젩." : "CSV??????寃?????琉????녿뮝???ル튉??");
     } catch (err) {
-      setError(err.message || "초기 데이터를 불러오지 못했습니다.");
+      setError(err.message || "?潁??용끏???????????? ???곗뵯????? ?꿔꺂??쭫?묒쒜?壤??????");
     } finally {
       setBootLoading(false);
     }
@@ -1278,11 +1299,11 @@ function App() {
     const result = await response.json();
 
     if (!response.ok || result.ok === false) {
-      throw new Error(result.message || "내역 불러오기 실패");
+      throw new Error(result.message || "????ㅿ폎?????곗뵯??????곗뵚???????곌숯");
     }
 
     return (Array.isArray(result.records) ? result.records : []).sort((a, b) =>
-      String(b.작성일시 || "").localeCompare(String(a.작성일시 || ""), "ko")
+      String(b["??獄쏅똻???繹먮굝六?] || "").localeCompare(String(a["??獄쏅똻???繹먮굝六?] || ""), "ko")
     );
   }, []);
 
@@ -1294,7 +1315,7 @@ function App() {
       setHistoryRows(nextRows);
       return nextRows;
     } catch (err) {
-      setError(err.message || "내역을 불러오지 못했습니다.");
+      setError(err.message || "????ㅿ폎??????곗뵯????? ?꿔꺂??쭫?묒쒜?壤??????");
       setHistoryRows([]);
       return [];
     } finally {
@@ -1326,9 +1347,9 @@ function App() {
 
     filteredRows.forEach((row) => {
       const productCode = row.__productCode;
-      const productName = row.__productName || "상품명 없음";
-      const partner = row.__partner || "협력사 없음";
-      const center = row.__center || "센터 없음";
+      const productName = row.__productName || "????브컯???????ㅼ굡??;
+      const partner = row.__partner || "???????????ㅼ굡??;
+      const center = row.__center || "????ル∥??????ㅼ굡??;
       const qty = row.__qty || 0;
 
       const matched =
@@ -1428,16 +1449,16 @@ function App() {
     const map = {};
 
     (historyRows || []).forEach((record) => {
-      const key = `${record.협력사명 || ""}||${record.상품코드 || ""}`;
+      const key = `${record["???쑩???嶺?] || record["???쑩???] || ""}||${record["???ㅺ강??熬곣뫀???] || ""}`;
       if (!map[key]) {
         map[key] = { returnCount: 0, exchangeCount: 0 };
       }
 
-      if (parseQty(record.회송수량) > 0) {
+      if (parseQty(record["??????嚥???]) > 0) {
         map[key].returnCount += 1;
       }
 
-      if (parseQty(record.교환수량) > 0) {
+      if (parseQty(record["???????嚥???]) > 0) {
         map[key].exchangeCount += 1;
       }
     });
@@ -1524,7 +1545,7 @@ function App() {
 
     const result = await response.json();
     if (!response.ok || result.ok === false) {
-      throw new Error(result.message || "내역 삭제 실패");
+      throw new Error(result.message || "????ㅿ폎???????????곌숯");
     }
   };
 
@@ -1555,7 +1576,7 @@ function App() {
       }))).find((item) => item.imageKey === selectedImageTargetKey);
 
     if (!targetProduct) {
-      setError("등록 대상 상품을 찾지 못했습니다.");
+      setError("?嚥싲갭큔?댁쉩??????????브컯????꿔꺂????? ?꿔꺂??쭫?묒쒜?壤??????");
       if (e.target) e.target.value = "";
       return;
     }
@@ -1582,20 +1603,23 @@ function App() {
 
       const result = await response.json();
       if (!response.ok || result.ok === false) {
-        throw new Error(result.message || "이미지 등록 실패");
+        throw new Error(result.message || "?????꿔꺂??? ?嚥싲갭큔?댁쉩???????곌숯");
       }
 
       const nextMap = (Array.isArray(result.product_images) ? result.product_images : []).reduce((acc, item) => {
-        const key = String(item?.맵키 || "").trim();
-        const url = String(item?.이미지URL || "").trim();
+        const key = String(item?.["癲ル슢???⑸눀??] || "").trim();
+        const fileId = String(item?.["????얠큸D"] || "").trim();
+        const url = fileId
+          ? `https://drive.google.com/thumbnail?id=${fileId}&sz=w1200`
+          : String(item?.["????癲ル슣??URL"] || "").trim();
         if (key && url) acc[key] = url;
         return acc;
       }, {});
       setProductImageMap(nextMap);
-      setToast("이미지 등록 완료");
-      setMessage("상품 이미지가 등록되었습니다.");
+      setToast("?????꿔꺂??? ?嚥싲갭큔?댁쉩??????썹땟??);
+      setMessage("????브컯? ?????꿔꺂?????醫딆쓧? ?嚥싲갭큔?댁쉩???嶺???????");
     } catch (err) {
-      setError(err.message || "이미지 등록 실패");
+      setError(err.message || "?????꿔꺂??? ?嚥싲갭큔?댁쉩???????곌숯");
     } finally {
       setUploadingImageKey("");
       setSelectedImageTargetKey("");
@@ -1630,7 +1654,7 @@ function App() {
 
         requestRows.push({
           ...rest,
-          사진들: photosPayload,
+          ??鶯?? photosPayload,
         });
       }
 
@@ -1645,7 +1669,7 @@ function App() {
 
       const result = await response.json();
       if (!response.ok || result.ok === false) {
-        throw new Error(result.message || "배치 저장 실패");
+        throw new Error(result.message || "?熬곣뫖利????????????곌숯");
       }
 
       removePendingKeys(targetKeys);
@@ -1653,7 +1677,7 @@ function App() {
 
       if (Array.isArray(result.records)) {
         const nextRows = [...result.records].sort((a, b) =>
-          String(b.작성일시 || "").localeCompare(String(a.작성일시 || ""), "ko")
+          String(b["??獄쏅똻???繹먮굝六?] || "").localeCompare(String(a["??獄쏅똻???繹먮굝六?] || ""), "ko")
         );
         setHistoryRows(nextRows);
       }
@@ -1662,10 +1686,10 @@ function App() {
         setDashboardSummary(result.summary);
       }
 
-      setToast("저장 완료");
+      setToast("????????썹땟??);
     } catch (err) {
       setItemStatuses(targetKeys, "failed");
-      setError(err.message || "배치 저장 실패");
+      setError(err.message || "?熬곣뫖利????????????곌숯");
     } finally {
       savingRef.current = false;
       setSaving(false);
@@ -1706,7 +1730,7 @@ function App() {
     const entityKey = makeEntityKey(currentJob?.job_key, product.productCode, product.partner);
 
     if (qty <= 0) {
-      setError("검품수량을 입력해 주세요.");
+      setError("?嚥▲굧??????⑤베臾??濚밸Ŧ?뤸뤃?????怨몄７?????녿뮝???ル튉??");
       return;
     }
 
@@ -1716,30 +1740,30 @@ function App() {
       {
         key: entityKey,
         type: "inspection",
-        작업기준일또는CSV식별값: currentJob?.job_key || "",
-        작성일시: new Date().toISOString(),
-        상품코드: product.productCode,
-        상품명: product.productName,
-        협력사명: product.partner,
-        전체발주수량: product.totalQty || 0,
-        발주수량: product.totalQty || 0,
-        검품수량: qty,
-        회송수량: pendingMap[entityKey]?.회송수량 || 0,
-        교환수량: pendingMap[entityKey]?.교환수량 || 0,
-        센터명: pendingMap[entityKey]?.센터명 || "",
-        비고: pendingMap[entityKey]?.비고 || "",
-        행사여부: product.eventInfo?.행사여부 || "",
-        행사명: product.eventInfo?.행사명 || "",
+        ??????먮섀饔낅챸???? currentJob?.job_key || "",
+        ??獄쏅똻???繹먮굝六? new Date().toISOString(),
+        ???ㅺ강??熬곣뫀??? product.productCode,
+        ???ㅺ강?癲? product.productName,
+        ???쑩???嶺? product.partner,
+        ??ш끽維?管???우툔櫻??嚥??? product.totalQty || 0,
+        ?袁⑸즵獒뺣뎿爾??嚥??? product.totalQty || 0,
+        ?濡ろ떟????怨뺣묄?? qty,
+        ??????嚥??? pendingMap[entityKey]?.["??????嚥???] || 0,
+        ???????嚥??? pendingMap[entityKey]?.["???????嚥???] || 0,
+        ???醫롫뙃癲? pendingMap[entityKey]?.["???醫롫뙃癲?] || "",
+        ????? pendingMap[entityKey]?.["?????] || "",
+        ??繹먭퍗????: product.eventInfo?.["??繹먭퍗????"] || "",
+        ??繹먭퍗?э┼? product.eventInfo?.["??繹먭퍗?э┼?] || "",
         photoFiles: photoFiles.length ? photoFiles : pendingMap[entityKey]?.photoFiles || [],
       },
     ]);
-    setToast("저장되었습니다.");
+    setToast("???逆곷틳源얗??????????딅젩.");
   };
 
   const saveReturnExchange = async (product, centerName) => {
     const centerInfo = product.centers.find((item) => item.center === centerName);
     if (!centerInfo) {
-      setError("센터를 선택해 주세요.");
+      setError("????ル∥???????ｋ??????녿뮝???ル튉??");
       return;
     }
 
@@ -1751,12 +1775,12 @@ function App() {
     const photoFiles = Array.isArray(draft.photoFiles) ? draft.photoFiles : [];
 
     if (!currentJob?.job_key) {
-      setError("저장 가능한 작업 기준 CSV가 없습니다.");
+      setError("??????醫딆쓧??嚥싳쇎紐???????????뚯??? CSV??醫딆쓧? ????ㅿ폍??????딅젩.");
       return;
     }
 
     if (returnQty <= 0 && exchangeQty <= 0 && !memo && photoFiles.length === 0) {
-      setError("회송수량, 교환수량, 비고, 사진 중 하나 이상 입력해 주세요.");
+      setError("?????????? ??????????? ????? ??傭?嚥????β뼯援η뙴??????壤?????怨몄７?????녿뮝???ル튉??");
       return;
     }
 
@@ -1776,22 +1800,22 @@ function App() {
         ),
         type: "movement",
         movementType: "RETURN",
-        작업기준일또는CSV식별값: currentJob?.job_key || "",
-        작성일시: new Date().toISOString(),
-        상품명: product.productName,
-        상품코드: product.productCode,
-        센터명: centerName,
-        협력사명: product.partner,
-        발주수량: centerInfo.totalQty || 0,
-        행사여부: product.eventInfo?.행사여부 || "",
-        행사명: product.eventInfo?.행사명 || "",
-        처리유형: "회송",
-        회송수량: returnQty,
-        교환수량: 0,
+        ??????먮섀饔낅챸???? currentJob?.job_key || "",
+        ??獄쏅똻???繹먮굝六? new Date().toISOString(),
+        ???ㅺ강?癲? product.productName,
+        ???ㅺ강??熬곣뫀??? product.productCode,
+        ???醫롫뙃癲? centerName,
+        ???쑩???嶺? product.partner,
+        ?袁⑸즵獒뺣뎿爾??嚥??? centerInfo.totalQty || 0,
+        ??繹먭퍗????: product.eventInfo?.["??繹먭퍗????"] || "",
+        ??繹먭퍗?э┼? product.eventInfo?.["??繹먭퍗?э┼?] || "",
+        癲ル슪?ｇ몭????レ챺?? "?????,
+        ??????嚥??? returnQty,
+        ???????嚥??? 0,
         qty: returnQty,
-        비고: memo,
+        ????? memo,
         photoFiles,
-        전체발주수량: product.totalQty || 0,
+        ??ш끽維?管???우툔櫻??嚥??? product.totalQty || 0,
       });
     }
 
@@ -1806,22 +1830,22 @@ function App() {
         ),
         type: "movement",
         movementType: "EXCHANGE",
-        작업기준일또는CSV식별값: currentJob?.job_key || "",
-        작성일시: new Date().toISOString(),
-        상품명: product.productName,
-        상품코드: product.productCode,
-        센터명: "",
-        협력사명: product.partner,
-        발주수량: product.totalQty || 0,
-        행사여부: product.eventInfo?.행사여부 || "",
-        행사명: product.eventInfo?.행사명 || "",
-        처리유형: "교환",
-        회송수량: 0,
-        교환수량: exchangeQty,
+        ??????먮섀饔낅챸???? currentJob?.job_key || "",
+        ??獄쏅똻???繹먮굝六? new Date().toISOString(),
+        ???ㅺ강?癲? product.productName,
+        ???ㅺ강??熬곣뫀??? product.productCode,
+        ???醫롫뙃癲? "",
+        ???쑩???嶺? product.partner,
+        ?袁⑸즵獒뺣뎿爾??嚥??? product.totalQty || 0,
+        ??繹먭퍗????: product.eventInfo?.["??繹먭퍗????"] || "",
+        ??繹먭퍗?э┼? product.eventInfo?.["??繹먭퍗?э┼?] || "",
+        癲ル슪?ｇ몭????レ챺?? "??????,
+        ??????嚥??? 0,
+        ???????嚥??? exchangeQty,
         qty: exchangeQty,
-        비고: memo,
+        ????? memo,
         photoFiles,
-        전체발주수량: product.totalQty || 0,
+        ??ш끽維?管???우툔櫻??嚥??? product.totalQty || 0,
       });
     }
 
@@ -1836,26 +1860,26 @@ function App() {
         photoNames: [],
       },
     }));
-    setToast("저장되었습니다.");
+    setToast("???逆곷틳源얗??????????딅젩.");
   };
 
   const deleteHistoryRecord = async (record) => {
     const rowNumber = Number(record.__rowNumber || 0);
     if (!rowNumber) {
-      setError("삭제할 행 정보를 찾지 못했습니다.");
+      setError("????????癲ル슢???ъ쒜???꿔꺂????? ?꿔꺂??쭫?묒쒜?壤??????");
       return;
     }
 
-    const ok = window.confirm("이 내역을 삭제할까요?");
+    const ok = window.confirm("??????ㅿ폎??????????ャ렑???");
     if (!ok) return;
 
     try {
       setDeletingRowNumber(rowNumber);
       await cancelMovementEventByRow(rowNumber);
       setHistoryRows((prev) => prev.filter((item) => Number(item.__rowNumber) !== rowNumber));
-      setToast("삭제 완료");
+      setToast("????????썹땟??);
     } catch (err) {
-      setError(err.message || "내역 삭제 실패");
+      setError(err.message || "????ㅿ폎???????????곌숯");
     } finally {
       setDeletingRowNumber(null);
     }
@@ -1878,11 +1902,11 @@ function App() {
 
       const result = await response.json();
       if (!response.ok || result.ok === false) {
-        throw new Error(result.message || "ZIP 다운로드 실패");
+        throw new Error(result.message || "ZIP ???繹먮굝??汝??吏??좉텣??????곌숯");
       }
 
       if (!result.zipBase64) {
-        setToast("다운로드 가능한 사진이 없습니다.");
+        setToast("???繹먮굝??汝??吏??좉텣???醫딆쓧??嚥싳쇎紐????傭??????ㅿ폍??????딅젩.");
         return;
       }
 
@@ -1891,10 +1915,10 @@ function App() {
       const href = URL.createObjectURL(blob);
       const fileName = result.fileName ||
         (mode === "movement"
-          ? `회송_교환_사진_${formatDateForFileName()}.zip`
+          ? `?????????????傭?${formatDateForFileName()}.zip`
           : mode === "inspection"
-          ? `검품사진_${formatDateForFileName()}.zip`
-          : `참고사진_${formatDateForFileName()}.zip`);
+          ? `?嚥▲굧??????????${formatDateForFileName()}.zip`
+          : `?꿔꺂??癰귥빖????傭?${formatDateForFileName()}.zip`);
 
       link.href = href;
       link.download = fileName;
@@ -1902,9 +1926,9 @@ function App() {
       link.click();
       link.remove();
       URL.revokeObjectURL(href);
-      setToast("ZIP 다운로드 완료");
+      setToast("ZIP ???繹먮굝??汝??吏??좉텣?????썹땟??);
     } catch (err) {
-      setError(err.message || "ZIP 다운로드 실패");
+      setError(err.message || "ZIP ???繹먮굝??汝??吏??좉텣??????곌숯");
     } finally {
       setZipDownloading("");
     }
@@ -1912,12 +1936,12 @@ function App() {
 
   const resetCurrentJobInputs = async () => {
     if (!currentJob?.job_key) {
-      setError("초기화할 현재 작업이 없습니다.");
+      setError("?潁??용끏????????????썹땟?????????????ㅿ폍??????딅젩.");
       return;
     }
 
     if (!adminPassword.trim()) {
-      setError("관리자 비밀번호를 입력해 주세요.");
+      setError("???援온??잙갭큔????????筌?????沃섃뮧嫄?????怨몄７?????녿뮝???ル튉??");
       return;
     }
 
@@ -1940,7 +1964,7 @@ function App() {
 
       const result = await response.json();
       if (!response.ok || result.ok === false) {
-        throw new Error(result.message || "초기화 실패");
+        throw new Error(result.message || "?潁??용끏????????곌숯");
       }
 
       clearFlushTimer();
@@ -1957,9 +1981,9 @@ function App() {
       if (result.summary) {
         setDashboardSummary(result.summary);
       }
-      setToast("현재 작업 입력 데이터 초기화 완료");
+      setToast("????썹땟????????????怨몄７ ??????????潁??용끏???????썹땟??);
     } catch (err) {
-      setError(err.message || "초기화 실패");
+      setError(err.message || "?潁??용끏????????곌숯");
     } finally {
       setAdminResetting(false);
     }
@@ -1978,27 +2002,27 @@ function App() {
 
       const rawRows = (parsedRows || [])
         .map((row) => ({
-          제목: clampText(row["제목"] || row["subject"] || "", 300),
-          본문: clampText(row["본문"] || row["body"] || row["내용(암호화)"] || "", 8000),
-          메일ID: clampText(row["인터넷 메시지 ID"] || row["메일ID"] || row["접수번호"] || "", 200),
-          보낸사람: clampText(row["보낸사람:(이름)"] || row["senderName"] || "", 200),
-          접수일시: clampText(row["접수일시"] || row["receivedAt"] || "", 100),
-          파트너사: clampText(row["처리파트너사"] || row["파트너사"] || row["협력사명"] || "", 200),
-          장애유형: clampText(
-            row["장애유형(소)"] || row["장애유형(중)"] || row["장애유형(대)"] || row["장애유형"] || "",
+          ??筌먯룄肄? clampText(row["??筌먯룄肄?] || row["subject"] || "", 300),
+          ?怨뚮옖筌?쑜猷? clampText(row["?怨뚮옖筌?쑜猷?] || row["body"] || row["???⑤챶裕????????"] || "", 8000),
+          癲ル슢???筌≪퓦: clampText(row["?嶺뚮ㅏ援???癲ル슢??????? ID"] || row["癲ル슢???筌≪퓦"] || row["??????묐탶?⑤베???] || "", 200),
+          ?怨뚮옖?雅???? clampText(row["?怨뚮옖?雅????(?????"] || row["senderName"] || "", 200),
+          ???????繹먮굝六? clampText(row["???????繹먮굝六?] || row["receivedAt"] || "", 100),
+          ???⑤베肄?????? clampText(row["癲ル슪?ｇ몭????⑤베肄??????] || row["???⑤베肄??????] || row["???쑩???嶺?] || "", 200),
+          ???믩눀???レ챺?? clampText(
+            row["???믩눀???レ챺????)"] || row["???믩눀???レ챺??濚?"] || row["???믩눀???レ챺????"] || row["???믩눀???レ챺??] || "",
             200
           ),
         }))
-        .filter((row) => String(row.제목 || "").trim() || String(row.본문 || "").trim());
+        .filter((row) => String(row.??筌먯룄肄?|| "").trim() || String(row.?怨뚮옖筌?쑜猷?|| "").trim());
 
       const dedupedMap = new Map();
       rawRows.forEach((row) => {
         const dedupeKey = [
-          String(row.메일ID || "").trim(),
-          String(row.파트너사 || "").trim(),
-          String(row.접수일시 || "").trim(),
-          String(row.제목 || "").trim(),
-          String(row.본문 || "").trim().slice(0, 300),
+          String(row.癲ル슢???筌≪퓦 || "").trim(),
+          String(row.???⑤베肄??????|| "").trim(),
+          String(row.???????繹먮굝六?|| "").trim(),
+          String(row.??筌먯룄肄?|| "").trim(),
+          String(row.?怨뚮옖筌?쑜猷?|| "").trim().slice(0, 300),
         ].join("||");
         dedupedMap.set(dedupeKey, row);
       });
@@ -2007,7 +2031,7 @@ function App() {
       const skippedCount = Math.max(0, rawRows.length - rows.length);
 
       if (!rows.length) {
-        throw new Error("해피콜 CSV에서 가져올 수 있는 행이 없습니다.");
+        throw new Error("???ш끽維???CSV???????醫딆쓧??癲ル슢???몄쒜????????됲닓 ??濚밸Ŧ???????ㅿ폍??????딅젩.");
       }
 
       const batchSize = rows.length >= 1500 ? 500 : 300;
@@ -2021,7 +2045,7 @@ function App() {
         const batchNumber = Math.floor(index / batchSize) + 1;
         const processedCount = Math.min(index + batchRows.length, rows.length);
         setMessage(
-          `해피콜 CSV 처리 중... ${batchNumber}/${totalBatches} 배치 (${processedCount} / ${rows.length})`
+          `???ш끽維???CSV ?꿔꺂??節뉖き??嚥?.. ${batchNumber}/${totalBatches} ?熬곣뫖利???(${processedCount} / ${rows.length})`
         );
 
         const response = await fetch(SCRIPT_URL, {
@@ -2036,7 +2060,7 @@ function App() {
         const result = await response.json();
         if (!response.ok || result.ok === false) {
           throw new Error(
-            result.message || `해피콜 CSV 가져오기에 실패했습니다. (${batchNumber}/${totalBatches} 배치)`
+            result.message || `???ш끽維???CSV ??醫딆쓧??癲ル슢???몄쒜嚥▲룗?耀붾굝梨?影?뉖뜦??????곌숯??????????딅젩. (${batchNumber}/${totalBatches} ?熬곣뫖利???`
           );
         }
 
@@ -2048,13 +2072,13 @@ function App() {
       setHappycallAnalytics(lastResult?.happycall || {});
       setMessage("");
       setToast(
-        `해피콜 CSV 반영 완료 · 신규 ${insertedTotal}건 · 갱신 ${updatedTotal}건${
-          skippedCount > 0 ? ` · 중복 제외 ${skippedCount}건` : ""
+        `??熬곣뫀猷??CSV ?袁⑸즵?????ш끽維??勇????ル㎦??${insertedTotal}癲?勇???좊즲???${updatedTotal}癲?{
+          skippedCount > 0 ? ` 勇?濚욌꼬?댄꺇????筌믨퀡??${skippedCount}癲? : ""
         }`
       );
     } catch (err) {
       setError(
-        `${err.message || "해피콜 CSV 가져오기에 실패했습니다."} 같은 CSV를 다시 올리면 이어서 반영됩니다.`
+        `${err.message || "??熬곣뫀猷??CSV ??좊읈??嶺뚮ㅎ?닸쾮濡㏓섀饔낅챸?節덇덩?????됰꽡???怨?????덊렡."} ??좊즵?? CSV?????怨뺣빰 ????⑥궡異????⑤９苑???袁⑸즵????筌뤾퍓???`
       );
     } finally {
       setUploadingHappycallCsv(false);
@@ -2092,12 +2116,12 @@ function App() {
         <div style={styles.headerTopRow}>
           <div style={styles.brandBlock}>
             <div style={styles.brandRow}>
-              <img src="/assets/gs-logo.svg" alt="GS 로고" style={styles.brandLogo} />
-              <h1 style={styles.title}>GS신선강화지원팀 검품 시스템</h1>
+              <img src="/assets/gs-logo.svg" alt="GS ?汝??吏?? style={styles.brandLogo} />
+              <h1 style={styles.title}>GS???モ??⑸쨬??낃뭣?筌먦룂????? ?濡ろ떟?????筌?痢??/h1>
             </div>
             <div style={styles.headerLinkRow}>
               <a href={worksheetUrl || "#"} target="_blank" rel="noreferrer" style={styles.headerLink}>
-                {worksheetUrl || "워크시트 URL 없음"}
+                {worksheetUrl || "????ㅼ뒩??????ъ뎽 URL ????ㅼ굡??}
               </a>
               <button
                 type="button"
@@ -2105,18 +2129,18 @@ function App() {
                   if (!worksheetUrl) return;
                   try {
                     await navigator.clipboard.writeText(worksheetUrl);
-                    setToast("워크시트 링크 복사 완료");
+                    setToast("????ㅼ뒩??????ъ뎽 ?꿔꺂???疫뀀９臾???⑤슢?뽫뵓怨???????썹땟??);
                   } catch (_) {
-                    setError("워크시트 링크 복사 실패");
+                    setError("????ㅼ뒩??????ъ뎽 ?꿔꺂???疫뀀９臾???⑤슢?뽫뵓怨????????곌숯");
                   }
                 }}
                 style={styles.copyButton}
               >
-                복사
+                ??⑤슢?뽫뵓怨???
               </button>
             </div>
           </div>
-          <div style={styles.headerModeBadge}>{mode === "inspection" ? "검품 모드" : "회송/교환 모드"}</div>
+          <div style={styles.headerModeBadge}>{mode === "inspection" ? "?濡ろ떟???癲ル슢?꾤땟??? : "???????????癲ル슢?꾤땟???}</div>
         </div>
         <div style={styles.quickActionGrid}>
           <button
@@ -2124,16 +2148,16 @@ function App() {
             onClick={() => setMode("inspection")}
             style={{ ...styles.quickActionCard, ...(mode === "inspection" ? styles.quickActionCardActive : {}) }}
           >
-            <span style={styles.quickActionIcon}>🔎</span>
-            <span style={styles.quickActionText}>검품</span>
+            <span style={styles.quickActionIcon}>???/span>
+            <span style={styles.quickActionText}>?濡ろ떟???/span>
           </button>
           <button
             type="button"
             onClick={() => setMode("return")}
             style={{ ...styles.quickActionCard, ...(mode === "return" ? styles.quickActionCardActive : {}) }}
           >
-            <span style={styles.quickActionIcon}>📦</span>
-            <span style={styles.quickActionText}>회송</span>
+            <span style={styles.quickActionIcon}>??類?퐲?</span>
+            <span style={styles.quickActionText}>?????/span>
           </button>
           <button
             type="button"
@@ -2143,8 +2167,8 @@ function App() {
             }}
             style={styles.quickActionCard}
           >
-            <span style={styles.quickActionIcon}>📄</span>
-            <span style={styles.quickActionText}>내역</span>
+            <span style={styles.quickActionIcon}>???/span>
+            <span style={styles.quickActionText}>????ㅿ폎??/span>
           </button>
         </div>
       </div>
@@ -2152,12 +2176,12 @@ function App() {
       <div style={styles.panel}>
         <div style={styles.csvHeaderRow}>
           <div>
-            <div style={styles.sectionTitle}>CSV 업로드</div>
+            <div style={styles.sectionTitle}>CSV ????겾??/div>
             <div style={styles.metaText}>
-              현재 작업: {currentFileName || "업로드된 파일 없음"}
+              ????썹땟???????? {currentFileName || "????寃??嶺뚮㉡?ｇ빊??????????ㅼ굡??}
             </div>
             <div style={styles.metaText}>
-              파일 수정일자: {currentFileModifiedAt ? formatDateTime(currentFileModifiedAt) : "-"}
+              ?????????볥궚???濚밸Ŧ?긷칰? {currentFileModifiedAt ? formatDateTime(currentFileModifiedAt) : "-"}
             </div>
           </div>
           <div style={styles.csvActionRow}>
@@ -2166,7 +2190,7 @@ function App() {
               onClick={() => fileInputRef.current?.click()}
               style={styles.primaryButton}
             >
-              {uploadingCsv ? "처리 중..." : "📄 검품 CSV 업로드"}
+              {uploadingCsv ? "癲ル슪?ｇ몭??濚?.." : "?濡ろ떟???CSV ????겾??}
             </button>
             <button
               type="button"
@@ -2177,7 +2201,7 @@ function App() {
                 opacity: uploadingHappycallCsv ? 0.7 : 1,
               }}
             >
-              {uploadingHappycallCsv ? "처리 중..." : "🗂 해피콜 업로드"}
+              {uploadingHappycallCsv ? "癲ル슪?ｇ몭??濚?.." : "??熬곣뫀猷??????겾??}
             </button>
             <button
               type="button"
@@ -2189,8 +2213,7 @@ function App() {
               }}
               style={styles.secondaryButton}
             >
-              🖼 이미지 등록
-            </button>
+              이미지 등록            </button>
             <button
               type="button"
               onClick={() => {
@@ -2200,23 +2223,42 @@ function App() {
               }}
               style={styles.secondaryButton}
             >
-              👤 관리자 초기화
+              관리자 초기화
             </button>
           </div>
         </div>
       </div>
 
       <div style={styles.panel}>
-        <div style={styles.searchRow}>
+        <div
+          style={{
+            ...styles.searchRow,
+            gap: isVeryNarrowPhone ? 8 : styles.searchRow.gap,
+          }}
+        >
           <input
             ref={searchInputRef}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="상품명 / 상품코드 / 협력사 검색"
-            style={styles.searchInput}
+            style={{
+              ...styles.searchInput,
+              fontSize: isPhoneLayout ? 15 : styles.searchInput.fontSize,
+              padding: isPhoneLayout ? 10 : styles.searchInput.padding,
+            }}
           />
-          <button type="button" onClick={() => setIsScannerOpen(true)} style={styles.scanButton} aria-label="바코드 스캔">
-            <span style={styles.scanIcon}>스캔</span>
+          <button
+            type="button"
+            onClick={() => setIsScannerOpen(true)}
+            style={{
+              ...styles.scanButton,
+              minWidth: isVeryNarrowPhone ? 52 : styles.scanButton.minWidth,
+              minHeight: isPhoneLayout ? 46 : styles.scanButton.minHeight,
+              fontSize: isPhoneLayout ? 17 : styles.scanButton.fontSize,
+            }}
+            aria-label="바코드 스캔"
+          >
+            <span style={styles.scanIcon}><BarcodeScanIcon size={26} /></span>
           </button>
         </div>
       </div>
@@ -2224,9 +2266,9 @@ function App() {
       {(bootLoading || uploadingCsv || error || message) && (
         <div style={error ? styles.errorBox : styles.infoBox}>
           {bootLoading
-            ? "초기 데이터를 불러오는 중..."
+            ? "?潁??용끏???????????? ???곗뵯??????紐꾪닓 嚥?.."
             : uploadingCsv
-            ? "CSV 처리 중..."
+            ? "CSV ?꿔꺂??節뉖き??嚥?.."
             : error || message}
         </div>
       )}
@@ -2234,25 +2276,39 @@ function App() {
       <div style={styles.panel}>
         <div style={styles.happycallHeader}>
           <div>
-            <div style={styles.sectionTitle}>전일 해피콜 TOP 5 {totalVisibleProducts ? `(${totalVisibleProducts}건)` : ""}</div>
-            <div style={styles.heroSubtext}>전일 접수 해피콜 기준</div>
+            <div style={styles.sectionTitle}>????썹땟?㈑????ш끽維???TOP 5 {totalVisibleProducts ? `(${totalVisibleProducts}??` : ""}</div>
+            <div style={styles.heroSubtext}>????썹땟?㈑??????????ш끽維??????뚯???</div>
           </div>
         </div>
 
         {previousDayHappycallTopList.length === 0 ? (
-          <div style={styles.emptyBox}>전일 해피콜 데이터가 없습니다.</div>
+          <div style={styles.emptyBox}>????썹땟?㈑????ш끽維????????????? ????ㅿ폍??????딅젩.</div>
         ) : (
           <div style={styles.happycallShowcase}>
             {happycallHeroCard ? (
-              <div style={styles.heroTopCard}>
+              <div
+                style={{
+                  ...styles.heroTopCard,
+                  gridTemplateColumns: isVeryNarrowPhone ? "minmax(0, 1fr) 92px" : styles.heroTopCard.gridTemplateColumns,
+                  padding: isPhoneLayout ? 14 : styles.heroTopCard.padding,
+                  gap: isPhoneLayout ? 10 : styles.heroTopCard.gap,
+                }}
+              >
                 <div style={styles.heroTopCopy}>
                   <div style={styles.heroTopBadge}>
                     <span style={styles.heroTopMedal}>{getTopMedal(happycallHeroCard.rank)}</span>
                     <span style={styles.heroTopBadgeText}>TOP {happycallHeroCard.rank}</span>
                   </div>
-                  <div style={styles.heroTopName}>{happycallHeroCard.productName}</div>
+                  <div
+                    style={{
+                      ...styles.heroTopName,
+                      fontSize: isVeryNarrowPhone ? 15 : isPhoneLayout ? 17 : styles.heroTopName.fontSize,
+                    }}
+                  >
+                    {happycallHeroCard.productName}
+                  </div>
                   <div style={styles.heroTopMeta}>
-                    {happycallHeroCard.count.toLocaleString("ko-KR")}건 · {formatPercent(happycallHeroCard.share)}
+                    {happycallHeroCard.count.toLocaleString("ko-KR")}????{formatPercent(happycallHeroCard.share)}
                   </div>
                   <div style={styles.heroProgressRow}>
                     <div style={styles.heroProgressTrack}>
@@ -2266,7 +2322,12 @@ function App() {
                     <div style={styles.heroProgressValue}>{formatPercent(happycallHeroCard.share)}</div>
                   </div>
                 </div>
-                <div style={styles.heroImageFrame}>
+                <div
+                  style={{
+                    ...styles.heroImageFrame,
+                    height: isVeryNarrowPhone ? 90 : isPhoneLayout ? 96 : styles.heroImageFrame.height,
+                  }}
+                >
                   {happycallHeroCard.imageSrc ? (
                     <img
                       src={happycallHeroCard.imageSrc}
@@ -2274,36 +2335,71 @@ function App() {
                       style={styles.heroImage}
                     />
                   ) : (
-                    <div style={styles.heroFallbackImage}>📦</div>
+                    <div style={styles.heroFallbackImage}>??類?퐲?</div>
                   )}
                 </div>
               </div>
             ) : null}
 
             {happycallMiniCards.length ? (
-              <div style={styles.heroMiniGrid}>
+              <div
+                style={{
+                  ...styles.heroMiniGrid,
+                  gap: isPhoneLayout ? 8 : styles.heroMiniGrid.gap,
+                }}
+              >
                 {happycallMiniCards.map((card) => (
                   <div
                     key={`happycall-top-${card.rank}`}
                     style={{
                       ...styles.heroMiniCard,
+                      padding: isPhoneLayout ? 12 : styles.heroMiniCard.padding,
+                      minHeight: isVeryNarrowPhone ? 136 : isPhoneLayout ? 144 : styles.heroMiniCard.minHeight,
                       borderColor:
                         card.rank === 2 ? "#93c5fd" : card.rank === 3 ? "#86efac" : "#dbe3f0",
                     }}
                   >
                     <div style={styles.heroMiniLabel}>
-                      <span>{getTopMedal(card.rank) || "•"}</span>
+                      <span>{getTopMedal(card.rank) || "??}</span>
                       <span>{card.rank <= 3 ? `TOP ${card.rank}` : ""}</span>
                     </div>
-                    <div style={styles.heroMiniContent}>
+                    <div
+                      style={{
+                        ...styles.heroMiniContent,
+                        gridTemplateColumns:
+                          card.imageSrc && !isVeryNarrowPhone ? "minmax(0, 1fr) 46px" : "minmax(0, 1fr)",
+                        alignItems: "start",
+                      }}
+                    >
                       <div style={styles.heroMiniCopy}>
-                        <div style={styles.heroMiniName}>{card.productName}</div>
+                        <div
+                          style={{
+                            ...styles.heroMiniName,
+                            fontSize: isVeryNarrowPhone ? 12 : 14,
+                            lineHeight: 1.28,
+                            display: "-webkit-box",
+                            WebkitLineClamp: isVeryNarrowPhone ? 3 : 2,
+                            WebkitBoxOrient: "vertical",
+                            overflow: "hidden",
+                            overflowWrap: "anywhere",
+                          }}
+                        >
+                          {card.productName}
+                        </div>
                         <div style={styles.heroMiniMeta}>
-                          {card.count.toLocaleString("ko-KR")}건 · {formatPercent(card.share)}
+                          {card.count.toLocaleString("ko-KR")}????{formatPercent(card.share)}
                         </div>
                       </div>
                       {card.imageSrc ? (
-                        <div style={styles.heroMiniThumbFrame}>
+                        <div
+                          style={{
+                            ...styles.heroMiniThumbFrame,
+                            width: isVeryNarrowPhone ? 40 : 46,
+                            height: isVeryNarrowPhone ? 40 : 46,
+                            justifySelf: "end",
+                            alignSelf: "center",
+                          }}
+                        >
                           <img src={card.imageSrc} alt={card.productName} style={styles.heroMiniThumbImage} />
                         </div>
                       ) : null}
@@ -2313,27 +2409,50 @@ function App() {
               </div>
             ) : null}
 
-            <div style={styles.heroActionRow}>
+            <div
+              style={{
+                ...styles.heroActionRow,
+                gap: isPhoneLayout ? 6 : styles.heroActionRow.gap,
+              }}
+            >
               <button
                 type="button"
                 onClick={() => downloadPhotoZip("movement")}
-                style={styles.heroActionButton}
+                style={{
+                  ...styles.heroActionButton,
+                  minHeight: isPhoneLayout ? 38 : styles.heroActionButton.minHeight,
+                  fontSize: isVeryNarrowPhone ? 11 : isPhoneLayout ? 12 : styles.heroActionButton.fontSize,
+                  gap: isPhoneLayout ? 4 : styles.heroActionButton.gap,
+                  padding: isPhoneLayout ? "0 8px" : "0 10px",
+                }}
               >
-                {zipDownloading === "movement" ? "ZIP 생성 중..." : "📷 불량사진"}
+                {zipDownloading === "movement" ? "ZIP ??獄쏅똻??濚?.." : "??됰씭????鶯?}
               </button>
               <button
                 type="button"
                 onClick={() => downloadPhotoZip("inspection")}
-                style={styles.heroActionButton}
+                style={{
+                  ...styles.heroActionButton,
+                  minHeight: isPhoneLayout ? 38 : styles.heroActionButton.minHeight,
+                  fontSize: isVeryNarrowPhone ? 11 : isPhoneLayout ? 12 : styles.heroActionButton.fontSize,
+                  gap: isPhoneLayout ? 4 : styles.heroActionButton.gap,
+                  padding: isPhoneLayout ? "0 8px" : "0 10px",
+                }}
               >
-                {zipDownloading === "inspection" ? "ZIP 생성 중..." : "🧾 검품사진"}
+                {zipDownloading === "inspection" ? "ZIP ??獄쏅똻??濚?.." : "?濡ろ떟??????э┼?}
               </button>
               <button
                 type="button"
                 onClick={() => downloadPhotoZip("photoOnly")}
-                style={styles.heroActionButton}
+                style={{
+                  ...styles.heroActionButton,
+                  minHeight: isPhoneLayout ? 38 : styles.heroActionButton.minHeight,
+                  fontSize: isVeryNarrowPhone ? 11 : isPhoneLayout ? 12 : styles.heroActionButton.fontSize,
+                  gap: isPhoneLayout ? 4 : styles.heroActionButton.gap,
+                  padding: isPhoneLayout ? "0 8px" : "0 10px",
+                }}
               >
-                {zipDownloading === "photoOnly" ? "ZIP 생성 중..." : "🔗 참고사진"}
+                {zipDownloading === "photoOnly" ? "ZIP ??獄쏅똻??濚?.." : "癲ル슔?蹂앸듋???鶯?}
               </button>
             </div>
           </div>
@@ -2342,13 +2461,13 @@ function App() {
 
       <div style={styles.partnerPanel}>
         <div style={styles.partnerSectionHeader}>
-          <div style={styles.sectionTitle}>협력사 목록</div>
-          <div style={styles.partnerSectionCount}>총 {totalVisibleProducts}건</div>
+          <div style={styles.sectionTitle}>???쑩???癲ル슢?꾤땟戮⑤뭄?/div>
+          <div style={styles.partnerSectionCount}>??{totalVisibleProducts}癲?/div>
         </div>
 
-      <div style={styles.list}>
+        <div style={styles.list}>
         {groupedPartners.length === 0 ? (
-          <div style={styles.emptyBox}>표시할 상품이 없습니다.</div>
+          <div style={styles.emptyBox}>??嶺?筌??????브컯???????ㅿ폍??????딅젩.</div>
         ) : (
           groupedPartners.map((partnerGroup) => (
             <div key={partnerGroup.partner} style={styles.partnerGroup}>
@@ -2361,8 +2480,8 @@ function App() {
               >
                 <div style={styles.partnerTitle}>{partnerGroup.partner}</div>
                 <div style={styles.partnerHeaderRight}>
-                  <div style={styles.partnerCount}>{partnerGroup.products.length}건</div>
-                  <div style={styles.partnerChevron}>›</div>
+                  <div style={styles.partnerCount}>{partnerGroup.products.length}癲?/div>
+                  <div style={styles.partnerChevron}>??/div>
                 </div>
               </button>
 
@@ -2375,8 +2494,8 @@ function App() {
                       exchangeCount: 0,
                     };
                     const historySummary = [
-                      historyCounts.returnCount > 0 ? `회송 ${historyCounts.returnCount}` : "",
-                      historyCounts.exchangeCount > 0 ? `교환 ${historyCounts.exchangeCount}` : "",
+                      historyCounts.returnCount > 0 ? `?????${historyCounts.returnCount}` : "",
+                      historyCounts.exchangeCount > 0 ? `??????${historyCounts.exchangeCount}` : "",
                     ]
                       .filter(Boolean)
                       .join(" / ");
@@ -2399,9 +2518,9 @@ function App() {
                       ? inspectionStatus
                       : returnStatus || exchangeStatus;
                     const happycallBadges = [
-                      ["1d", "전일"],
-                      ["7d", "일주일"],
-                      ["30d", "한달"],
+                      ["1d", "??ш끽維쀩?],
+                      ["7d", "??繹먮엨猷??],
+                      ["30d", "??筌먲퐢??],
                     ]
                       .map(([periodKey, label]) => {
                         const stats = product.happycallStats?.[periodKey];
@@ -2409,7 +2528,7 @@ function App() {
                         return {
                           key: periodKey,
                           rank: stats.rank,
-                          label: stats.rank <= 3 ? `${label} 해피콜 TOP${stats.rank}` : `${label} 해피콜`,
+                          label: stats.rank <= 3 ? `${label} ??熬곣뫀猷??TOP${stats.rank}` : `${label} ??熬곣뫀猷??,
                         };
                       })
                       .filter(Boolean);
@@ -2433,16 +2552,16 @@ function App() {
                               <div style={styles.cardContentRow}>
                                 <div style={styles.cardMainCopy}>
                                   <div style={styles.cardTitleRow}>
-                                    <div style={styles.cardTitle}>{product.productName || "상품명 없음"}</div>
-                                    {product.eventInfo?.행사여부 ? (
+                                    <div style={styles.cardTitle}>{product.productName || "???ㅺ강?癲????⑤챶苡?}</div>
+                                    {product.eventInfo?.??繹먭퍗???? ? (
                                       <span style={styles.eventBadge}>
-                                        {product.eventInfo.행사명 || "행사"}
+                                        {product.eventInfo.??繹먭퍗?э┼?|| "??繹먭퍗??}
                                       </span>
                                     ) : null}
                                   </div>
-                                  <div style={styles.cardMeta}>코드 {product.productCode}</div>
+                                  <div style={styles.cardMeta}>?熬곣뫀???{product.productCode}</div>
                                   <div style={styles.qtyRow}>
-                                    <span style={styles.qtyChip}>총 발주 {product.totalQty}개</span>
+                                    <span style={styles.qtyChip}>???袁⑸즵獒뺣뎿爾?{product.totalQty}??/span>
                                     {historySummary ? <span style={styles.qtyChip}>{historySummary}</span> : null}
                                   </div>
                                 </div>
@@ -2469,16 +2588,16 @@ function App() {
                                       {
                                         key: entityKey,
                                         type: "inspection",
-                                        작업기준일또는CSV식별값: currentJob?.job_key || "",
-                                        작성일시: new Date().toISOString(),
-                                        상품코드: product.productCode,
-                                        상품명: product.productName,
-                                        협력사명: product.partner,
-                                        전체발주수량: product.totalQty || 0,
-                                        발주수량: product.totalQty || 0,
-                                        검품수량: qty,
-                                        회송수량: 0,
-                                        교환수량: 0,
+                                        ??????먮섀饔낅챸???? currentJob?.job_key || "",
+                                        ??獄쏅똻???繹먮굝六? new Date().toISOString(),
+                                        ???ㅺ강??熬곣뫀??? product.productCode,
+                                        ???ㅺ강?癲? product.productName,
+                                        ???쑩???嶺? product.partner,
+                                        ??ш끽維?管???우툔櫻??嚥??? product.totalQty || 0,
+                                        ?袁⑸즵獒뺣뎿爾??嚥??? product.totalQty || 0,
+                                        ?濡ろ떟????怨뺣묄?? qty,
+                                        ??????嚥??? 0,
+                                        ???????嚥??? 0,
                                       },
                                     ]);
                                   } else {
@@ -2486,11 +2605,11 @@ function App() {
                                   }
                                 }}
                                 style={styles.inlineQtyInput}
-                                placeholder="검품수량"
+                                placeholder="?濡ろ떟????怨뺣묄??
                               />
                             </div>
                             <div style={styles.formGroup}>
-                              <label style={styles.label}>검품 사진</label>
+                              <label style={styles.label}>?濡ろ떟??????э┼?/label>
                               <input
                                 type="file"
                                 accept="image/*"
@@ -2509,16 +2628,16 @@ function App() {
                                       {
                                         key: entityKey,
                                         type: "inspection",
-                                        작업기준일또는CSV식별값: currentJob?.job_key || "",
-                                        작성일시: new Date().toISOString(),
-                                        상품코드: product.productCode,
-                                        상품명: product.productName,
-                                        협력사명: product.partner,
-                                        전체발주수량: product.totalQty || 0,
-                                        발주수량: product.totalQty || 0,
-                                        검품수량: parseQty(draft.inspectionQty),
-                                        회송수량: 0,
-                                        교환수량: 0,
+                                        ??????먮섀饔낅챸???? currentJob?.job_key || "",
+                                        ??獄쏅똻???繹먮굝六? new Date().toISOString(),
+                                        ???ㅺ강??熬곣뫀??? product.productCode,
+                                        ???ㅺ강?癲? product.productName,
+                                        ???쑩???嶺? product.partner,
+                                        ??ш끽維?管???우툔櫻??嚥??? product.totalQty || 0,
+                                        ?袁⑸즵獒뺣뎿爾??嚥??? product.totalQty || 0,
+                                        ?濡ろ떟????怨뺣묄?? parseQty(draft.inspectionQty),
+                                        ??????嚥??? 0,
+                                        ???????嚥??? 0,
                                         photoFiles: files,
                                       },
                                     ]);
@@ -2529,16 +2648,16 @@ function App() {
                               <div style={styles.metaText}>
                                 {Array.isArray(draft.photoNames) && draft.photoNames.length
                                   ? draft.photoNames.join(", ")
-                                  : "선택된 사진 없음"}
+                                  : "???ャ뀕?????鶯????⑤챶苡?}
                               </div>
                             </div>
                             <button
                               type="button"
-                              onClick={() => saveInspectionQtySimple(product)}
-                              style={styles.saveButton}
-                            >
-                              {inspectionStatus === "saving" ? "저장중..." : "저장"}
-                            </button>
+                            onClick={() => saveInspectionQtySimple(product)}
+                            style={styles.saveButton}
+                          >
+                              {inspectionStatus === "saving" ? "?????롢뀋?.." : "????}
+                          </button>
                           </div>
                         ) : (
                           <>
@@ -2569,16 +2688,16 @@ function App() {
                               <div style={styles.cardContentRow}>
                                 <div style={styles.cardMainCopy}>
                                   <div style={styles.cardTitleRow}>
-                                    <div style={styles.cardTitle}>{product.productName || "상품명 없음"}</div>
-                                    {product.eventInfo?.행사여부 ? (
+                                    <div style={styles.cardTitle}>{product.productName || "???ㅺ강?癲????⑤챶苡?}</div>
+                                    {product.eventInfo?.??繹먭퍗???? ? (
                                       <span style={styles.eventBadge}>
-                                        {product.eventInfo.행사명 || "행사"}
+                                        {product.eventInfo.??繹먭퍗?э┼?|| "??繹먭퍗??}
                                       </span>
                                     ) : null}
                                   </div>
-                                  <div style={styles.cardMeta}>코드 {product.productCode}</div>
+                                  <div style={styles.cardMeta}>?熬곣뫀???{product.productCode}</div>
                                   <div style={styles.qtyRow}>
-                                    <span style={styles.qtyChip}>총 발주 {product.totalQty}개</span>
+                                    <span style={styles.qtyChip}>???袁⑸즵獒뺣뎿爾?{product.totalQty}??/span>
                                     {historySummary ? <span style={styles.qtyChip}>{historySummary}</span> : null}
                                   </div>
                                 </div>
@@ -2593,7 +2712,7 @@ function App() {
                             {isOpen && (
                           <div style={styles.editorBox}>
                             <div style={styles.formGroup}>
-                              <label style={styles.label}>센터 선택</label>
+                              <label style={styles.label}>???醫롫뙃 ???ャ뀕??/label>
                               <select
                                 value={selectedCenter}
                                 onChange={(e) =>
@@ -2606,8 +2725,7 @@ function App() {
                               >
                                 {product.centers.map((center) => (
                                   <option key={center.center} value={center.center}>
-                                    {center.center} / {center.totalQty}개
-                                  </option>
+                                    {center.center} / {center.totalQty}??                                  </option>
                                 ))}
                               </select>
                             </div>
@@ -2615,11 +2733,10 @@ function App() {
                             {selectedCenterInfo && (
                               <div style={styles.detailBlock}>
                                 <div style={styles.metaText}>
-                                  선택 센터 발주수량: {selectedCenterInfo.totalQty}개
-                                </div>
+                                  ???ャ뀕?????醫롫뙃 ?袁⑸즵獒뺣뎿爾??嚥??? {selectedCenterInfo.totalQty}??                                </div>
                                 <div style={styles.metaText}>
-                                  행사: {product.eventInfo?.행사여부 || ""}
-                                  {product.eventInfo?.행사명 ? ` (${product.eventInfo.행사명})` : ""}
+                                  ??繹먭퍗?? {product.eventInfo?.??繹먭퍗???? || ""}
+                                  {product.eventInfo?.??繹먭퍗?э┼?? ` (${product.eventInfo.??繹먭퍗?э┼?)` : ""}
                                 </div>
                               </div>
                             )}
@@ -2627,7 +2744,7 @@ function App() {
                               <>
                                 <div style={styles.grid2}>
                                   <div style={styles.formGroup}>
-                                    <label style={styles.label}>회송수량</label>
+                                    <label style={styles.label}>??????嚥???/label>
                                     <input
                                       type="number"
                                       min="0"
@@ -2639,7 +2756,7 @@ function App() {
                                     />
                                   </div>
                                   <div style={styles.formGroup}>
-                                    <label style={styles.label}>교환수량</label>
+                                    <label style={styles.label}>???????嚥???/label>
                                     <input
                                       type="number"
                                       min="0"
@@ -2653,18 +2770,18 @@ function App() {
                                 </div>
 
                                 <div style={styles.formGroup}>
-                                  <label style={styles.label}>비고</label>
+                                  <label style={styles.label}>?????/label>
                                   <textarea
                                     value={draft.memo || ""}
                                     onChange={(e) => updateDraft(draftKey, "memo", e.target.value)}
                                     style={styles.textarea}
                                     rows={3}
-                                    placeholder="불량 사유 / 전달 사항"
+                                    placeholder="??됰씭??????? / ??ш끽維??????
                                   />
                                 </div>
 
                                 <div style={styles.formGroup}>
-                                  <label style={styles.label}>사진 첨부</label>
+                                  <label style={styles.label}>??鶯?癲ル슪?섊땟??</label>
                                   <input
                                     type="file"
                                     accept="image/*"
@@ -2683,7 +2800,7 @@ function App() {
                                   <div style={styles.metaText}>
                                     {Array.isArray(draft.photoNames) && draft.photoNames.length
                                       ? draft.photoNames.join(", ")
-                                      : "선택된 사진 없음"}
+                                      : "???ャ뀕?????鶯????⑤챶苡?}
                                   </div>
                                 </div>
 
@@ -2692,7 +2809,7 @@ function App() {
                                   onClick={() => saveReturnExchange(product, selectedCenter)}
                                   style={styles.saveButton}
                                 >
-                                  {actionStatus === "saving" ? "저장중..." : "저장"}
+                                  {actionStatus === "saving" ? "?????롢뀋?.." : "????}
                                 </button>
                               </>
                           </div>
@@ -2715,21 +2832,21 @@ function App() {
           <div style={styles.bottomSheet} onClick={(e) => e.stopPropagation()}>
             <div style={styles.sheetHandle} />
             <div style={styles.sheetHeader}>
-              <h2 style={styles.sheetTitle}>저장 내역</h2>
+              <h2 style={styles.sheetTitle}>???潁뺛꺈彛????⑤９肉?/h2>
               <button type="button" onClick={() => setShowHistory(false)} style={styles.sheetClose}>
-                닫기
+                ?????탿
               </button>
             </div>
 
             {historyLoading ? (
-              <div style={styles.infoBox}>내역 불러오는 중...</div>
+              <div style={styles.infoBox}>???⑤９肉???됰씭??????몄툗 濚?..</div>
             ) : historyRows.length === 0 ? (
-              <div style={styles.emptyBox}>표시할 내역이 없습니다.</div>
+              <div style={styles.emptyBox}>??筌?六?????⑤９肉?????⑤８?????덊렡.</div>
             ) : (
               <div style={styles.sheetList}>
                 {historyRows.map((record, index) => (
                   <div
-                    key={`${record.__rowNumber || "row"}-${record.작성일시 || "time"}-${index}`}
+                    key={`${record.__rowNumber || "row"}-${record.??獄쏅똻???繹먮굝六?|| "time"}-${index}`}
                     style={styles.historyCard}
                   >
                     <button
@@ -2738,21 +2855,21 @@ function App() {
                       style={styles.deleteBtn}
                       disabled={deletingRowNumber === Number(record.__rowNumber)}
                     >
-                      {deletingRowNumber === Number(record.__rowNumber) ? "..." : "×"}
+                      {deletingRowNumber === Number(record.__rowNumber) ? "..." : "??}
                     </button>
 
                     <div style={styles.cardTopRow}>
-                      <div style={styles.cardTitle}>{record.상품명 || "상품명 없음"}</div>
+                    <div style={styles.cardTitle}>{record.???ㅺ강?癲?|| "???ㅺ강?癲????⑤챶苡?}</div>
                       <span style={styles.typeBadge}>{getRecordType(record)}</span>
                     </div>
-                    <div style={styles.cardMeta}>코드 {record.상품코드 || "-"}</div>
-                    <div style={styles.cardMeta}>센터 {record.센터명 || "-"}</div>
-                    <div style={styles.cardMeta}>협력사 {record.협력사명 || "-"}</div>
+                    <div style={styles.cardMeta}>?熬곣뫀???{record.???ㅺ강??熬곣뫀???|| "-"}</div>
+                    <div style={styles.cardMeta}>???醫롫뙃 {record.???醫롫뙃癲?|| "-"}</div>
+                    <div style={styles.cardMeta}>???쑩???{record.???쑩???嶺?|| "-"}</div>
                     <div style={styles.qtyRow}>
-                      <span style={styles.qtyChip}>처리수량 {getRecordQtyText(record)}</span>
-                      <span style={styles.qtyChip}>{formatDateTime(record.작성일시)}</span>
+                      <span style={styles.qtyChip}>癲ル슪?ｇ몭???嚥???{getRecordQtyText(record)}</span>
+                      <span style={styles.qtyChip}>{formatDateTime(record.??獄쏅똻???繹먮굝六?}</span>
                     </div>
-                    <div style={styles.historyMemo}>{record.비고 || "-"}</div>
+                    <div style={styles.historyMemo}>{record.?????|| "-"}</div>
 
                     <div style={styles.photoWrap}>
                       <HistoryPhotoPreview
@@ -2771,7 +2888,7 @@ function App() {
 
       {zoomPhotoUrl && (
         <div style={styles.photoOverlay} onClick={() => setZoomPhotoUrl("")}>
-          <img src={zoomPhotoUrl} alt="확대 사진" style={styles.photoZoom} />
+          <img src={zoomPhotoUrl} alt="?嶺? ??鶯? style={styles.photoZoom} />
         </div>
       )}
 
@@ -2780,28 +2897,28 @@ function App() {
           <div style={styles.bottomSheet} onClick={(e) => e.stopPropagation()}>
             <div style={styles.sheetHandle} />
             <div style={styles.sheetHeader}>
-              <h2 style={styles.sheetTitle}>관리자 초기화</h2>
+              <h2 style={styles.sheetTitle}>???굿?域밸Ŧ遊???縕?猿녿뎨??/h2>
               <button
                 type="button"
                 onClick={() => !adminResetting && setShowAdminReset(false)}
                 style={styles.sheetClose}
               >
-                닫기
+                ?????탿
               </button>
             </div>
 
             <div style={styles.infoBox}>
-              현재 작업의 검품수량, 회송/교환 내역, 연결된 사진과 드라이브 원본까지 삭제됩니다.
+              ??ш끽維??????????濡ろ떟????怨뺣묄?? ??????????????⑤９肉? ???ㅼ뒦?????鶯ㅼ룆?????筌먦끇?????????亦낆떓萸먪솒??? 癲ル슢?꾤땟?嶺???癰귙끋源??筌뤾퍓???
             </div>
 
             <div style={styles.formGroup}>
-              <label style={styles.label}>관리자 비밀번호</label>
+              <label style={styles.label}>???굿?域밸Ŧ遊???????類????/label>
               <input
                 type="password"
                 value={adminPassword}
                 onChange={(e) => setAdminPassword(e.target.value)}
                 style={styles.input}
-                placeholder="비밀번호 입력"
+                placeholder="?????類????????곸죷"
                 disabled={adminResetting}
               />
             </div>
@@ -2816,7 +2933,7 @@ function App() {
                 marginTop: 4,
               }}
             >
-              {adminResetting ? "초기화 중..." : "현재 작업 입력 데이터 초기화"}
+              {adminResetting ? "?縕?猿녿뎨??濚?.." : "??ш끽維????????????곸죷 ???Β?????縕?猿녿뎨??}
             </button>
           </div>
         </div>
@@ -2827,41 +2944,41 @@ function App() {
           <div style={styles.bottomSheet} onClick={(e) => e.stopPropagation()}>
             <div style={styles.sheetHandle} />
             <div style={styles.sheetHeader}>
-              <h2 style={styles.sheetTitle}>상품 이미지 등록</h2>
+              <h2 style={styles.sheetTitle}>???ㅺ강? ????癲ル슣?? ?濚밸Ŧ援욃ㅇ?/h2>
               <button
                 type="button"
                 onClick={() => !uploadingImageKey && setShowImageRegister(false)}
                 style={styles.sheetClose}
               >
-                닫기
+                ?????탿
               </button>
             </div>
 
             <div style={styles.infoBox}>
-              현재 CSV 기준 상품에 대해 이미지를 등록하거나 교체할 수 있습니다. 등록한 이미지는 같은 협력사/상품에 계속 자동 적용됩니다.
+              ??ш끽維??CSV ??れ삀?? ???ㅺ강???????????癲ル슣?????濚밸Ŧ援욃ㅇ????듦뭅??????????????怨?????덊렡. ?濚밸Ŧ援욃ㅇ??????癲ル슣??????좊즵?? ???쑩???? ???ㅺ강?????節뚮쳮?????筌????ㅼ굣???筌뤾퍓???
             </div>
 
             <div style={styles.searchRow}>
               <input
                 value={imageRegisterSearch}
                 onChange={(e) => setImageRegisterSearch(e.target.value)}
-                placeholder="상품명 / 상품코드 / 협력사 검색"
+                placeholder="???ㅺ강?癲?/ ???ㅺ강??熬곣뫀???/ ???쑩????濡ろ떟???
                 style={styles.searchInput}
               />
             </div>
 
-                {imageRegistryProducts.length === 0 ? (
-              <div style={styles.emptyState}>표시할 상품이 없습니다.</div>
+            {imageRegistryProducts.length === 0 ? (
+              <div style={styles.emptyState}>??筌?六?????ㅺ강??????⑤８?????덊렡.</div>
             ) : (
               <div style={styles.imageRegisterList}>
                 {imageRegistryProducts.map((product) => (
                   <div key={product.imageKey} style={styles.imageRegisterCard}>
                     <div style={styles.imageRegisterInfo}>
                       <div style={styles.imageRegisterName}>{product.productName}</div>
-                      <div style={styles.metaText}>코드 {product.productCode || "-"}</div>
-                      <div style={styles.metaText}>협력사 {product.partner || "-"}</div>
-                      <div style={styles.metaText}>총 발주 {parseQty(product.totalQty).toLocaleString("ko-KR")}개</div>
-                      <div style={styles.metaText}>{product.imageSrc ? "현재 이미지 있음" : "현재 이미지 없음"}</div>
+                      <div style={styles.metaText}>?熬곣뫀???{product.productCode || "-"}</div>
+                      <div style={styles.metaText}>???쑩???{product.partner || "-"}</div>
+                      <div style={styles.metaText}>???袁⑸즵獒뺣뎿爾?{parseQty(product.totalQty).toLocaleString("ko-KR")}??/div>
+                      <div style={styles.metaText}>{product.imageSrc ? "??ш끽維??????癲ル슣?? ???源낆쓱" : "??ш끽維??????癲ル슣?? ???⑤챶苡?}</div>
                     </div>
                     <button
                       type="button"
@@ -2874,7 +2991,7 @@ function App() {
                         opacity: uploadingImageKey === product.imageKey ? 0.7 : 1,
                       }}
                     >
-                      {uploadingImageKey === product.imageKey ? "등록 중..." : product.imageSrc ? "이미지 교체" : "이미지 등록"}
+                      {uploadingImageKey === product.imageKey ? "저장 중..." : product.imageSrc ? "이미지 교체" : "이미지 등록"}
                     </button>
                   </div>
                 ))}
@@ -2887,25 +3004,28 @@ function App() {
       {isScannerOpen && (
         <div style={styles.scannerOverlay} onClick={closeScanner}>
           <div style={styles.scannerModal} onClick={(e) => e.stopPropagation()}>
-            <button type="button" onClick={closeScanner} style={styles.scannerCloseBtn}>
-              횞
-            </button>
+            <button type="button" onClick={closeScanner} style={styles.scannerCloseBtn}>×</button>
 
-            <div style={styles.scannerTopText}>{scannerReady ? scannerStatus : "바코드 인식 중..."}</div>
+            <div style={styles.scannerTopText}>{scannerReady ? scannerStatus : "카메라를 시작하고 있습니다..."}</div>
 
             <div style={styles.scannerViewport}>
               <video ref={scannerVideoRef} style={styles.scannerVideo} muted playsInline />
               <div style={styles.scannerGuideBox} />
             </div>
 
-            <div style={styles.scannerHelperText}>바코드를 화면 중앙에 맞춰주세요.</div>
+            <div style={styles.scannerHelperText}>바코드를 화면 중앙에 맞춰 주세요.</div>
 
             {scannerError ? <div style={styles.errorBox}>{scannerError}</div> : null}
 
             <div style={styles.scannerActions}>
               {torchSupported ? (
-                <button type="button" onClick={toggleTorch} style={styles.secondaryButton}>
-                  {torchOn ? "플래시 끄기" : "플래시 켜기"}
+                <button
+                  type="button"
+                  onClick={toggleTorch}
+                  style={{ ...styles.secondaryButton, width: 52, minWidth: 52, padding: 0 }}
+                  aria-label={torchOn ? "플래시 끄기" : "플래시 켜기"}
+                >
+                  <FlashlightIcon size={20} active={torchOn} />
                 </button>
               ) : null}
 
@@ -3993,4 +4113,7 @@ const styles = {
 };
 
 export default App;
+
+
+
 
