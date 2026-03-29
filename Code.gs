@@ -486,21 +486,7 @@ function pruneJobCacheRows_(cacheSheet) {
 }
 
 function autoResizeOperationalSheets_(ss) {
-  var sheets = [
-    ss.getSheetByName(SHEET_NAMES.inspection),
-    ss.getSheetByName(SHEET_NAMES.records),
-    ss.getSheetByName(SHEET_NAMES.summary),
-    ss.getSheetByName(SHEET_NAMES.returnCenter),
-    ss.getSheetByName(SHEET_NAMES.returnSummary),
-  ];
-
-  sheets.forEach(function (sheet) {
-    if (!sheet || sheet.getLastColumn() <= 0) return;
-    var dataRange = sheet.getDataRange();
-    if (dataRange && dataRange.getNumRows() > 0 && dataRange.getNumColumns() > 0) {
-      dataRange.setWrapStrategy(SpreadsheetApp.WrapStrategy.CLIP);
-    }
-  });
+  return;
 }
 
 function getDashboardSummary_() {

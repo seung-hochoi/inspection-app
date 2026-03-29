@@ -814,6 +814,62 @@ function HistoryPhotoPreview({ record, onOpen, styles }) {
   );
 }
 
+function DraftPhotoPreviewItem({ file, index, onRemove, styles }) {
+  const [previewUrl, setPreviewUrl] = useState("");
+
+  useEffect(() => {
+    if (!file) {
+      setPreviewUrl("");
+      return undefined;
+    }
+
+    const nextUrl = URL.createObjectURL(file);
+    setPreviewUrl(nextUrl);
+
+    return () => {
+      URL.revokeObjectURL(nextUrl);
+    };
+  }, [file]);
+
+  return (
+    <div style={styles.draftPhotoCard}>
+      {previewUrl ? (
+        <img src={previewUrl} alt={file?.name || `선택 사진 ${index + 1}`} style={styles.draftPhotoImage} />
+      ) : (
+        <div style={styles.photoThumbEmpty}>미리보기 불가</div>
+      )}
+      <button
+        type="button"
+        onClick={() => onRemove(index)}
+        style={styles.draftPhotoRemoveButton}
+        aria-label={`선택 사진 ${index + 1} 삭제`}
+      >
+        ×
+      </button>
+    </div>
+  );
+}
+
+function DraftPhotoPreviewList({ files, onRemove, styles }) {
+  if (!Array.isArray(files) || files.length === 0) {
+    return <div style={styles.draftPhotoEmpty}>선택된 사진 없음</div>;
+  }
+
+  return (
+    <div style={styles.draftPhotoGrid}>
+      {files.map((file, index) => (
+        <DraftPhotoPreviewItem
+          key={`${file?.name || "photo"}-${file?.lastModified || index}-${index}`}
+          file={file}
+          index={index}
+          onRemove={onRemove}
+          styles={styles}
+        />
+      ))}
+    </div>
+  );
+}
+
 function App() {
   const [rows, setRows] = useState([]);
   const [currentJob, setCurrentJob] = useState(null);
@@ -929,7 +985,7 @@ function App() {
     });
   };
 
-  const upsertPendingEntries = (entries) => {
+  const upsertPendingEntries = useCallback((entries) => {
     if (!entries.length) return;
     setPendingMap((prev) => {
       const next = { ...prev };
@@ -975,7 +1031,7 @@ function App() {
       entries.map((entry) => entry.key),
       "pending"
     );
-  };
+  }, []);
 
   const stopScanner = useCallback(() => {
     if (scannerStatusTimerRef.current) {
@@ -1573,15 +1629,114 @@ function App() {
       });
   }, [groupedPartners, imageRegisterSearch]);
 
-  const updateDraft = (key, field, value) => {
+  const buildInspectionPendingEntry = useCallback((product, nextDraft = {}) => {
+    const entityKey = makeEntityKey(currentJob?.job_key, product.productCode, product.partner);
+    const photoFiles = Array.isArray(nextDraft.photoFiles) ? nextDraft.photoFiles : [];
+
+    return {
+      key: entityKey,
+      type: "inspection",
+      작업기준일또는CSV식별값: currentJob?.job_key || "",
+      작성일시: new Date().toISOString(),
+      상품코드: product.productCode,
+      상품명: product.productName,
+      협력사명: product.partner,
+      전체발주수량: product.totalQty || 0,
+      발주수량: product.totalQty || 0,
+      검품수량: parseQty(nextDraft.inspectionQty),
+      회송수량: pendingMap[entityKey]?.회송수량 || 0,
+      교환수량: pendingMap[entityKey]?.교환수량 || 0,
+      센터명: pendingMap[entityKey]?.센터명 || "",
+      비고: pendingMap[entityKey]?.비고 || "",
+      행사여부: product.eventInfo?.행사여부 || "",
+      행사명: product.eventInfo?.행사명 || "",
+      photoFiles,
+      photoNames: photoFiles.map((file) => file.name),
+    };
+  }, [currentJob?.job_key, pendingMap]);
+
+  const buildMovementEntries = useCallback((product, centerName, nextDraft = {}) => {
+    const centerInfo = product.centers.find((item) => item.center === centerName);
+    if (!centerInfo || !currentJob?.job_key) {
+      return [];
+    }
+
+    const returnQty = parseQty(nextDraft.returnQty);
+    const exchangeQty = parseQty(nextDraft.exchangeQty);
+    const memo = String(nextDraft.memo || "").trim();
+    const photoFiles = Array.isArray(nextDraft.photoFiles) ? nextDraft.photoFiles : [];
+    const entries = [];
+
+    if (returnQty > 0) {
+      entries.push({
+        key: makeMovementPendingKey("RETURN", currentJob.job_key, product.productCode, product.partner, centerName),
+        type: "movement",
+        movementType: "RETURN",
+        작업기준일또는CSV식별값: currentJob.job_key,
+        작성일시: new Date().toISOString(),
+        상품명: product.productName,
+        상품코드: product.productCode,
+        센터명: centerName,
+        협력사명: product.partner,
+        발주수량: centerInfo.totalQty || 0,
+        행사여부: product.eventInfo?.행사여부 || "",
+        행사명: product.eventInfo?.행사명 || "",
+        처리유형: "회송",
+        회송수량: returnQty,
+        교환수량: 0,
+        qty: returnQty,
+        비고: memo,
+        photoFiles,
+        photoNames: photoFiles.map((file) => file.name),
+        전체발주수량: product.totalQty || 0,
+      });
+    }
+
+    if (exchangeQty > 0) {
+      entries.push({
+        key: makeMovementPendingKey("EXCHANGE", currentJob.job_key, product.productCode, product.partner, centerName),
+        type: "movement",
+        movementType: "EXCHANGE",
+        작업기준일또는CSV식별값: currentJob.job_key,
+        작성일시: new Date().toISOString(),
+        상품명: product.productName,
+        상품코드: product.productCode,
+        센터명: centerName,
+        협력사명: product.partner,
+        발주수량: centerInfo.totalQty || 0,
+        행사여부: product.eventInfo?.행사여부 || "",
+        행사명: product.eventInfo?.행사명 || "",
+        처리유형: "교환",
+        회송수량: 0,
+        교환수량: exchangeQty,
+        qty: exchangeQty,
+        비고: memo,
+        photoFiles,
+        photoNames: photoFiles.map((file) => file.name),
+        전체발주수량: product.totalQty || 0,
+      });
+    }
+
+    return entries;
+  }, [currentJob?.job_key]);
+
+  const removeDraftPhoto = useCallback((draftKey, index) => {
+    const currentDraft = drafts[draftKey] || {};
+    const currentFiles = Array.isArray(currentDraft.photoFiles) ? currentDraft.photoFiles : [];
+    const currentNames = Array.isArray(currentDraft.photoNames) ? currentDraft.photoNames : [];
+    const nextPhotoFiles = currentFiles.filter((_, fileIndex) => fileIndex !== index);
+    const nextPhotoNames = currentNames.filter((_, fileIndex) => fileIndex !== index);
+    const nextDraft = {
+      ...currentDraft,
+      photoFiles: nextPhotoFiles,
+      photoNames: nextPhotoNames,
+    };
+
     setDrafts((prev) => ({
       ...prev,
-      [key]: {
-        ...prev[key],
-        [field]: value,
-      },
+      [draftKey]: nextDraft,
     }));
-  };
+  }, [drafts]);
 
   const cancelMovementEventByRow = async (rowNumber) => {
     const response = await fetch(SCRIPT_URL, {
@@ -1800,34 +1955,15 @@ function App() {
     const draftKey = `inspection||${product.partner}||${product.productCode}`;
     const qty = parseQty(drafts[draftKey]?.inspectionQty);
     const photoFiles = Array.isArray(drafts[draftKey]?.photoFiles) ? drafts[draftKey].photoFiles : [];
-    const entityKey = makeEntityKey(currentJob?.job_key, product.productCode, product.partner);
 
-    if (qty <= 0) {
-      setError("검품수량을 입력해 주세요.");
+    if (qty <= 0 && !photoFiles.length) {
+      setError("검품수량 또는 사진을 입력해 주세요.");
       return;
     }
 
     setError("");
     setMessage("");
-    const nextEntry = {
-      key: entityKey,
-      type: "inspection",
-      작업기준일또는CSV식별값: currentJob?.job_key || "",
-      작성일시: new Date().toISOString(),
-      상품코드: product.productCode,
-      상품명: product.productName,
-      협력사명: product.partner,
-      전체발주수량: product.totalQty || 0,
-      발주수량: product.totalQty || 0,
-      검품수량: qty,
-      회송수량: pendingMap[entityKey]?.회송수량 || 0,
-      교환수량: pendingMap[entityKey]?.교환수량 || 0,
-      센터명: pendingMap[entityKey]?.센터명 || "",
-      비고: pendingMap[entityKey]?.비고 || "",
-      행사여부: product.eventInfo?.행사여부 || "",
-      행사명: product.eventInfo?.행사명 || "",
-      photoFiles: photoFiles.length ? photoFiles : pendingMap[entityKey]?.photoFiles || [],
-    };
+    const nextEntry = buildInspectionPendingEntry(product, drafts[draftKey] || {});
 
     console.log("[saveInspectionQtySimple] pending entry", {
       jobKey: nextEntry.작업기준일또는CSV식별값,
@@ -1843,12 +1979,12 @@ function App() {
     });
 
     upsertPendingEntries([nextEntry]);
+    flushPending();
     setToast("저장되었습니다.");
   };
 
   const saveReturnExchange = async (product, centerName) => {
-    const centerInfo = product.centers.find((item) => item.center === centerName);
-    if (!centerInfo) {
+    if (!product.centers.find((item) => item.center === centerName)) {
       setError("센터를 선택해 주세요.");
       return;
     }
@@ -1857,83 +1993,21 @@ function App() {
     const draft = drafts[draftKey] || {};
     const returnQty = parseQty(draft.returnQty);
     const exchangeQty = parseQty(draft.exchangeQty);
-    const memo = String(draft.memo || "").trim();
-    const photoFiles = Array.isArray(draft.photoFiles) ? draft.photoFiles : [];
 
     if (!currentJob?.job_key) {
       setError("저장 가능한 작업 기준 CSV가 없습니다.");
       return;
     }
 
-    if (returnQty <= 0 && exchangeQty <= 0 && !memo && photoFiles.length === 0) {
-      setError("회송수량, 교환수량, 비고, 사진 중 하나 이상 입력해 주세요.");
+    if (returnQty <= 0 && exchangeQty <= 0) {
+      setError("회송수량 또는 교환수량을 입력해 주세요.");
       return;
     }
 
     setError("");
     setMessage("");
 
-    const movementEntries = [];
-
-    if (returnQty > 0) {
-      movementEntries.push({
-        key: makeMovementPendingKey(
-          "RETURN",
-          currentJob?.job_key,
-          product.productCode,
-          product.partner,
-          centerName
-        ),
-        type: "movement",
-        movementType: "RETURN",
-        작업기준일또는CSV식별값: currentJob?.job_key || "",
-        작성일시: new Date().toISOString(),
-        상품명: product.productName,
-        상품코드: product.productCode,
-        센터명: centerName,
-        협력사명: product.partner,
-        발주수량: centerInfo.totalQty || 0,
-        행사여부: product.eventInfo?.행사여부 || "",
-        행사명: product.eventInfo?.행사명 || "",
-        처리유형: "회송",
-        회송수량: returnQty,
-        교환수량: 0,
-        qty: returnQty,
-        비고: memo,
-        photoFiles,
-        전체발주수량: product.totalQty || 0,
-      });
-    }
-
-    if (exchangeQty > 0) {
-      movementEntries.push({
-        key: makeMovementPendingKey(
-          "EXCHANGE",
-          currentJob?.job_key,
-          product.productCode,
-          product.partner,
-          centerName
-        ),
-        type: "movement",
-        movementType: "EXCHANGE",
-        작업기준일또는CSV식별값: currentJob?.job_key || "",
-        작성일시: new Date().toISOString(),
-        상품명: product.productName,
-        상품코드: product.productCode,
-        센터명: centerName,
-        협력사명: product.partner,
-        발주수량: centerInfo.totalQty || 0,
-        행사여부: product.eventInfo?.행사여부 || "",
-        행사명: product.eventInfo?.행사명 || "",
-        처리유형: "교환",
-        회송수량: 0,
-        교환수량: exchangeQty,
-        qty: exchangeQty,
-        비고: memo,
-        photoFiles,
-        전체발주수량: product.totalQty || 0,
-      });
-    }
+    const movementEntries = buildMovementEntries(product, centerName, draft);
 
     console.log(
       "[saveReturnExchange] pending entries",
@@ -2454,21 +2528,21 @@ function App() {
                 onClick={() => downloadPhotoZip("movement")}
                 style={styles.heroActionButton}
               >
-                {zipDownloading === "movement" ? "ZIP 생성 중..." : "📷 불량사진"}
+                {zipDownloading === "movement" ? "ZIP 생성 중..." : "불량사진 저장"}
               </button>
               <button
                 type="button"
                 onClick={() => downloadPhotoZip("inspection")}
                 style={styles.heroActionButton}
               >
-                {zipDownloading === "inspection" ? "ZIP 생성 중..." : "🧾 검품사진"}
+                {zipDownloading === "inspection" ? "ZIP 생성 중..." : "검품사진 저장"}
               </button>
               <button
                 type="button"
                 onClick={() => downloadPhotoZip("photoOnly")}
                 style={styles.heroActionButton}
               >
-                {zipDownloading === "photoOnly" ? "ZIP 생성 중..." : "🔗 참고사진"}
+                {zipDownloading === "photoOnly" ? "ZIP 생성 중..." : "참고사진 저장"}
               </button>
             </div>
           </div>
@@ -2623,29 +2697,14 @@ function App() {
                                 value={draft.inspectionQty || ""}
                                 onChange={(e) => {
                                   const nextValue = e.target.value;
-                                  updateDraft(draftKey, "inspectionQty", nextValue);
-
-                                  const qty = parseQty(nextValue);
-                                  if (qty > 0) {
-                                    upsertPendingEntries([
-                                      {
-                                        key: entityKey,
-                                        type: "inspection",
-                                        작업기준일또는CSV식별값: currentJob?.job_key || "",
-                                        작성일시: new Date().toISOString(),
-                                        상품코드: product.productCode,
-                                        상품명: product.productName,
-                                        협력사명: product.partner,
-                                        전체발주수량: product.totalQty || 0,
-                                        발주수량: product.totalQty || 0,
-                                        검품수량: qty,
-                                        회송수량: 0,
-                                        교환수량: 0,
-                                      },
-                                    ]);
-                                  } else {
-                                    removePendingKeys([entityKey]);
-                                  }
+                                  const nextDraft = {
+                                    ...draft,
+                                    inspectionQty: nextValue,
+                                  };
+                                  setDrafts((prev) => ({
+                                    ...prev,
+                                    [draftKey]: nextDraft,
+                                  }));
                                 }}
                                 style={styles.inlineQtyInput}
                                 placeholder="검품수량"
@@ -2664,43 +2723,28 @@ function App() {
                                   const previousPhotoNames = Array.isArray(draft.photoNames) ? draft.photoNames : [];
                                   const nextPhotoFiles = [...previousPhotoFiles, ...files];
                                   const nextPhotoNames = [...previousPhotoNames, ...files.map((file) => file.name)];
+                                  const nextDraft = {
+                                    ...draft,
+                                    photoFiles: nextPhotoFiles,
+                                    photoNames: nextPhotoNames,
+                                  };
 
-                                  updateDraft(draftKey, "photoFiles", nextPhotoFiles);
-                                  updateDraft(
-                                    draftKey,
-                                    "photoNames",
-                                    nextPhotoNames
-                                  );
-
-                                  if (files.length) {
-                                    upsertPendingEntries([
-                                      {
-                                        key: entityKey,
-                                        type: "inspection",
-                                        작업기준일또는CSV식별값: currentJob?.job_key || "",
-                                        작성일시: new Date().toISOString(),
-                                        상품코드: product.productCode,
-                                        상품명: product.productName,
-                                        협력사명: product.partner,
-                                        전체발주수량: product.totalQty || 0,
-                                        발주수량: product.totalQty || 0,
-                                        검품수량: parseQty(draft.inspectionQty),
-                                        회송수량: 0,
-                                        교환수량: 0,
-                                        photoFiles: nextPhotoFiles,
-                                      },
-                                    ]);
-                                  }
+                                  setDrafts((prev) => ({
+                                    ...prev,
+                                    [draftKey]: nextDraft,
+                                  }));
 
                                   e.target.value = "";
                                 }}
                                 style={styles.fileInput}
                               />
-                              <div style={styles.metaText}>
-                                {Array.isArray(draft.photoNames) && draft.photoNames.length
-                                  ? draft.photoNames.join(", ")
-                                  : "선택된 사진 없음"}
-                              </div>
+                              <DraftPhotoPreviewList
+                                files={draft.photoFiles}
+                                onRemove={(index) =>
+                                  removeDraftPhoto(draftKey, index)
+                                }
+                                styles={styles}
+                              />
                             </div>
                             <button
                               type="button"
@@ -2802,9 +2846,16 @@ function App() {
                                       type="number"
                                       min="0"
                                       value={draft.returnQty || ""}
-                                      onChange={(e) =>
-                                        updateDraft(draftKey, "returnQty", e.target.value)
-                                      }
+                                      onChange={(e) => {
+                                        const nextDraft = {
+                                          ...draft,
+                                          returnQty: e.target.value,
+                                        };
+                                        setDrafts((prev) => ({
+                                          ...prev,
+                                          [draftKey]: nextDraft,
+                                        }));
+                                      }}
                                       style={styles.input}
                                     />
                                     <div style={styles.inputHintText}>{returnPreviewText}</div>
@@ -2815,9 +2866,16 @@ function App() {
                                       type="number"
                                       min="0"
                                       value={draft.exchangeQty || ""}
-                                      onChange={(e) =>
-                                        updateDraft(draftKey, "exchangeQty", e.target.value)
-                                      }
+                                      onChange={(e) => {
+                                        const nextDraft = {
+                                          ...draft,
+                                          exchangeQty: e.target.value,
+                                        };
+                                        setDrafts((prev) => ({
+                                          ...prev,
+                                          [draftKey]: nextDraft,
+                                        }));
+                                      }}
                                       style={styles.input}
                                     />
                                     <div style={styles.inputHintText}>{exchangePreviewText}</div>
@@ -2828,7 +2886,16 @@ function App() {
                                   <label style={styles.label}>비고</label>
                                   <textarea
                                     value={draft.memo || ""}
-                                    onChange={(e) => updateDraft(draftKey, "memo", e.target.value)}
+                                    onChange={(e) => {
+                                      const nextDraft = {
+                                        ...draft,
+                                        memo: e.target.value,
+                                      };
+                                      setDrafts((prev) => ({
+                                        ...prev,
+                                        [draftKey]: nextDraft,
+                                      }));
+                                    }}
                                     style={styles.textarea}
                                     rows={3}
                                     placeholder="불량 사유 / 전달 사항"
@@ -2847,23 +2914,28 @@ function App() {
                                       const previousPhotoNames = Array.isArray(draft.photoNames) ? draft.photoNames : [];
                                       const nextPhotoFiles = [...previousPhotoFiles, ...files];
                                       const nextPhotoNames = [...previousPhotoNames, ...files.map((file) => file.name)];
+                                      const nextDraft = {
+                                        ...draft,
+                                        photoFiles: nextPhotoFiles,
+                                        photoNames: nextPhotoNames,
+                                      };
 
-                                      updateDraft(draftKey, "photoFiles", nextPhotoFiles);
-                                      updateDraft(
-                                        draftKey,
-                                        "photoNames",
-                                        nextPhotoNames
-                                      );
+                                      setDrafts((prev) => ({
+                                        ...prev,
+                                        [draftKey]: nextDraft,
+                                      }));
 
                                       e.target.value = "";
                                     }}
                                     style={styles.fileInput}
                                   />
-                                  <div style={styles.metaText}>
-                                    {Array.isArray(draft.photoNames) && draft.photoNames.length
-                                      ? draft.photoNames.join(", ")
-                                      : "선택된 사진 없음"}
-                                  </div>
+                                  <DraftPhotoPreviewList
+                                    files={draft.photoFiles}
+                                    onRemove={(index) =>
+                                      removeDraftPhoto(draftKey, index)
+                                    }
+                                    styles={styles}
+                                  />
                                 </div>
 
                                 <button
@@ -3404,6 +3476,51 @@ const styles = {
     color: "#8b98b8",
     wordBreak: "break-all",
     lineHeight: 1.5,
+  },
+  draftPhotoGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fill, minmax(84px, 1fr))",
+    gap: 8,
+    marginTop: 10,
+  },
+  draftPhotoCard: {
+    position: "relative",
+    borderRadius: 14,
+    overflow: "hidden",
+    border: "1px solid #dbe4f3",
+    background: "#fff",
+    aspectRatio: "1 / 1",
+  },
+  draftPhotoImage: {
+    width: "100%",
+    height: "100%",
+    objectFit: "cover",
+    display: "block",
+  },
+  draftPhotoRemoveButton: {
+    position: "absolute",
+    top: 6,
+    right: 6,
+    width: 24,
+    height: 24,
+    borderRadius: 999,
+    border: "none",
+    background: "rgba(15,23,42,0.82)",
+    color: "#fff",
+    fontSize: 16,
+    lineHeight: "24px",
+    cursor: "pointer",
+    padding: 0,
+  },
+  draftPhotoEmpty: {
+    marginTop: 10,
+    border: "1px dashed #d1d5db",
+    borderRadius: 14,
+    background: "#f9fafb",
+    color: "#6b7280",
+    fontSize: 13,
+    padding: "16px 12px",
+    textAlign: "center",
   },
   inputHintText: {
     marginTop: 6,
