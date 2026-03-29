@@ -618,7 +618,7 @@ function applyPhotoAssetFieldsToRow_(row, assetMap, kind) {
   row["사진링크"] = photoLinks[0] || "";
   row["사진URL"] = row["사진링크"];
   row["사진개수"] = asset ? parseNumber_(asset.photoCount || fileIds.length) : parseNumber_(row["사진개수"] || 0);
-  return applyPhotoAssetFieldsToRow_(row, loadPhotoAssetMap_(SpreadsheetApp.getActiveSpreadsheet()), "movement");
+  return row;
 }
 
 function pruneJobCacheRows_(cacheSheet) {
