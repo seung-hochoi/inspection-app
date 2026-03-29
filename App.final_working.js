@@ -1980,6 +1980,14 @@ function App() {
 
     upsertPendingEntries([nextEntry]);
     flushPending();
+    setDrafts((prev) => ({
+      ...prev,
+      [draftKey]: {
+        ...prev[draftKey],
+        photoFiles: [],
+        photoNames: [],
+      },
+    }));
     setToast("저장되었습니다.");
   };
 
@@ -2522,29 +2530,6 @@ function App() {
               </div>
             ) : null}
 
-            <div style={styles.heroActionRow}>
-              <button
-                type="button"
-                onClick={() => downloadPhotoZip("movement")}
-                style={styles.heroActionButton}
-              >
-                {zipDownloading === "movement" ? "ZIP 생성 중..." : "불량사진 저장"}
-              </button>
-              <button
-                type="button"
-                onClick={() => downloadPhotoZip("inspection")}
-                style={styles.heroActionButton}
-              >
-                {zipDownloading === "inspection" ? "ZIP 생성 중..." : "검품사진 저장"}
-              </button>
-              <button
-                type="button"
-                onClick={() => downloadPhotoZip("photoOnly")}
-                style={styles.heroActionButton}
-              >
-                {zipDownloading === "photoOnly" ? "ZIP 생성 중..." : "참고사진 저장"}
-              </button>
-            </div>
           </div>
         )}
       </div>
@@ -2553,6 +2538,31 @@ function App() {
         <div style={styles.partnerSectionHeader}>
           <div style={styles.sectionTitle}>협력사 목록</div>
           <div style={styles.partnerSectionCount}>총 {totalVisibleProducts}건</div>
+        </div>
+        <div style={styles.partnerDownloadRow}>
+          {mode === "inspection" ? (
+            <button
+              type="button"
+              onClick={() => downloadPhotoZip("inspection")}
+              style={{
+                ...styles.historyButton,
+                ...styles.partnerDownloadButtonActive,
+              }}
+            >
+              {zipDownloading === "inspection" ? "ZIP 생성 중..." : "검품사진 저장"}
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => downloadPhotoZip("movement")}
+              style={{
+                ...styles.historyButton,
+                ...styles.partnerDownloadButtonActive,
+              }}
+            >
+              {zipDownloading === "movement" ? "ZIP 생성 중..." : "불량사진 저장"}
+            </button>
+          )}
         </div>
 
       <div style={styles.list}>
@@ -3824,6 +3834,17 @@ const styles = {
     fontSize: 13,
     color: "#6f7fa4",
     fontWeight: 700,
+  },
+  partnerDownloadRow: {
+    display: "flex",
+    gap: 8,
+    marginBottom: 12,
+    flexWrap: "wrap",
+  },
+  partnerDownloadButtonActive: {
+    background: "#eef4ff",
+    borderColor: "#bcd0ff",
+    color: "#2d4ea1",
   },
   partnerGroup: {
     display: "flex",

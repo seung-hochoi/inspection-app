@@ -819,6 +819,12 @@ function findMovementRow_(sheet, jobKey, productCode, partnerName, centerName, t
   if (!sheet || sheet.getLastRow() < 2) return 0;
 
   const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues();
+  const normalizedJobKey = String(jobKey || "").trim();
+  const normalizedCode = normalizeCode_(productCode || "");
+  const normalizedCenter = String(centerName || "").trim();
+  const normalizedPartner = String(partnerName || "").trim();
+  const normalizedType = String(typeName || "").trim();
+  var fallbackRow = 0;
 
   for (var i = values.length - 1; i >= 0; i -= 1) {
     const rowJobKey = String(values[i][1] || "").trim();
@@ -828,17 +834,27 @@ function findMovementRow_(sheet, jobKey, productCode, partnerName, centerName, t
     const rowType = String(values[i][9] || "").trim();
 
     if (
-      rowJobKey === String(jobKey || "").trim() &&
-      rowCode === normalizeCode_(productCode || "") &&
-      rowCenter === String(centerName || "").trim() &&
-      rowPartner === String(partnerName || "").trim() &&
-      rowType === String(typeName || "").trim()
+      rowJobKey === normalizedJobKey &&
+      rowCode === normalizedCode &&
+      rowCenter === normalizedCenter &&
+      rowPartner === normalizedPartner &&
+      rowType === normalizedType
     ) {
       return i + 2;
     }
+
+    if (
+      !fallbackRow &&
+      rowCode === normalizedCode &&
+      rowCenter === normalizedCenter &&
+      rowPartner === normalizedPartner &&
+      rowType === normalizedType
+    ) {
+      fallbackRow = i + 2;
+    }
   }
 
-  return 0;
+  return fallbackRow;
 }
 
 function readMovementRow_(sheet, rowNumber) {
@@ -887,6 +903,21 @@ function mergePhotoLinks_(existingLinksText, newLinksText, newPrimaryLink) {
   }
 
   return Object.keys(map).join("\n");
+}
+
+function isLikelyPhotoLinkText_(value) {
+  var lines = String(value || "")
+    .split(/\n+/)
+    .map(function (item) {
+      return String(item || "").trim();
+    })
+    .filter(Boolean);
+
+  if (!lines.length) return false;
+
+  return lines.every(function (line) {
+    return /^https?:\/\/.+/i.test(line) || !!extractGoogleDriveId_(line);
+  });
 }
 
 function findInspectionRow_(sheet, jobKey, productCode, partnerName) {
@@ -3142,11 +3173,40 @@ function syncReturnSheets_(ss) {
     return String(row["작업기준일또는CSV식별값"] || "").trim() === currentJobKey;
   });
   var memoMap = {};
+  var inspectionMap = {};
+  var movementTotalsMap = {};
+  var skuRowMap = {};
 
   records.forEach(function (row) {
     var key = makeSkuKey_(row["상품코드"], row["협력사명"]);
     if (!key) return;
-    memoMap[key] = mergeTextValue_(memoMap[key], row["비고"]);
+    var memoValue = String(row["비고"] || "").trim();
+    if (memoValue && !isLikelyPhotoLinkText_(memoValue)) {
+      memoMap[key] = mergeTextValue_(memoMap[key], memoValue);
+    }
+
+    if (!movementTotalsMap[key]) {
+      movementTotalsMap[key] = {
+        returnQty: 0,
+        exchangeQty: 0,
+      };
+    }
+
+    movementTotalsMap[key].returnQty += parseNumber_(row["회송수량"]);
+    movementTotalsMap[key].exchangeQty += parseNumber_(row["교환수량"]);
+
+    if (!skuRowMap[key]) {
+      skuRowMap[key] = row;
+    }
+  });
+
+  inspectionRows.forEach(function (row) {
+    var key = makeSkuKey_(row["상품코드"], row["협력사명"]);
+    if (!key) return;
+    inspectionMap[key] = row;
+    if (!skuRowMap[key]) {
+      skuRowMap[key] = row;
+    }
   });
 
   ensureHeaderRow_(centerSheet, [
@@ -3204,40 +3264,57 @@ function syncReturnSheets_(ss) {
     centerSheet.getRange(2, 1, centerValues.length, 9).setValues(centerValues);
   }
 
-  var summaryValues = inspectionRows
-    .filter(function (row) {
-      return (
-        parseNumber_(row["검품수량"]) > 0 ||
-        parseNumber_(row["회송수량"]) > 0 ||
-        parseNumber_(row["교환수량"]) > 0
+  var summaryRows = Object.keys(skuRowMap)
+    .map(function (key) {
+      var baseRow = skuRowMap[key] || {};
+      var inspectionRow = inspectionMap[key] || {};
+      var movementTotals = movementTotalsMap[key] || { returnQty: 0, exchangeQty: 0 };
+      var inboundQty = parseNumber_(
+        inspectionRow["전체발주수량"] ||
+        inspectionRow["발주수량"] ||
+        baseRow["전체발주수량"] ||
+        baseRow["발주수량"]
       );
-    })
-    .sort(compareRowsByPartnerAndName_)
-    .map(function (row) {
-      var inboundQty = parseNumber_(row["전체발주수량"] || row["발주수량"]);
-      var inspectionQty = parseNumber_(row["검품수량"]);
-      var exchangeQty = parseNumber_(row["교환수량"]);
-      var returnQty = parseNumber_(row["회송수량"]);
-      var defectRate = inspectionQty > 0 ? (exchangeQty + returnQty) / inspectionQty : 0;
-      var memo = memoMap[makeSkuKey_(row["상품코드"], row["협력사명"])] || "";
+      var inspectionQty = parseNumber_(inspectionRow["검품수량"]);
+      var exchangeQty = parseNumber_(movementTotals.exchangeQty);
+      var returnQty = parseNumber_(movementTotals.returnQty);
 
-      return [
-        "",
-        row["상품코드"] || "",
-        row["협력사명"] || "",
-        row["상품명"] || "",
-        "",
-        inboundQty,
-        inspectionQty,
-        inboundQty > 0 ? inspectionQty / inboundQty : 0,
-        memo,
-        defectRate,
-        exchangeQty,
-        returnQty,
-        getActionTypeByDefectRate_(defectRate),
-        "",
-      ];
+      if (inspectionQty <= 0 && exchangeQty <= 0 && returnQty <= 0) {
+        return null;
+      }
+
+      var defectRate = inspectionQty > 0 ? (exchangeQty + returnQty) / inspectionQty : 0;
+      var inspectionRate = inboundQty > 0 ? inspectionQty / inboundQty : 0;
+      var memo = memoMap[key] || "";
+
+      return {
+        sortRow: baseRow,
+        values: [
+          "",
+          baseRow["상품코드"] || inspectionRow["상품코드"] || "",
+          baseRow["협력사명"] || inspectionRow["협력사명"] || "",
+          baseRow["상품명"] || inspectionRow["상품명"] || "",
+          "",
+          inboundQty,
+          inspectionQty,
+          inspectionRate,
+          memo,
+          defectRate,
+          exchangeQty,
+          returnQty,
+          getActionTypeByDefectRate_(defectRate),
+          "",
+        ],
+      };
+    })
+    .filter(Boolean)
+    .sort(function (a, b) {
+      return compareRowsByPartnerAndName_(a.sortRow, b.sortRow);
     });
+
+  var summaryValues = summaryRows.map(function (item) {
+    return item.values;
+  });
 
   if (summaryValues.length > 0) {
     summarySheet.getRange(2, 1, summaryValues.length, 14).setValues(summaryValues);
@@ -3245,8 +3322,7 @@ function syncReturnSheets_(ss) {
     summarySheet.getRange(2, 10, summaryValues.length, 1).setNumberFormat("0.0%");
   }
 
-  centerSheet.autoResizeColumns(1, 9);
-  summarySheet.autoResizeColumns(1, 14);
+  return;
 }
 
 function compareRowsByPartnerAndName_(a, b) {

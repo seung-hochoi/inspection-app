@@ -3,7 +3,7 @@ import Papa from "papaparse";
 import { BrowserCodeReader, BrowserMultiFormatReader } from "@zxing/browser";
 import * as XLSX from "xlsx";
 
-const SCRIPT_URL = process.env.REACT_APP_GOOGLE_SCRIPT_URL || "https://script.google.com/macros/s/AKfycbz2iQ-ZA0zXfgcXzmBNq1U0fkF-IpdbImDqHnJH1wWQVBc5AKp-GPWmIyafTe9qj6C_pw/exec";
+const SCRIPT_URL = process.env.REACT_APP_GOOGLE_SCRIPT_URL || "https://script.google.com/macros/s/AKfycbzIR8srYEDBgHOUKGfs0J3nk2BY4fsDPiw0J5cHfXUU7t77cEPWYw15mdUcW0T7oCw7Xg/exec";
 
 const normalizeKey = (key) => String(key || "").replace(/\uFEFF/g, "").trim();
 
@@ -1980,6 +1980,14 @@ function App() {
 
     upsertPendingEntries([nextEntry]);
     flushPending();
+    setDrafts((prev) => ({
+      ...prev,
+      [draftKey]: {
+        ...prev[draftKey],
+        photoFiles: [],
+        photoNames: [],
+      },
+    }));
     setToast("저장되었습니다.");
   };
 
