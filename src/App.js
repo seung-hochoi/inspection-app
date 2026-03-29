@@ -2016,7 +2016,7 @@ function App() {
                 opacity: uploadingHappycallCsv ? 0.7 : 1,
               }}
             >
-              {uploadingHappycallCsv ? "처리 중..." : "해피콜 파일 선택"}
+              {uploadingHappycallCsv ? "?? ?..." : "??? ?? ??"}
             </button>
             <button
               type="button"
@@ -2027,7 +2027,7 @@ function App() {
               }}
               style={styles.secondaryButton}
             >
-              관리자 초기화
+              ??? ???
             </button>
             <button
               type="button"
@@ -2039,7 +2039,7 @@ function App() {
               }}
               style={styles.secondaryButton}
             >
-              이미지 등록
+              ??? ??
             </button>
           </div>
         </div>
@@ -2706,17 +2706,17 @@ function App() {
         <div style={styles.scannerOverlay} onClick={closeScanner}>
           <div style={styles.scannerModal} onClick={(e) => e.stopPropagation()}>
             <button type="button" onClick={closeScanner} style={styles.scannerCloseBtn}>
-              ×
+              ?
             </button>
 
-            <div style={styles.scannerTopText}>{scannerReady ? scannerStatus : "바코드 인식 중..."}</div>
+            <div style={styles.scannerTopText}>{scannerReady ? scannerStatus : "??? ?? ?..."}</div>
 
             <div style={styles.scannerViewport}>
               <video ref={scannerVideoRef} style={styles.scannerVideo} muted playsInline />
               <div style={styles.scannerGuideBox} />
             </div>
 
-            <div style={styles.scannerHelperText}>바코드를 화면 중앙에 맞춰주세요.</div>
+            <div style={styles.scannerHelperText}>???? ?? ??? ?????.</div>
 
             {scannerError ? <div style={styles.errorBox}>{scannerError}</div> : null}
 
@@ -2726,7 +2726,7 @@ function App() {
                   type="button"
                   onClick={toggleTorch}
                   style={{ ...styles.secondaryButton, width: 52, minWidth: 52, padding: 0 }}
-                  aria-label={torchOn ? "플래시 끄기" : "플래시 켜기"}
+                  aria-label={torchOn ? "??? ??" : "??? ??"}
                 >
                   <FlashlightIcon size={20} active={torchOn} />
                 </button>
@@ -2740,7 +2740,7 @@ function App() {
                 }}
                 style={styles.primaryButton}
               >
-                직접 입력
+                ?? ??
               </button>
             </div>
           </div>
