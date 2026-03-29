@@ -174,6 +174,260 @@ const buildImageMatcher = ({ partnerKeywords = [], productKeywords = [], exclude
 const PRODUCT_IMAGE_MAP = [
   {
     match: buildImageMatcher({
+      productKeywords: ["아보카도"],
+    }),
+    src: "/assets/products/avocado.png",
+  },
+  {
+    match: buildImageMatcher({
+      productKeywords: ["천안오이"],
+    }),
+    src: "/assets/products/cucumber-cheonan-user.jpg",
+  },
+  {
+    match: buildImageMatcher({
+      productKeywords: ["한끼딱오이"],
+    }),
+    src: "/assets/products/cucumber-single-user.jpg",
+  },
+  {
+    match: buildImageMatcher({
+      productKeywords: ["오이1입"],
+    }),
+    src: "/assets/products/cucumber-single-user.jpg",
+  },
+  {
+    match: buildImageMatcher({
+      productKeywords: ["오이2입"],
+    }),
+    src: "/assets/products/cucumber-plate-user.jpg",
+  },
+  {
+    match: buildImageMatcher({
+      productKeywords: ["오이맛고추"],
+    }),
+    src: "/assets/products/cucumber-spicy-user.jpg",
+  },
+  {
+    match: buildImageMatcher({
+      productKeywords: ["청양고추"],
+    }),
+    src: "/assets/products/green-chili-pack-user.jpg",
+  },
+  {
+    match: buildImageMatcher({
+      productKeywords: ["고추"],
+      excludeKeywords: ["오이맛고추"],
+    }),
+    src: "/assets/products/green-chili-user.jpg",
+  },
+  {
+    match: buildImageMatcher({
+      productKeywords: ["애호박"],
+    }),
+    src: "/assets/products/aehobak-user.jpg",
+  },
+  {
+    match: buildImageMatcher({
+      productKeywords: ["주키니"],
+    }),
+    src: "/assets/products/zucchini-user.jpg",
+  },
+  {
+    match: buildImageMatcher({
+      productKeywords: ["손질대파"],
+    }),
+    src: "/assets/products/green-onion-pack-user.jpg",
+  },
+  {
+    match: buildImageMatcher({
+      productKeywords: ["대파"],
+    }),
+    src: "/assets/products/green-onion-user.jpg",
+  },
+  {
+    match: buildImageMatcher({
+      productKeywords: ["냉이"],
+    }),
+    src: "/assets/products/naengi-user.jpg",
+  },
+  {
+    match: buildImageMatcher({
+      productKeywords: ["달래"],
+    }),
+    src: "/assets/products/dalrae-user.jpg",
+  },
+  {
+    match: buildImageMatcher({
+      productKeywords: ["참나물"],
+    }),
+    src: "/assets/products/chamnamul-bag-user.jpg",
+  },
+  {
+    match: buildImageMatcher({
+      productKeywords: ["추부깻잎"],
+    }),
+    src: "/assets/products/perilla-user.jpg",
+  },
+  {
+    match: buildImageMatcher({
+      productKeywords: ["깻잎"],
+    }),
+    src: "/assets/products/perilla-user.jpg",
+  },
+  {
+    match: buildImageMatcher({
+      productKeywords: ["쌈채소"],
+    }),
+    src: "/assets/products/ssam-user.jpg",
+  },
+  {
+    match: buildImageMatcher({
+      productKeywords: ["상추"],
+    }),
+    src: "/assets/products/lettuce-user.jpg",
+  },
+  {
+    match: buildImageMatcher({
+      productKeywords: ["한끼딱양파"],
+    }),
+    src: "/assets/products/onion-single-user.jpg",
+  },
+  {
+    match: buildImageMatcher({
+      productKeywords: ["양파"],
+    }),
+    src: "/assets/products/onion-single-user.jpg",
+  },
+  {
+    match: buildImageMatcher({
+      productKeywords: ["양배추"],
+    }),
+    src: "/assets/products/cabbage-half-user.jpg",
+  },
+  {
+    match: buildImageMatcher({
+      productKeywords: ["마늘1알"],
+    }),
+    src: "/assets/products/garlic-single-user.jpg",
+  },
+  {
+    match: buildImageMatcher({
+      productKeywords: ["깐마늘"],
+    }),
+    src: "/assets/products/garlic-single-user.jpg",
+  },
+  {
+    match: buildImageMatcher({
+      productKeywords: ["마늘"],
+    }),
+    src: "/assets/products/garlic-bowl-user.jpg",
+  },
+  {
+    match: buildImageMatcher({
+      productKeywords: ["주니어새송이버섯"],
+    }),
+    src: "/assets/products/junior-king-oyster-user.jpg",
+  },
+  {
+    match: buildImageMatcher({
+      productKeywords: ["새송이버섯"],
+    }),
+    src: "/assets/products/king-oyster-clean-user.jpg",
+  },
+  {
+    match: buildImageMatcher({
+      productKeywords: ["참타리버섯"],
+    }),
+    src: "/assets/products/oyster-mushroom-user.jpg",
+  },
+  {
+    match: buildImageMatcher({
+      productKeywords: ["참타리"],
+    }),
+    src: "/assets/products/oyster-mushroom-user.jpg",
+  },
+  {
+    match: buildImageMatcher({
+      productKeywords: ["느타리버섯"],
+    }),
+    src: "/assets/products/mushroom-oyster-tray-user.jpg",
+  },
+  {
+    match: buildImageMatcher({
+      productKeywords: ["느타리"],
+    }),
+    src: "/assets/products/mushroom-oyster-tray-user.jpg",
+  },
+  {
+    match: buildImageMatcher({
+      productKeywords: ["꿀밤고구마"],
+    }),
+    src: "/assets/products/sweetpotato-mini-user.jpg",
+  },
+  {
+    match: buildImageMatcher({
+      productKeywords: ["호박고구마"],
+    }),
+    src: "/assets/products/sweetpotato-pumpkin-user.jpg",
+  },
+  {
+    match: buildImageMatcher({
+      productKeywords: ["고구마"],
+    }),
+    src: "/assets/products/sweetpotato-mini-user.jpg",
+  },
+  {
+    match: buildImageMatcher({
+      productKeywords: ["단호박"],
+    }),
+    src: "/assets/products/pumpkin-user.jpg",
+  },
+  {
+    match: buildImageMatcher({
+      productKeywords: ["밤호박"],
+    }),
+    src: "/assets/products/pumpkin-user.jpg",
+  },
+  {
+    match: buildImageMatcher({
+      productKeywords: ["연어"],
+    }),
+    src: "/assets/products/salmon-user.jpg",
+  },
+  {
+    match: buildImageMatcher({
+      productKeywords: ["부채살"],
+    }),
+    src: "/assets/products/beef-striploin-user.jpg",
+  },
+  {
+    match: buildImageMatcher({
+      productKeywords: ["불고기"],
+    }),
+    src: "/assets/products/beef-bulgogi-user.jpg",
+  },
+  {
+    match: buildImageMatcher({
+      productKeywords: ["목심"],
+    }),
+    src: "/assets/products/pork-neck-user.jpg",
+  },
+  {
+    match: buildImageMatcher({
+      productKeywords: ["삼겹"],
+    }),
+    src: "/assets/products/samgyeopsal-user.jpg",
+  },
+  {
+    match: buildImageMatcher({
+      productKeywords: ["한돈"],
+      excludeKeywords: ["삼겹", "목심"],
+    }),
+    src: "/assets/products/pork-tray-green-user.jpg",
+  },
+  {
+    match: buildImageMatcher({
       partnerKeywords: ["델몬트"],
       productKeywords: ["킹사이즈", "바나나"],
     }),
@@ -387,6 +641,21 @@ const PRODUCT_IMAGE_MAP = [
   },
 ];
 
+const DEFAULT_PRODUCT_IMAGE_SRC = "/assets/products/gs25-logo.svg";
+const SECONDARY_PRODUCT_IMAGE_SRC = "/assets/gs-logo.svg";
+
+const getDefaultProductImageSrc = (product) => {
+  const productText = normalizeImageToken(product?.productName || "");
+  if (!productText) return "";
+
+  if (productText.includes(normalizeImageToken("파인애플"))) {
+    return DEFAULT_PRODUCT_IMAGE_SRC;
+  }
+
+  const matched = PRODUCT_IMAGE_MAP.find((entry) => entry.match(product || {}));
+  return matched?.src || DEFAULT_PRODUCT_IMAGE_SRC;
+};
+
 const getProductImageSrc = (product, customImageMap = {}) => {
   const productText = normalizeImageToken(product?.productName || "");
   if (!productText) return "";
@@ -405,8 +674,7 @@ const getProductImageSrc = (product, customImageMap = {}) => {
     return customImageMap[customKey];
   }
 
-  const matched = PRODUCT_IMAGE_MAP.find((entry) => entry.match(product || {}));
-  return matched?.src || "";
+  return getDefaultProductImageSrc(product);
 };
 
 const getValue = (row, candidates) => {
@@ -894,6 +1162,36 @@ function DraftPhotoPreviewList({ files, onRemove, styles }) {
         />
       ))}
     </div>
+  );
+}
+
+function ProductImage({ product, src, alt, style }) {
+  const [currentSrc, setCurrentSrc] = useState(src || getDefaultProductImageSrc(product) || DEFAULT_PRODUCT_IMAGE_SRC);
+
+  useEffect(() => {
+    setCurrentSrc(src || getDefaultProductImageSrc(product) || DEFAULT_PRODUCT_IMAGE_SRC);
+  }, [product, src]);
+
+  return (
+    <img
+      src={currentSrc}
+      alt={alt}
+      style={style}
+      onError={() => {
+        const fallbackSrc = getDefaultProductImageSrc(product);
+        if (fallbackSrc && fallbackSrc !== currentSrc) {
+          setCurrentSrc(fallbackSrc);
+          return;
+        }
+        if (currentSrc !== DEFAULT_PRODUCT_IMAGE_SRC) {
+          setCurrentSrc(DEFAULT_PRODUCT_IMAGE_SRC);
+          return;
+        }
+        if (currentSrc !== SECONDARY_PRODUCT_IMAGE_SRC) {
+          setCurrentSrc(SECONDARY_PRODUCT_IMAGE_SRC);
+        }
+      }}
+    />
   );
 }
 
@@ -1760,18 +2058,25 @@ function App() {
   const imageRegistryProducts = useMemo(() => {
     const keyword = normalizeText(imageRegisterSearch);
     const flatList = groupedPartners.flatMap((group) =>
-      group.products.map((product) => ({
-        partner: group.partner,
-        productCode: product.productCode,
-        productName: product.productName,
-        imageSrc: product.imageSrc || "",
-        totalQty: product.totalQty || 0,
-        imageKey: makeProductImageMapKey({
+      group.products.map((product) => {
+        const imageKey = makeProductImageMapKey({
           productCode: product.productCode,
           partner: group.partner,
           productName: product.productName,
-        }),
-      }))
+        });
+        const customImageSrc = imageKey ? productImageMap[imageKey] || "" : "";
+
+        return {
+          partner: group.partner,
+          productCode: product.productCode,
+          productName: product.productName,
+          imageSrc: product.imageSrc || "",
+          customImageSrc,
+          hasCustomImage: !!customImageSrc,
+          totalQty: product.totalQty || 0,
+          imageKey,
+        };
+      })
     );
 
     return flatList
@@ -1788,7 +2093,7 @@ function App() {
         if (partnerDiff !== 0) return partnerDiff;
         return String(a.productName || "").localeCompare(String(b.productName || ""), "ko");
       });
-  }, [groupedPartners, imageRegisterSearch]);
+  }, [groupedPartners, imageRegisterSearch, productImageMap]);
 
   const buildInspectionPendingEntry = useCallback((product, nextDraft = {}) => {
     const entityKey = makeEntityKey(currentJob?.job_key, product.productCode, product.partner);
@@ -2723,7 +3028,12 @@ function App() {
                 </div>
                 <div style={styles.heroImageFrame}>
                   {happycallHeroCard.imageSrc ? (
-                    <img
+                    <ProductImage
+                      product={{
+                        productName: happycallHeroCard.productName,
+                        partner: happycallHeroCard.partnerName,
+                        productCode: happycallHeroCard.productCode,
+                      }}
                       src={happycallHeroCard.imageSrc}
                       alt={happycallHeroCard.productName}
                       style={styles.heroImage}
@@ -2759,7 +3069,16 @@ function App() {
                       </div>
                       {card.imageSrc ? (
                         <div style={styles.heroMiniThumbFrame}>
-                          <img src={card.imageSrc} alt={card.productName} style={styles.heroMiniThumbImage} />
+                          <ProductImage
+                            product={{
+                              productName: card.productName,
+                              partner: card.partnerName,
+                              productCode: card.productCode,
+                            }}
+                            src={card.imageSrc}
+                            alt={card.productName}
+                            style={styles.heroMiniThumbImage}
+                          />
                         </div>
                       ) : null}
                     </div>
@@ -2932,7 +3251,12 @@ function App() {
                                 </div>
                                 {product.imageSrc ? (
                                   <div style={styles.cardThumbFrame}>
-                                    <img src={product.imageSrc} alt={product.productName} style={styles.cardThumbImage} />
+                                    <ProductImage
+                                      product={product}
+                                      src={product.imageSrc}
+                                      alt={product.productName}
+                                      style={styles.cardThumbImage}
+                                    />
                                   </div>
                                 ) : null}
                               </div>
@@ -3040,7 +3364,12 @@ function App() {
                                 </div>
                                 {product.imageSrc ? (
                                   <div style={styles.cardThumbFrame}>
-                                    <img src={product.imageSrc} alt={product.productName} style={styles.cardThumbImage} />
+                                    <ProductImage
+                                      product={product}
+                                      src={product.imageSrc}
+                                      alt={product.productName}
+                                      style={styles.cardThumbImage}
+                                    />
                                   </div>
                                 ) : null}
                               </div>
@@ -3348,8 +3677,13 @@ function App() {
                       <div style={styles.metaText}>코드 {product.productCode || "-"}</div>
                       <div style={styles.metaText}>협력사 {product.partner || "-"}</div>
                       <div style={styles.metaText}>총 발주 {parseQty(product.totalQty).toLocaleString("ko-KR")}개</div>
-                      <div style={styles.metaText}>{product.imageSrc ? "현재 이미지 있음" : "현재 이미지 없음"}</div>
+                      <div style={styles.metaText}>{product.hasCustomImage ? "등록 이미지 있음" : "등록 이미지 없음"}</div>
                     </div>
+                    {product.customImageSrc ? (
+                      <div style={{ ...styles.cardThumbFrame, width: 64, height: 64 }}>
+                        <img src={product.customImageSrc} alt={product.productName} style={styles.cardThumbImage} />
+                      </div>
+                    ) : null}
                     <button
                       type="button"
                       onClick={() => openImageRegisterPicker(product)}
@@ -3361,7 +3695,7 @@ function App() {
                         opacity: uploadingImageKey === product.imageKey ? 0.7 : 1,
                       }}
                     >
-                      {uploadingImageKey === product.imageKey ? "등록 중..." : product.imageSrc ? "이미지 교체" : "이미지 등록"}
+                      {uploadingImageKey === product.imageKey ? "등록 중..." : product.hasCustomImage ? "이미지 교체" : "이미지 등록"}
                     </button>
                   </div>
                 ))}
