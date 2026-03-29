@@ -1365,6 +1365,11 @@ function migrateRecordSheetIfNeeded_(sheet) {
     return;
   }
 
+  if (sheet.getLastRow() < 2) {
+    ensureHeaderRow_(sheet, next);
+    return;
+  }
+
   const dataRange = sheet.getRange(2, 1, sheet.getLastRow() - 1, Math.max(sheet.getLastColumn(), 17));
   const rows = dataRange.getValues();
   const migrated = rows.map(function (row) {
