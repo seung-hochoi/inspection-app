@@ -205,7 +205,7 @@ const PRODUCT_IMAGE_MAP = [
       productKeywords: ["프리미엄", "바나나"],
       excludeKeywords: ["파인애플", "클래식", "킹사이즈"],
     }),
-    src: "/assets/products/delmonte-banana-pack.png",
+    src: "/assets/products/delmonte-banana-bag.jpeg",
   },
   {
     match: buildImageMatcher({
@@ -213,7 +213,7 @@ const PRODUCT_IMAGE_MAP = [
       productKeywords: ["클래식", "바나나"],
       excludeKeywords: ["파인애플"],
     }),
-    src: "/assets/products/delmonte-banana-bag.jpeg",
+    src: "/assets/products/delmonte-banana-pack.png",
   },
   {
     match: buildImageMatcher({
@@ -1393,7 +1393,7 @@ function App() {
 
     const targetProduct = imageRegistryProducts.find((item) => item.imageKey === selectedImageTargetKey);
     if (!targetProduct) {
-      setError("?곹뭹 ?뺣낫瑜?李얠? 紐삳뻽?듬땲??");
+      setError("상품 정보를 찾지 못했습니다.");
       if (e.target) e.target.value = "";
       return;
     }
@@ -1420,7 +1420,7 @@ function App() {
 
       const result = await response.json();
       if (!response.ok || result.ok === false) {
-        throw new Error(result.message || "?대?吏 ??? ?ㅽ뙣");
+        throw new Error(result.message || "이미지 저장 실패");
       }
 
       const nextMap = (Array.isArray(result.product_images) ? result.product_images : []).reduce((acc, item) => {
@@ -1434,10 +1434,10 @@ function App() {
       }, {});
 
       setProductImageMap(nextMap);
-      setToast("?대?吏 ??? ?꾨즺");
-      setMessage("?곹뭹 ?대?吏媛 ??λ릺?덉뒿?덈떎.");
+      setToast("이미지 저장 완료");
+      setMessage("상품 이미지가 저장되었습니다.");
     } catch (err) {
-      setError(err.message || "?대?吏 ??? ?ㅽ뙣");
+      setError(err.message || "이미지 저장 실패");
     } finally {
       setUploadingImageKey("");
       setSelectedImageTargetKey("");
@@ -2039,7 +2039,7 @@ function App() {
               }}
               style={styles.secondaryButton}
             >
-              ?대?吏 ?깅줉
+              이미지 등록
             </button>
           </div>
         </div>
@@ -2055,7 +2055,9 @@ function App() {
             style={styles.searchInput}
           />
           <button type="button" onClick={() => setIsScannerOpen(true)} style={styles.scanButton} aria-label="바코드 스캔">
-            <span style={styles.scanIcon}>스캔</span>
+            <span style={styles.scanIcon}>
+              <BarcodeScanIcon size={26} />
+            </span>
           </button>
         </div>
       </div>
@@ -2091,37 +2093,46 @@ function App() {
                     card.rank === 1 ? "#fca5a5" : card.rank === 2 ? "#93c5fd" : card.rank === 3 ? "#86efac" : "#e5e7eb",
                 }}
               >
-                <div style={styles.topRankRow}>
-                  {getTopMedal(card.rank) ? (
-                    <span style={styles.topMedal}>{getTopMedal(card.rank)}</span>
-                  ) : (
-                    <span style={styles.topMedalPlaceholder} />
-                  )}
-                  <div
-                    style={{
-                      ...styles.kpiLabel,
-                      marginBottom: 0,
-                      fontWeight: 900,
-                      color:
-                        card.rank === 1 ? "#b91c1c" : card.rank === 2 ? "#1d4ed8" : card.rank === 3 ? "#15803d" : "#64748b",
-                    }}
-                  >
-                    {`TOP.${card.rank}`}
+                <div style={styles.cardContentRow}>
+                  <div style={styles.cardMainCopy}>
+                    <div style={styles.topRankRow}>
+                      {getTopMedal(card.rank) ? (
+                        <span style={styles.topMedal}>{getTopMedal(card.rank)}</span>
+                      ) : (
+                        <span style={styles.topMedalPlaceholder} />
+                      )}
+                      <div
+                        style={{
+                          ...styles.kpiLabel,
+                          marginBottom: 0,
+                          fontWeight: 900,
+                          color:
+                            card.rank === 1 ? "#b91c1c" : card.rank === 2 ? "#1d4ed8" : card.rank === 3 ? "#15803d" : "#64748b",
+                        }}
+                      >
+                        {`TOP.${card.rank}`}
+                      </div>
+                    </div>
+                    <div
+                      style={{
+                        ...styles.kpiValue,
+                        fontSize: 18,
+                        fontWeight: 900,
+                        color:
+                          card.rank === 1 ? "#b91c1c" : card.rank === 2 ? "#1d4ed8" : card.rank === 3 ? "#15803d" : "#0f172a",
+                      }}
+                    >
+                      {card.productName}
+                    </div>
+                    <div style={styles.topCardMeta}>
+                      {card.count.toLocaleString("ko-KR")}건 · {formatPercent(card.share)}
+                    </div>
                   </div>
-                </div>
-                <div
-                  style={{
-                    ...styles.kpiValue,
-                    fontSize: 18,
-                    fontWeight: 900,
-                    color:
-                      card.rank === 1 ? "#b91c1c" : card.rank === 2 ? "#1d4ed8" : card.rank === 3 ? "#15803d" : "#0f172a",
-                  }}
-                >
-                  {card.productName}
-                </div>
-                <div style={styles.topCardMeta}>
-                  {card.count.toLocaleString("ko-KR")}건 · {formatPercent(card.share)}
+                  {card.imageSrc ? (
+                    <div style={styles.cardThumbFrame}>
+                      <img src={card.imageSrc} alt={card.productName} style={styles.cardThumbImage} />
+                    </div>
+                  ) : null}
                 </div>
               </div>
             ))}
@@ -2244,12 +2255,21 @@ function App() {
                                 ) : null}
                               </div>
                               <div style={styles.cardMeta}>코드 {product.productCode}</div>
-                              <div style={styles.cardMeta}>협력사 {product.partner}</div>
                               <div style={styles.qtyRow}>
                                 <span style={styles.qtyChip}>총 발주 {product.totalQty}개</span>
                                 {historySummary ? <span style={styles.qtyChip}>{historySummary}</span> : null}
                               </div>
                             </div>
+
+                            {product.imageSrc ? (
+                              <div style={styles.cardThumbFrame}>
+                                <img
+                                  src={product.imageSrc}
+                                  alt={product.productName || "상품 이미지"}
+                                  style={styles.cardThumbImage}
+                                />
+                              </div>
+                            ) : null}
 
                             <div style={styles.inlineInspectionRow}>
                               <input
@@ -2369,11 +2389,23 @@ function App() {
                                   </span>
                                 ) : null}
                               </div>
-                              <div style={styles.cardMeta}>코드 {product.productCode}</div>
-                              <div style={styles.cardMeta}>협력사 {product.partner}</div>
-                              <div style={styles.qtyRow}>
-                                <span style={styles.qtyChip}>총 발주 {product.totalQty}개</span>
-                                {historySummary ? <span style={styles.qtyChip}>{historySummary}</span> : null}
+                              <div style={styles.cardContentRow}>
+                                <div style={styles.cardMainCopy}>
+                                  <div style={styles.cardMeta}>코드 {product.productCode}</div>
+                                  <div style={styles.qtyRow}>
+                                    <span style={styles.qtyChip}>총 발주 {product.totalQty}개</span>
+                                    {historySummary ? <span style={styles.qtyChip}>{historySummary}</span> : null}
+                                  </div>
+                                </div>
+                                {product.imageSrc ? (
+                                  <div style={styles.cardThumbFrame}>
+                                    <img
+                                      src={product.imageSrc}
+                                      alt={product.productName || "상품 이미지"}
+                                      style={styles.cardThumbImage}
+                                    />
+                                  </div>
+                                ) : null}
                               </div>
                             </button>
 
@@ -2608,11 +2640,73 @@ function App() {
         </div>
       )}
 
+      {showImageRegister && (
+        <div style={styles.sheetOverlay} onClick={() => !uploadingImageKey && setShowImageRegister(false)}>
+          <div style={styles.bottomSheet} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.sheetHandle} />
+            <div style={styles.sheetHeader}>
+              <h2 style={styles.sheetTitle}>상품 이미지 등록</h2>
+              <button
+                type="button"
+                onClick={() => !uploadingImageKey && setShowImageRegister(false)}
+                style={styles.sheetClose}
+              >
+                닫기
+              </button>
+            </div>
+
+            <div style={styles.formGroup}>
+              <label style={styles.label}>상품 검색</label>
+              <input
+                type="text"
+                value={imageRegisterSearch}
+                onChange={(e) => setImageRegisterSearch(e.target.value)}
+                style={styles.input}
+                placeholder="상품명 / 상품코드 / 협력사 검색"
+              />
+            </div>
+
+            <div style={styles.imageRegisterList}>
+              {imageRegistryProducts.length === 0 ? (
+                <div style={styles.emptyBox}>등록할 상품이 없습니다.</div>
+              ) : (
+                imageRegistryProducts.map((product) => (
+                  <div key={product.imageKey} style={styles.imageRegisterCard}>
+                    <div style={styles.imageRegisterInfo}>
+                      <div style={styles.imageRegisterName}>{product.productName || "상품명 없음"}</div>
+                      <div style={styles.metaText}>코드 {product.productCode || "-"}</div>
+                      <div style={styles.metaText}>협력사 {product.partner || "-"}</div>
+                    </div>
+                    {product.imageSrc ? (
+                      <div style={{ ...styles.cardThumbFrame, width: 64, height: 64 }}>
+                        <img src={product.imageSrc} alt={product.productName} style={styles.cardThumbImage} />
+                      </div>
+                    ) : null}
+                    <button
+                      type="button"
+                      onClick={() => openImageRegisterPicker(product)}
+                      disabled={uploadingImageKey === product.imageKey}
+                      style={styles.secondaryButton}
+                    >
+                      {uploadingImageKey === product.imageKey
+                        ? "저장 중..."
+                        : product.imageSrc
+                        ? "이미지 교체"
+                        : "이미지 등록"}
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {isScannerOpen && (
         <div style={styles.scannerOverlay} onClick={closeScanner}>
           <div style={styles.scannerModal} onClick={(e) => e.stopPropagation()}>
             <button type="button" onClick={closeScanner} style={styles.scannerCloseBtn}>
-              횞
+              ×
             </button>
 
             <div style={styles.scannerTopText}>{scannerReady ? scannerStatus : "바코드 인식 중..."}</div>
@@ -2628,8 +2722,13 @@ function App() {
 
             <div style={styles.scannerActions}>
               {torchSupported ? (
-                <button type="button" onClick={toggleTorch} style={styles.secondaryButton}>
-                  {torchOn ? "플래시 끄기" : "플래시 켜기"}
+                <button
+                  type="button"
+                  onClick={toggleTorch}
+                  style={{ ...styles.secondaryButton, width: 52, minWidth: 52, padding: 0 }}
+                  aria-label={torchOn ? "플래시 끄기" : "플래시 켜기"}
+                >
+                  <FlashlightIcon size={20} active={torchOn} />
                 </button>
               ) : null}
 
@@ -2907,7 +3006,9 @@ const styles = {
     justifyContent: "center",
   },
   scanIcon: {
-    fontSize: 22,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
     lineHeight: 1,
   },
   formGroup: {
@@ -2974,6 +3075,33 @@ const styles = {
     borderRadius: 16,
     padding: 14,
     boxShadow: "0 4px 14px rgba(15,23,42,0.04)",
+  },
+  cardContentRow: {
+    display: "grid",
+    gridTemplateColumns: "minmax(0, 1fr) 88px",
+    gap: 12,
+    alignItems: "center",
+  },
+  cardMainCopy: {
+    minWidth: 0,
+  },
+  cardThumbFrame: {
+    width: 88,
+    height: 88,
+    borderRadius: 16,
+    border: "1px solid #dbe3f0",
+    background: "#fff",
+    overflow: "hidden",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
+  cardThumbImage: {
+    width: "100%",
+    height: "100%",
+    objectFit: "contain",
+    display: "block",
   },
   kpiLabel: {
     fontSize: 12,
@@ -3408,6 +3536,31 @@ const styles = {
     gap: 10,
     marginTop: 16,
     flexWrap: "wrap",
+  },
+  imageRegisterList: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 10,
+    paddingBottom: 12,
+  },
+  imageRegisterCard: {
+    display: "flex",
+    gap: 12,
+    alignItems: "center",
+    border: "1px solid #e5e7eb",
+    borderRadius: 16,
+    background: "#fff",
+    padding: 12,
+  },
+  imageRegisterInfo: {
+    flex: 1,
+    minWidth: 0,
+  },
+  imageRegisterName: {
+    fontSize: 15,
+    fontWeight: 800,
+    lineHeight: 1.4,
+    wordBreak: "break-word",
   },
   toast: {
     position: "fixed",
