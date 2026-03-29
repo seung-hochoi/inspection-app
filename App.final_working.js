@@ -1771,8 +1771,11 @@ function App() {
       setHappycallAnalytics(data.happycall || {});
       setProductImageMap(
         (Array.isArray(data.product_images) ? data.product_images : []).reduce((acc, item) => {
-          const key = String(item?.맵키 || "").trim();
-          const url = String(item?.이미지URL || "").trim();
+          const key = String(item?.["이미지매핑키"] || "").trim();
+          const fileId = String(item?.["드라이브파일ID"] || "").trim();
+          const url = fileId
+            ? `https://drive.google.com/thumbnail?id=${fileId}&sz=w1200`
+            : String(item?.["이미지URL"] || "").trim();
           if (key && url) acc[key] = url;
           return acc;
         }, {})
@@ -2350,8 +2353,11 @@ function App() {
       }
 
       const nextMap = (Array.isArray(result.product_images) ? result.product_images : []).reduce((acc, item) => {
-        const key = String(item?.맵키 || "").trim();
-        const url = String(item?.이미지URL || "").trim();
+        const key = String(item?.["이미지매핑키"] || "").trim();
+        const fileId = String(item?.["드라이브파일ID"] || "").trim();
+        const url = fileId
+          ? `https://drive.google.com/thumbnail?id=${fileId}&sz=w1200`
+          : String(item?.["이미지URL"] || "").trim();
         if (key && url) acc[key] = url;
         return acc;
       }, {});
