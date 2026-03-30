@@ -1234,6 +1234,7 @@ function App() {
   const [reservationRows, setReservationRows] = useState([]);
   const [, setDashboardSummary] = useState({});
   const [happycallAnalytics, setHappycallAnalytics] = useState({});
+  const [selectedHappycallPeriod, setSelectedHappycallPeriod] = useState("1d");
 
   const [showHistory, setShowHistory] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -2046,11 +2047,17 @@ function App() {
     return map;
   }, [historyRows]);
 
-  const previousDayHappycallTopList = useMemo(
+  const selectedHappycallPeriodMeta = {
+    "1d": { title: "전일 해피콜 TOP 5", subtitle: "전일 접수 해피콜 기준" },
+    "7d": { title: "주별 해피콜 TOP 5", subtitle: "마지막 데이터 포함 7일 기준" },
+    "30d": { title: "월별 해피콜 TOP 5", subtitle: "마지막 데이터 포함 30일 기준" },
+  }[selectedHappycallPeriod] || { title: "전일 해피콜 TOP 5", subtitle: "전일 접수 해피콜 기준" };
+
+  const selectedHappycallTopList = useMemo(
     () =>
-      (happycallAnalytics?.periods?.["1d"]?.topProducts || [])
+      (happycallAnalytics?.periods?.[selectedHappycallPeriod]?.topProducts || [])
         .filter(isClassifiedHappycallProduct)
-        .slice(0, 10)
+        .slice(0, 5)
         .map((item, index) => ({
           rank: index + 1,
           productName: item?.productName || "-",
@@ -2064,11 +2071,11 @@ function App() {
             productCode: item?.productCode || "",
           }, productImageMap),
         })),
-    [happycallAnalytics, productImageMap]
+    [happycallAnalytics, productImageMap, selectedHappycallPeriod]
   );
 
-  const happycallHeroCard = previousDayHappycallTopList[0] || null;
-  const happycallMiniCards = previousDayHappycallTopList.slice(1, 5);
+  const happycallHeroCard = selectedHappycallTopList[0] || null;
+  const happycallMiniCards = selectedHappycallTopList.slice(1, 5);
   const totalVisibleProducts = groupedPartners.reduce((sum, item) => sum + item.products.length, 0);
   const imageRegistryProducts = useMemo(() => {
     const keyword = normalizeText(imageRegisterSearch);
@@ -3014,12 +3021,35 @@ function App() {
       <div style={styles.panel}>
         <div style={styles.happycallHeader}>
           <div>
-            <div style={styles.sectionTitle}>전일 해피콜 TOP 5 {totalVisibleProducts ? `(${totalVisibleProducts}건)` : ""}</div>
-            <div style={styles.heroSubtext}>전일 접수 해피콜 기준</div>
+            <div style={styles.sectionTitle}>{selectedHappycallPeriodMeta.title} {totalVisibleProducts ? `(${totalVisibleProducts}건)` : ""}</div>
+            <div style={styles.heroSubtext}>{selectedHappycallPeriodMeta.subtitle}</div>
+          </div>
+          <div style={styles.happycallPeriodRow}>
+            <button
+              type="button"
+              onClick={() => setSelectedHappycallPeriod("1d")}
+              style={{ ...styles.happycallPeriodButton, ...(selectedHappycallPeriod === "1d" ? styles.happycallPeriodButtonActive : {}) }}
+            >
+              전일
+            </button>
+            <button
+              type="button"
+              onClick={() => setSelectedHappycallPeriod("7d")}
+              style={{ ...styles.happycallPeriodButton, ...(selectedHappycallPeriod === "7d" ? styles.happycallPeriodButtonActive : {}) }}
+            >
+              주별
+            </button>
+            <button
+              type="button"
+              onClick={() => setSelectedHappycallPeriod("30d")}
+              style={{ ...styles.happycallPeriodButton, ...(selectedHappycallPeriod === "30d" ? styles.happycallPeriodButtonActive : {}) }}
+            >
+              월별
+            </button>
           </div>
         </div>
 
-        {previousDayHappycallTopList.length === 0 ? (
+        {selectedHappycallTopList.length === 0 ? (
           <div style={styles.emptyBox}>전일 해피콜 데이터가 없습니다.</div>
         ) : (
           <div style={styles.happycallShowcase}>
@@ -3926,6 +3956,27 @@ const styles = {
     alignItems: "flex-start",
     flexWrap: "wrap",
     marginBottom: 10,
+  },
+  happycallPeriodRow: {
+    display: "flex",
+    gap: 8,
+    flexWrap: "wrap",
+  },
+  happycallPeriodButton: {
+    minHeight: 34,
+    padding: "0 12px",
+    borderRadius: 999,
+    border: "1px solid #dbe4f3",
+    background: "#ffffff",
+    color: "#5b6b8c",
+    fontSize: 12,
+    fontWeight: 800,
+    cursor: "pointer",
+  },
+  happycallPeriodButtonActive: {
+    background: "#2f63da",
+    borderColor: "#2f63da",
+    color: "#fff",
   },
   heroSubtext: {
     marginTop: 4,
