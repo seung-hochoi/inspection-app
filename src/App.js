@@ -4,6 +4,7 @@ import { BrowserCodeReader, BrowserMultiFormatReader } from "@zxing/browser";
 import * as XLSX from "xlsx";
 
 const SCRIPT_URL = process.env.REACT_APP_GOOGLE_SCRIPT_URL || "https://script.google.com/macros/s/AKfycbzIR8srYEDBgHOUKGfs0J3nk2BY4fsDPiw0J5cHfXUU7t77cEPWYw15mdUcW0T7oCw7Xg/exec";
+const DIRTY_SYNC_STORAGE_KEY = "inspection_dirty_sync_v1";
 
 const normalizeKey = (key) => String(key || "").replace(/\uFEFF/g, "").trim();
 
@@ -1263,6 +1264,8 @@ function App() {
   const [scannerReady, setScannerReady] = useState(false);
   const [torchSupported, setTorchSupported] = useState(false);
   const [torchOn, setTorchOn] = useState(false);
+  const [scannerDevices, setScannerDevices] = useState([]);
+  const [scannerDeviceId, setScannerDeviceId] = useState("");
 
   const fileInputRef = useRef(null);
   const happycallFileInputRef = useRef(null);
@@ -1280,6 +1283,9 @@ function App() {
   const activeSaveCountRef = useRef(0);
   const savingRef = useRef(false);
   const flushTimerRef = useRef(null);
+  const postSaveSyncTimerRef = useRef(null);
+  const dirtySyncRetryTimerRef = useRef(null);
+  const postSaveSyncPayloadRef = useRef({ hasInspection: false, hasMovement: false });
 
   useEffect(() => {
     if (!toast) return undefined;
@@ -1328,6 +1334,69 @@ function App() {
     if (status === "failed") return 100;
     return 0;
   };
+
+  const mergeRowsByRowNumber = useCallback((prevRows, incomingRows, sortByCreatedAt = false) => {
+    const nextRows = Array.isArray(prevRows) ? [...prevRows] : [];
+
+    (Array.isArray(incomingRows) ? incomingRows : []).forEach((row) => {
+      const rowNumber = Number(row?.__rowNumber || 0);
+      if (rowNumber > 0) {
+        const existingIndex = nextRows.findIndex((item) => Number(item?.__rowNumber || 0) === rowNumber);
+        if (existingIndex >= 0) {
+          nextRows[existingIndex] = { ...nextRows[existingIndex], ...row };
+        } else {
+          nextRows.push(row);
+        }
+        return;
+      }
+
+      nextRows.push(row);
+    });
+
+    if (sortByCreatedAt) {
+      nextRows.sort((a, b) => String(b?.작성일시 || "").localeCompare(String(a?.작성일시 || ""), "ko"));
+    }
+
+    return nextRows;
+  }, []);
+
+  const hasDirtySyncPayload = useCallback(
+    (payload) => !!payload?.hasInspection || !!payload?.hasMovement,
+    []
+  );
+
+  const persistDirtySyncPayload = useCallback(
+    (payload) => {
+      try {
+        if (hasDirtySyncPayload(payload)) {
+          localStorage.setItem(
+            DIRTY_SYNC_STORAGE_KEY,
+            JSON.stringify({
+              hasInspection: !!payload?.hasInspection,
+              hasMovement: !!payload?.hasMovement,
+            })
+          );
+          return;
+        }
+        localStorage.removeItem(DIRTY_SYNC_STORAGE_KEY);
+      } catch (_) {}
+    },
+    [hasDirtySyncPayload]
+  );
+
+  const readDirtySyncPayload = useCallback(() => {
+    try {
+      const raw = localStorage.getItem(DIRTY_SYNC_STORAGE_KEY);
+      if (!raw) return { hasInspection: false, hasMovement: false };
+      const parsed = JSON.parse(raw);
+      return {
+        hasInspection: !!parsed?.hasInspection,
+        hasMovement: !!parsed?.hasMovement,
+      };
+    } catch (_) {
+      return { hasInspection: false, hasMovement: false };
+    }
+  }, []);
 
   const buildQueueItemTitle = useCallback((entry) => {
     if (!entry) return "";
@@ -1555,6 +1624,7 @@ function App() {
 
   const closeScanner = useCallback(() => {
     stopScanner();
+    setScannerDeviceId("");
     setIsScannerOpen(false);
   }, [stopScanner]);
 
@@ -1578,6 +1648,37 @@ function App() {
     }
   };
 
+  const getPreferredScannerDevice = useCallback((devices, preferredDeviceId = "") => {
+    const list = Array.isArray(devices) ? devices : [];
+    if (!list.length) return null;
+
+    const preferred = list.find((device) => String(device?.deviceId || "") === String(preferredDeviceId || ""));
+    if (preferred) return preferred;
+
+    const labeledBackCamera = list.find((device) => /back|rear|environment|후면/i.test(String(device?.label || "")));
+    if (labeledBackCamera) return labeledBackCamera;
+
+    if (list.length > 1) {
+      return list[list.length - 1];
+    }
+
+    return list[0];
+  }, []);
+
+  const toggleScannerCamera = useCallback(() => {
+    const list = Array.isArray(scannerDevices) ? scannerDevices : [];
+    if (list.length <= 1) return;
+
+    const currentIndex = Math.max(0, list.findIndex((device) => String(device?.deviceId || "") === String(scannerDeviceId || "")));
+    const nextDevice = list[(currentIndex + 1) % list.length];
+    if (!nextDevice?.deviceId) return;
+
+    stopScanner();
+    setScannerDeviceId(nextDevice.deviceId);
+    setScannerStatus("카메라를 전환하고 있습니다...");
+    setScannerReady(false);
+  }, [scannerDeviceId, scannerDevices, stopScanner]);
+
   const startScanner = useCallback(async () => {
     try {
       setScannerError("");
@@ -1586,8 +1687,11 @@ function App() {
 
       const reader = new BrowserMultiFormatReader();
       const devices = await BrowserCodeReader.listVideoInputDevices();
-      const backCamera =
-        devices.find((device) => /back|rear|environment/i.test(String(device.label || ""))) || devices[0];
+      setScannerDevices(devices);
+      const targetDevice = getPreferredScannerDevice(devices, scannerDeviceId);
+      if (targetDevice?.deviceId && targetDevice.deviceId !== scannerDeviceId) {
+        setScannerDeviceId(targetDevice.deviceId);
+      }
 
       const callback = (result, err, controls) => {
         if (controls) {
@@ -1634,9 +1738,9 @@ function App() {
         return;
       };
 
-      if (backCamera?.deviceId) {
+      if (targetDevice?.deviceId) {
         scannerControlsRef.current = await reader.decodeFromVideoDevice(
-          backCamera.deviceId,
+          targetDevice.deviceId,
           scannerVideoRef.current,
           callback
         );
@@ -1644,7 +1748,7 @@ function App() {
         scannerControlsRef.current = await reader.decodeFromConstraints(
           {
             video: {
-              facingMode: { ideal: "environment" },
+              facingMode: { exact: "environment" },
               width: { ideal: 1280 },
               height: { ideal: 720 },
             },
@@ -1668,7 +1772,7 @@ function App() {
       setScannerStatus("카메라를 사용할 수 없습니다.");
       stopScanner();
     }
-  }, [closeScanner, stopScanner]);
+  }, [closeScanner, getPreferredScannerDevice, scannerDeviceId, stopScanner]);
   const handleCsvUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -2095,6 +2199,14 @@ function App() {
     [happycallAnalytics, productImageMap, selectedHappycallPeriod]
   );
 
+  const selectedHappycallPeriodCount = useMemo(
+    () =>
+      (happycallAnalytics?.periods?.[selectedHappycallPeriod]?.topProducts || [])
+        .filter(isClassifiedHappycallProduct)
+        .reduce((sum, item) => sum + parseQty(item?.count || 0), 0),
+    [happycallAnalytics, selectedHappycallPeriod]
+  );
+
   const happycallHeroCard = selectedHappycallTopList[0] || null;
   const happycallMiniCards = selectedHappycallTopList.slice(1, 5);
   const totalVisibleProducts = groupedPartners.reduce((sum, item) => sum + item.products.length, 0);
@@ -2424,6 +2536,94 @@ function App() {
     }
   };
 
+  const queuePostSaveSync = useCallback((payload = {}, options = {}) => {
+    const attempt = Number(options.attempt || 0);
+    const immediate = !!options.immediate;
+
+    postSaveSyncPayloadRef.current = {
+      hasInspection: postSaveSyncPayloadRef.current.hasInspection || !!payload.hasInspection,
+      hasMovement: postSaveSyncPayloadRef.current.hasMovement || !!payload.hasMovement,
+    };
+    persistDirtySyncPayload(postSaveSyncPayloadRef.current);
+
+    if (postSaveSyncTimerRef.current) {
+      clearTimeout(postSaveSyncTimerRef.current);
+    }
+
+    postSaveSyncTimerRef.current = setTimeout(async () => {
+      const nextPayload = { ...postSaveSyncPayloadRef.current };
+      if (!hasDirtySyncPayload(nextPayload)) {
+        persistDirtySyncPayload(nextPayload);
+        postSaveSyncTimerRef.current = null;
+        return;
+      }
+      postSaveSyncPayloadRef.current = { hasInspection: false, hasMovement: false };
+      postSaveSyncTimerRef.current = null;
+      persistDirtySyncPayload(nextPayload);
+
+      try {
+        const syncResponse = await fetch(SCRIPT_URL, {
+          method: "POST",
+          headers: { "Content-Type": "text/plain;charset=utf-8" },
+          body: JSON.stringify({
+            action: "postSaveSync",
+            payload: nextPayload,
+          }),
+        });
+        const syncResult = await syncResponse.json();
+        if (!syncResponse.ok || syncResult.ok === false) {
+          throw new Error(syncResult.message || "후처리 동기화 실패");
+        }
+
+        if (Array.isArray(syncResult.records)) {
+          const nextRows = [...syncResult.records].sort((a, b) =>
+            String(b?.작성일시 || "").localeCompare(String(a?.작성일시 || ""), "ko")
+          );
+          setHistoryRows(nextRows);
+        }
+
+        if (Array.isArray(syncResult.inspectionRows)) {
+          setInspectionRows(syncResult.inspectionRows);
+        }
+
+        if (syncResult.summary) {
+          setDashboardSummary(syncResult.summary);
+        }
+        if (hasDirtySyncPayload(postSaveSyncPayloadRef.current)) {
+          persistDirtySyncPayload(postSaveSyncPayloadRef.current);
+          queuePostSaveSync({}, { attempt: 0, immediate: true });
+        } else {
+          persistDirtySyncPayload(postSaveSyncPayloadRef.current);
+        }
+      } catch (_) {
+        postSaveSyncPayloadRef.current = {
+          hasInspection: postSaveSyncPayloadRef.current.hasInspection || nextPayload.hasInspection,
+          hasMovement: postSaveSyncPayloadRef.current.hasMovement || nextPayload.hasMovement,
+        };
+        persistDirtySyncPayload(postSaveSyncPayloadRef.current);
+
+        if (attempt < 1) {
+          if (dirtySyncRetryTimerRef.current) {
+            clearTimeout(dirtySyncRetryTimerRef.current);
+          }
+          dirtySyncRetryTimerRef.current = setTimeout(() => {
+            dirtySyncRetryTimerRef.current = null;
+            queuePostSaveSync({}, { attempt: attempt + 1, immediate: true });
+          }, 2000);
+        }
+      }
+    }, immediate ? 0 : 1200);
+  }, [hasDirtySyncPayload, persistDirtySyncPayload]);
+
+  useEffect(() => {
+    const dirtyPayload = readDirtySyncPayload();
+    if (!hasDirtySyncPayload(dirtyPayload)) return undefined;
+
+    postSaveSyncPayloadRef.current = dirtyPayload;
+    queuePostSaveSync({}, { attempt: 0, immediate: true });
+    return undefined;
+  }, [hasDirtySyncPayload, queuePostSaveSync, readDirtySyncPayload]);
+
   const flushPending = useCallback(async () => {
     const rows = Object.values(pendingRef.current || {});
     if (!rows.length || savingRef.current) return;
@@ -2511,6 +2711,23 @@ function App() {
                 setDashboardSummary(response.summary);
               }
 
+              const saveData = response.data || {};
+
+              if (Array.isArray(saveData.movementRows) && saveData.movementRows.length) {
+                setHistoryRows((prev) => mergeRowsByRowNumber(prev, saveData.movementRows, true));
+              }
+
+              if (Array.isArray(saveData.inspectionRows) && saveData.inspectionRows.length) {
+                setInspectionRows((prev) => mergeRowsByRowNumber(prev, saveData.inspectionRows));
+              }
+
+              if (saveData.hasInspection || saveData.hasMovement) {
+                queuePostSaveSync({
+                  hasInspection: saveData.hasInspection,
+                  hasMovement: saveData.hasMovement,
+                });
+              }
+
               setToast("저장 완료");
             } catch (err) {
               retryMapRef.current[key] = row;
@@ -2528,7 +2745,7 @@ function App() {
       savingRef.current = false;
       setSaving(false);
     }
-  }, [clearFlushTimer, removePendingKeys, runQueuedTask, runWithRetry, runWithSaveSlot, serializePhotoItems]);
+  }, [clearFlushTimer, mergeRowsByRowNumber, queuePostSaveSync, removePendingKeys, runQueuedTask, runWithRetry, runWithSaveSlot, serializePhotoItems]);
 
   useEffect(() => {
     pendingRef.current = pendingMap;
@@ -3083,7 +3300,7 @@ function App() {
       <div style={styles.panel}>
         <div style={styles.happycallHeader}>
           <div>
-            <div style={styles.sectionTitle}>{selectedHappycallPeriodMeta.title} {totalVisibleProducts ? `(${totalVisibleProducts}건)` : ""}</div>
+            <div style={styles.sectionTitle}>{selectedHappycallPeriodMeta.title} {selectedHappycallPeriodCount ? `(${selectedHappycallPeriodCount}건)` : ""}</div>
             <div style={styles.heroSubtext}>{selectedHappycallPeriodMeta.subtitle}</div>
           </div>
           <div style={styles.happycallPeriodRow}>
@@ -3833,6 +4050,11 @@ function App() {
       {isScannerOpen && (
         <div style={styles.scannerOverlay} onClick={closeScanner}>
           <div style={styles.scannerModal} onClick={(e) => e.stopPropagation()}>
+            {scannerDevices.length > 1 ? (
+              <button type="button" onClick={toggleScannerCamera} style={styles.scannerSwitchBtn}>
+                전환
+              </button>
+            ) : null}
             <button type="button" onClick={closeScanner} style={styles.scannerCloseBtn}>
               ×
             </button>
@@ -5048,6 +5270,22 @@ const styles = {
     fontSize: 28,
     cursor: "pointer",
     zIndex: 2,
+  },
+  scannerSwitchBtn: {
+    position: "absolute",
+    top: 8,
+    right: 56,
+    minWidth: 52,
+    height: 48,
+    borderRadius: 999,
+    border: "none",
+    background: "rgba(255,255,255,0.14)",
+    color: "#fff",
+    fontSize: 13,
+    fontWeight: 800,
+    cursor: "pointer",
+    zIndex: 2,
+    padding: "0 12px",
   },
   scannerTopText: {
     textAlign: "center",

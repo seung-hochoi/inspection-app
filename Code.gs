@@ -133,6 +133,14 @@ function doPost(e) {
       return jsonOutput_({
         ok: true,
         data: batchData,
+      });
+    }
+
+    if (action === "postSaveSync") {
+      var syncData = postSaveSync_(body.payload || {});
+      return jsonOutput_({
+        ok: true,
+        data: syncData,
         records: loadRecords_(),
         inspectionRows: loadInspectionRows_(),
         summary: getDashboardSummary_(),
@@ -226,6 +234,29 @@ function normalizeCode_(value) {
 function parseNumber_(value) {
   var num = Number(String(value == null ? "" : value).replace(/,/g, "").trim());
   return Number.isNaN(num) ? 0 : num;
+}
+
+function formatWrittenAtKst_(value) {
+  var date = value ? new Date(value) : new Date();
+  if (String(date) === "Invalid Date") {
+    date = new Date();
+  }
+
+  var timezone = "Asia/Seoul";
+  var weekdayMap = {
+    "1": "월",
+    "2": "화",
+    "3": "수",
+    "4": "목",
+    "5": "금",
+    "6": "토",
+    "7": "일",
+  };
+  var weekdayNumber = Utilities.formatDate(date, timezone, "u");
+  var weekdayLabel = weekdayMap[weekdayNumber] || "월";
+
+  return Utilities.formatDate(date, timezone, "MM.dd") + "(" + weekdayLabel + ") " +
+    Utilities.formatDate(date, timezone, "HH:mm:ss");
 }
 
 function normalizeText_(value) {
@@ -845,20 +876,35 @@ function saveBatch_(rows) {
     }
   });
 
-  if (inspectionRows.length > 0 || movementRows.length > 0) {
-    syncInspectionMovementTotals_(inspectionSheet, recordsSheet);
-    updateInspectionDashboard_(ss);
-  }
-  if (movementRows.length > 0) {
-    syncReturnSheets_(ss);
-  }
-  autoResizeOperationalSheets_(ss);
-
   return {
     inspectionRows: inspectionRows,
     movementRows: movementRows,
-    records: loadRecords_(),
-    inspectionRowsSnapshot: loadInspectionRows_(),
+    hasInspection: inspectionRows.length > 0,
+    hasMovement: movementRows.length > 0,
+  };
+}
+
+function postSaveSync_(payload) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const inspectionSheet = getInspectionSheet_(ss);
+  const recordsSheet = getRecordSheet_(ss);
+  const hasInspection = !!payload.hasInspection;
+  const hasMovement = !!payload.hasMovement;
+
+  if (hasInspection || hasMovement) {
+    syncInspectionMovementTotals_(inspectionSheet, recordsSheet);
+    updateInspectionDashboard_(ss);
+  }
+
+  if (hasMovement) {
+    syncReturnSheets_(ss);
+  }
+
+  autoResizeOperationalSheets_(ss);
+
+  return {
+    hasInspection: hasInspection,
+    hasMovement: hasMovement,
   };
 }
 
@@ -1135,7 +1181,7 @@ function buildInspectionPayload_(payload, existingRecord) {
   ).split(/\n+/).filter(Boolean);
 
   return {
-    "작성일시": payload["작성일시"] || new Date().toISOString(),
+    "작성일시": formatWrittenAtKst_(payload["작성일시"]),
     "작업기준일또는CSV식별값": payload["작업기준일또는CSV식별값"] || "",
     "상품코드": normalizeCode_(payload["상품코드"] || payload["productCode"] || ""),
     "상품명": payload["상품명"] || payload["productName"] || "",
@@ -1179,7 +1225,7 @@ function buildRecordPayload_(payload, existingRecord) {
   ).split(/\n+/).filter(Boolean);
 
   const record = {
-    "작성일시": payload["작성일시"] || new Date().toISOString(),
+    "작성일시": formatWrittenAtKst_(payload["작성일시"]),
     "작업기준일또는CSV식별값": payload["작업기준일또는CSV식별값"] || "",
     "상품명": payload["상품명"] || payload["productName"] || "",
     "상품코드": normalizeCode_(payload["상품코드"] || payload["productCode"] || ""),
@@ -2753,14 +2799,13 @@ function createPhotoZip_(payload) {
           return;
         }
 
-        var preferredName = sanitizeFileName_(asset.fileName || "");
-        var finalName =
-          preferredName ||
-          (sanitizeFileName_(record["상품명"] || "상품") + "_" + (index + 1) + "." + getBlobExtension_(asset.blob, source));
+        var finalName = buildPhotoZipFileName_(record, index + 1, asset.blob, source);
         var dedupeKey = finalName.toLowerCase();
-        if (usedNames[dedupeKey]) {
-          skippedCount += 1;
-          return;
+        var duplicateSuffix = 2;
+        while (usedNames[dedupeKey]) {
+          finalName = appendDuplicateSuffixToFileName_(finalName, duplicateSuffix);
+          dedupeKey = finalName.toLowerCase();
+          duplicateSuffix += 1;
         }
         usedNames[dedupeKey] = true;
 
@@ -2801,6 +2846,21 @@ function createPhotoZip_(payload) {
     addedCount: blobs.length,
     skippedCount: skippedCount,
   };
+}
+
+function buildPhotoZipFileName_(record, sequence, blob, source) {
+  var productName = sanitizeFileName_(record["상품명"] || record["상품코드"] || "상품");
+  var partnerName = sanitizeFileName_(record["협력사명"] || "협력사");
+  var extension = getBlobExtension_(blob, source);
+  return productName + "_" + partnerName + "_" + sequence + "." + extension;
+}
+
+function appendDuplicateSuffixToFileName_(fileName, suffix) {
+  var text = String(fileName || "image.jpg");
+  var match = text.match(/^(.*?)(\.[a-zA-Z0-9]+)?$/);
+  var base = match ? match[1] : text;
+  var extension = match && match[2] ? match[2] : "";
+  return base + "_" + suffix + extension;
 }
 
 function getPhotoSourcesFromRecord_(record) {
