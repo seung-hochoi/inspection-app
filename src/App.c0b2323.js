@@ -1,9 +1,9 @@
-﻿import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Papa from "papaparse";
 import { BrowserCodeReader, BrowserMultiFormatReader } from "@zxing/browser";
 import * as XLSX from "xlsx";
 
-const SCRIPT_URL = process.env.REACT_APP_GOOGLE_SCRIPT_URL || "https://script.google.com/macros/s/AKfycbzIR8srYEDBgHOUKGfs0J3nk2BY4fsDPiw0J5cHfXUU7t77cEPWYw15mdUcW0T7oCw7Xg/exec";
+const SCRIPT_URL = process.env.REACT_APP_GOOGLE_SCRIPT_URL || "https://script.google.com/macros/s/AKfycbzrPgqH8RoyY-7q2ZaDOZJqJo4aIJumTLtwmGSm-NgFnUzWyHavTi__CrwWbnwa5763wA/exec";
 
 const normalizeKey = (key) => String(key || "").replace(/\uFEFF/g, "").trim();
 
@@ -48,7 +48,7 @@ const parseQty = (value) => {
 const clampText = (value, maxLength = 4000) => {
   const text = String(value ?? "");
   if (text.length <= maxLength) return text;
-  return `${text.slice(0, Math.max(0, maxLength - 7))}...(?앸왂)`;
+  return `${text.slice(0, Math.max(0, maxLength - 7))}...(생략)`;
 };
 
 const makeSkuKey = (productCode, partnerName) =>
@@ -97,9 +97,9 @@ const getHappycallRankStyle = (rank) => {
 };
 
 const getTopMedal = (rank) => {
-  if (rank === 1) return "?쪍";
-  if (rank === 2) return "?쪎";
-  if (rank === 3) return "?쪏";
+  if (rank === 1) return "🥇";
+  if (rank === 2) return "🥈";
+  if (rank === 3) return "🥉";
   return null;
 };
 
@@ -132,572 +132,148 @@ const buildVisibleHappycallRanks = (analytics) => {
   return rankMap;
 };
 
-const normalizeImageMapLookupText = (value) => normalizeHappycallLookupText(value || "");
-
-const makeProductImageMapKey = ({ productCode, partner, productName }) => {
-  const code = normalizeProductCode(productCode || "");
-  const partnerText = String(partner || "").trim();
-  if (code || partnerText) {
-    return `sku::${code}||${partnerText}`;
-  }
-  return `name::${normalizeImageMapLookupText(productName || "")}||${normalizeImageMapLookupText(partner || "")}`;
-};
-
-const normalizeImageToken = (value) => normalizeHappycallLookupText(value || "");
-
-const buildImageMatcher = ({ partnerKeywords = [], productKeywords = [], excludeKeywords = [] }) => {
-  const normalizedPartners = partnerKeywords.map(normalizeImageToken).filter(Boolean);
-  const normalizedProducts = productKeywords.map(normalizeImageToken).filter(Boolean);
-  const normalizedExcludes = excludeKeywords.map(normalizeImageToken).filter(Boolean);
-
-  return (product) => {
-    const partnerText = normalizeImageToken(product?.partner || "");
-    const productText = normalizeImageToken(product?.productName || "");
-    const lookupText = `${partnerText} ${productText}`;
-
-    if (normalizedExcludes.some((keyword) => lookupText.includes(keyword))) {
-      return false;
-    }
-
-    if (normalizedPartners.length && !normalizedPartners.some((keyword) => partnerText.includes(keyword))) {
-      return false;
-    }
-
-    return normalizedProducts.every((keyword) => productText.includes(keyword));
-  };
-};
-
-// ???곹뭹 ?대?吏瑜?異붽?????
-// 1) public/assets/products ???뚯씪???ｊ퀬
-// 2) ?꾨옒 紐⑸줉??partnerKeywords / productKeywords / src 瑜???以?異붽??섎㈃ ?⑸땲??
-// ?좊ℓ???곹뭹? ?듭?濡??ｌ? 留먭퀬 鍮꾩썙?먮뒗 ?몄씠 ?ㅻℓ移?쓣 以꾩엯?덈떎.
 const PRODUCT_IMAGE_MAP = [
   {
-    match: buildImageMatcher({
-      productKeywords: ["?꾨낫移대룄"],
-    }),
-    src: "/assets/products/avocado.png",
-  },
-  {
-    match: buildImageMatcher({
-      productKeywords: ["泥쒖븞?ㅼ씠"],
-    }),
-    src: "/assets/products/cucumber-cheonan-user.jpg",
-  },
-  {
-    match: buildImageMatcher({
-      productKeywords: ["?쒕겮?깆삤??],
-    }),
-    src: "/assets/products/cucumber-single-user.jpg",
-  },
-  {
-    match: buildImageMatcher({
-      productKeywords: ["?ㅼ씠1??],
-    }),
-    src: "/assets/products/cucumber-single-user.jpg",
-  },
-  {
-    match: buildImageMatcher({
-      productKeywords: ["?ㅼ씠2??],
-    }),
-    src: "/assets/products/cucumber-plate-user.jpg",
-  },
-  {
-    match: buildImageMatcher({
-      productKeywords: ["?ㅼ씠留쏄퀬異?],
-    }),
-    src: "/assets/products/cucumber-spicy-user.jpg",
-  },
-  {
-    match: buildImageMatcher({
-      productKeywords: ["泥?뼇怨좎텛"],
-    }),
-    src: "/assets/products/green-chili-pack-user.jpg",
-  },
-  {
-    match: buildImageMatcher({
-      productKeywords: ["怨좎텛"],
-      excludeKeywords: ["?ㅼ씠留쏄퀬異?],
-    }),
-    src: "/assets/products/green-chili-user.jpg",
-  },
-  {
-    match: buildImageMatcher({
-      productKeywords: ["?좏샇諛?],
-    }),
-    src: "/assets/products/aehobak-user.jpg",
-  },
-  {
-    match: buildImageMatcher({
-      productKeywords: ["二쇳궎??],
-    }),
-    src: "/assets/products/zucchini-user.jpg",
-  },
-  {
-    match: buildImageMatcher({
-      productKeywords: ["?먯쭏???],
-    }),
-    src: "/assets/products/green-onion-pack-user.jpg",
-  },
-  {
-    match: buildImageMatcher({
-      productKeywords: ["???],
-    }),
-    src: "/assets/products/green-onion-user.jpg",
-  },
-  {
-    match: buildImageMatcher({
-      productKeywords: ["?됱씠"],
-    }),
-    src: "/assets/products/naengi-user.jpg",
-  },
-  {
-    match: buildImageMatcher({
-      productKeywords: ["?щ옒"],
-    }),
-    src: "/assets/products/dalrae-user.jpg",
-  },
-  {
-    match: buildImageMatcher({
-      productKeywords: ["李몃굹臾?],
-    }),
-    src: "/assets/products/chamnamul-bag-user.jpg",
-  },
-  {
-    match: buildImageMatcher({
-      productKeywords: ["異붾?源살옂"],
-    }),
-    src: "/assets/products/perilla-user.jpg",
-  },
-  {
-    match: buildImageMatcher({
-      productKeywords: ["源살옂"],
-    }),
-    src: "/assets/products/perilla-user.jpg",
-  },
-  {
-    match: buildImageMatcher({
-      productKeywords: ["?덉콈??],
-    }),
-    src: "/assets/products/ssam-user.jpg",
-  },
-  {
-    match: buildImageMatcher({
-      productKeywords: ["?곸텛"],
-    }),
-    src: "/assets/products/lettuce-user.jpg",
-  },
-  {
-    match: buildImageMatcher({
-      productKeywords: ["?쒕겮?깆뼇??],
-    }),
-    src: "/assets/products/onion-single-user.jpg",
-  },
-  {
-    match: buildImageMatcher({
-      productKeywords: ["?묓뙆"],
-    }),
-    src: "/assets/products/onion-single-user.jpg",
-  },
-  {
-    match: buildImageMatcher({
-      productKeywords: ["?묐같異?],
-    }),
-    src: "/assets/products/cabbage-half-user.jpg",
-  },
-  {
-    match: buildImageMatcher({
-      productKeywords: ["留덈뒛1??],
-    }),
-    src: "/assets/products/garlic-single-user.jpg",
-  },
-  {
-    match: buildImageMatcher({
-      productKeywords: ["源먮쭏??],
-    }),
-    src: "/assets/products/garlic-single-user.jpg",
-  },
-  {
-    match: buildImageMatcher({
-      productKeywords: ["留덈뒛"],
-    }),
-    src: "/assets/products/garlic-bowl-user.jpg",
-  },
-  {
-    match: buildImageMatcher({
-      productKeywords: ["二쇰땲?댁깉?≪씠踰꾩꽢"],
-    }),
-    src: "/assets/products/junior-king-oyster-user.jpg",
-  },
-  {
-    match: buildImageMatcher({
-      productKeywords: ["?덉넚?대쾭??],
-    }),
-    src: "/assets/products/king-oyster-clean-user.jpg",
-  },
-  {
-    match: buildImageMatcher({
-      productKeywords: ["李명?由щ쾭??],
-    }),
-    src: "/assets/products/oyster-mushroom-user.jpg",
-  },
-  {
-    match: buildImageMatcher({
-      productKeywords: ["李명?由?],
-    }),
-    src: "/assets/products/oyster-mushroom-user.jpg",
-  },
-  {
-    match: buildImageMatcher({
-      productKeywords: ["?먰?由щ쾭??],
-    }),
-    src: "/assets/products/mushroom-oyster-tray-user.jpg",
-  },
-  {
-    match: buildImageMatcher({
-      productKeywords: ["?먰?由?],
-    }),
-    src: "/assets/products/mushroom-oyster-tray-user.jpg",
-  },
-  {
-    match: buildImageMatcher({
-      productKeywords: ["轅諛ㅺ퀬援щ쭏"],
-    }),
-    src: "/assets/products/sweetpotato-mini-user.jpg",
-  },
-  {
-    match: buildImageMatcher({
-      productKeywords: ["?몃컯怨좉뎄留?],
-    }),
-    src: "/assets/products/sweetpotato-pumpkin-user.jpg",
-  },
-  {
-    match: buildImageMatcher({
-      productKeywords: ["怨좉뎄留?],
-    }),
-    src: "/assets/products/sweetpotato-mini-user.jpg",
-  },
-  {
-    match: buildImageMatcher({
-      productKeywords: ["?⑦샇諛?],
-    }),
-    src: "/assets/products/pumpkin-user.jpg",
-  },
-  {
-    match: buildImageMatcher({
-      productKeywords: ["諛ㅽ샇諛?],
-    }),
-    src: "/assets/products/pumpkin-user.jpg",
-  },
-  {
-    match: buildImageMatcher({
-      productKeywords: ["?곗뼱"],
-    }),
-    src: "/assets/products/salmon-user.jpg",
-  },
-  {
-    match: buildImageMatcher({
-      productKeywords: ["遺梨꾩궡"],
-    }),
-    src: "/assets/products/beef-striploin-user.jpg",
-  },
-  {
-    match: buildImageMatcher({
-      productKeywords: ["遺덇퀬湲?],
-    }),
-    src: "/assets/products/beef-bulgogi-user.jpg",
-  },
-  {
-    match: buildImageMatcher({
-      productKeywords: ["紐⑹떖"],
-    }),
-    src: "/assets/products/pork-neck-user.jpg",
-  },
-  {
-    match: buildImageMatcher({
-      productKeywords: ["?쇨껸"],
-    }),
-    src: "/assets/products/samgyeopsal-user.jpg",
-  },
-  {
-    match: buildImageMatcher({
-      productKeywords: ["?쒕룉"],
-      excludeKeywords: ["?쇨껸", "紐⑹떖"],
-    }),
-    src: "/assets/products/pork-tray-green-user.jpg",
-  },
-  {
-    match: buildImageMatcher({
-      partnerKeywords: ["?몃が??],
-      productKeywords: ["?뱀궗?댁쫰", "諛붾굹??],
-    }),
+    match: (product) =>
+      /델몬트/i.test(product.partner || "") &&
+      /킹사이즈/.test(product.productName || ""),
     src: "/assets/products/delmonte-king-banana.jpeg",
   },
   {
-    match: buildImageMatcher({
-      partnerKeywords: ["?뚯퐫由ъ븘", "dole"],
-      productKeywords: ["?ㅼ쐞?곗삤", "諛붾굹??, "2??],
-      excludeKeywords: ["?뚯씤?좏뵆"],
-    }),
+    match: (product) =>
+      /(돌코리아|dole)/i.test(product.partner || "") &&
+      /스위티오/.test(product.productName || "") &&
+      /2입/.test(product.productName || ""),
     src: "/assets/products/dole-sweetio-banana-2.jpeg",
   },
   {
-    match: buildImageMatcher({
-      partnerKeywords: ["?뚯퐫由ъ븘", "dole"],
-      productKeywords: ["?ㅼ쐞?곗삤", "諛붾굹??],
-      excludeKeywords: ["?뚯씤?좏뵆", "2??],
-    }),
+    match: (product) =>
+      /(돌코리아|dole)/i.test(product.partner || "") &&
+      /스위티오/.test(product.productName || ""),
     src: "/assets/products/dole-sweetio-banana-scene.jpeg",
   },
   {
-    match: buildImageMatcher({
-      partnerKeywords: ["?몃が??],
-      productKeywords: ["?꾨━誘몄뾼", "諛붾굹??],
-      excludeKeywords: ["?대옒??],
-    }),
-    src: "/assets/products/delmonte-banana-bag.jpeg",
-  },
-  {
-    match: buildImageMatcher({
-      partnerKeywords: ["?몃が??],
-      productKeywords: ["?대옒??, "諛붾굹??],
-    }),
+    match: (product) =>
+      /델몬트/i.test(product.partner || "") &&
+      /프리미엄/.test(product.productName || ""),
     src: "/assets/products/delmonte-banana-pack.png",
   },
   {
-    match: buildImageMatcher({
-      productKeywords: ["諛붾굹??],
-      excludeKeywords: ["?뚯씤?좏뵆"],
-    }),
+    match: (product) =>
+      /델몬트/i.test(product.partner || "") &&
+      /바나나/.test(product.productName || ""),
+    src: "/assets/products/delmonte-banana-bag.jpeg",
+  },
+  {
+    match: (product) => /바나나/.test(product.productName || ""),
     src: "/assets/products/banana-generic.jpeg",
   },
   {
-    match: buildImageMatcher({
-      productKeywords: ["?ㅼ씠留쏄퀬異?],
-    }),
+    match: (product) => /오이맛고추|한끼딱오이맛고추/.test(product.productName || ""),
     src: "/assets/products/cucumber-spicy.jpeg",
   },
   {
-    match: buildImageMatcher({
-      productKeywords: ["泥?뼇怨좎텛"],
-    }),
+    match: (product) => /청양고추/.test(product.productName || ""),
     src: "/assets/products/green-chili-pack.jpeg",
   },
   {
-    match: buildImageMatcher({
-      productKeywords: ["留ㅼ슫怨좎텛"],
-    }),
+    match: (product) => /고추/.test(product.productName || ""),
     src: "/assets/products/pepper-hot-pack.jpeg",
   },
   {
-    match: (product) => {
-      const productText = normalizeImageToken(product?.productName || "");
-      if (productText.includes(normalizeImageToken("?ㅼ씠留쏄퀬異?))) return false;
-      return [
-        "泥쒖븞?ㅼ씠",
-        "?쒕겮?깆삤??,
-        "?ㅼ씠1??,
-        "?ㅼ씠2??,
-        "?ㅼ씠",
-      ].some((keyword) => productText.includes(normalizeImageToken(keyword)));
-    },
+    match: (product) => /천안오이|한끼딱오이|오이/.test(product.productName || ""),
     src: "/assets/products/cucumber-plain.jpeg",
   },
   {
-    match: buildImageMatcher({
-      productKeywords: ["?좏샇諛?],
-      excludeKeywords: ["紐삳궃??],
-    }),
+    match: (product) => /애호박|주키니/.test(product.productName || ""),
     src: "/assets/products/aehobak-single.jpeg",
   },
   {
-    match: buildImageMatcher({
-      productKeywords: ["?먯쭏???],
-    }),
+    match: (product) => /손질대파|대파/.test(product.productName || ""),
     src: "/assets/products/green-onion-bundle.jpeg",
   },
   {
-    match: buildImageMatcher({
-      productKeywords: ["遺異?],
-    }),
+    match: (product) => /부추/.test(product.productName || ""),
     src: "/assets/products/chives-bag.jpeg",
   },
   {
-    match: buildImageMatcher({
-      productKeywords: ["?щ옒"],
-    }),
+    match: (product) => /달래/.test(product.productName || ""),
     src: "/assets/products/dalrae-bag.jpeg",
   },
   {
-    match: buildImageMatcher({
-      productKeywords: ["?됱씠"],
-    }),
+    match: (product) => /냉이/.test(product.productName || ""),
     src: "/assets/products/shepherds-purse-bag.jpeg",
   },
   {
-    match: buildImageMatcher({
-      productKeywords: ["李몃굹臾?],
-    }),
+    match: (product) => /참나물/.test(product.productName || ""),
     src: "/assets/products/chamnamul-bag.jpeg",
   },
   {
-    match: (product) => {
-      const productText = normalizeImageToken(product?.productName || "");
-      return productText.includes(normalizeImageToken("源살옂"));
-    },
+    match: (product) => /깻잎|추부깻잎/.test(product.productName || ""),
     src: "/assets/products/perilla-pack.jpeg",
   },
   {
-    match: (product) => {
-      const productText = normalizeImageToken(product?.productName || "");
-      return productText.includes(normalizeImageToken("?덉콈??)) || productText.includes(normalizeImageToken("?곸텛"));
-    },
+    match: (product) => /상추|쌈채소/.test(product.productName || ""),
     src: "/assets/products/ssam-pack.jpeg",
   },
   {
-    match: buildImageMatcher({
-      productKeywords: ["苑껋긽異?],
-    }),
+    match: (product) => /꽃상추/.test(product.productName || ""),
     src: "/assets/products/red-lettuce-pack.jpeg",
   },
   {
-    match: buildImageMatcher({
-      productKeywords: ["?쒓툑移?],
-    }),
+    match: (product) => /시금치/.test(product.productName || ""),
     src: "/assets/products/spinach-bag.jpeg",
   },
   {
-    match: buildImageMatcher({
-      productKeywords: ["釉뚮줈肄쒕━"],
-    }),
+    match: (product) => /브로콜리/.test(product.productName || ""),
     src: "/assets/products/broccoli.jpeg",
   },
   {
-    match: buildImageMatcher({
-      productKeywords: ["?묐같異?],
-    }),
+    match: (product) => /양배추/.test(product.productName || ""),
     src: "/assets/products/cabbage-half.jpeg",
   },
   {
-    match: buildImageMatcher({
-      productKeywords: ["?묓뙆"],
-    }),
+    match: (product) => /양파/.test(product.productName || ""),
     src: "/assets/products/onion-single.jpeg",
   },
   {
-    match: (product) => {
-      const productText = normalizeImageToken(product?.productName || "");
-      return productText.includes(normalizeImageToken("源먮쭏??)) || productText.includes(normalizeImageToken("留덈뒛"));
-    },
+    match: (product) => /마늘/.test(product.productName || ""),
     src: "/assets/products/garlic-bag.jpeg",
   },
   {
-    match: buildImageMatcher({
-      productKeywords: ["?덉넚?대쾭??],
-    }),
+    match: (product) => /새송이버섯/.test(product.productName || ""),
     src: "/assets/products/mushroom-king-oyster.jpeg",
   },
   {
-    match: (product) => {
-      const productText = normalizeImageToken(product?.productName || "");
-      return productText.includes(normalizeImageToken("李명?由щ쾭??)) || productText.includes(normalizeImageToken("李명?由?));
-    },
+    match: (product) => /참타리버섯|참타리/.test(product.productName || ""),
     src: "/assets/products/mushroom-king-oyster-bag.jpeg",
   },
   {
-    match: buildImageMatcher({
-      productKeywords: ["?쎌씠踰꾩꽢"],
-    }),
+    match: (product) => /팽이/.test(product.productName || ""),
     src: "/assets/products/enoki-pack.jpeg",
   },
   {
-    match: (product) => {
-      const productText = normalizeImageToken(product?.productName || "");
-      return (
-        productText.includes(normalizeImageToken("怨좉뎄留?)) ||
-        productText.includes(normalizeImageToken("轅諛ㅺ퀬援щ쭏")) ||
-        productText.includes(normalizeImageToken("?몃컯怨좉뎄留?))
-      );
-    },
+    match: (product) => /고구마|꿀밤고구마|호박고구마/.test(product.productName || ""),
     src: "/assets/products/sweetpotato-pink-bag.jpeg",
   },
   {
-    match: buildImageMatcher({
-      productKeywords: ["?곗뼱"],
-    }),
+    match: (product) => /감자/.test(product.productName || ""),
+    src: "/assets/products/pumpkin-sweetpotato-bag.jpeg",
+  },
+  {
+    match: (product) => /연어/.test(product.productName || ""),
     src: "/assets/products/salmon-pack.jpeg",
   },
   {
-    match: (product) => {
-      const productText = normalizeImageToken(product?.productName || "");
-      return (
-        productText.includes(normalizeImageToken("紐⑹떖")) ||
-        productText.includes(normalizeImageToken("?쇨껸")) ||
-        productText.includes(normalizeImageToken("?쒕룉")) ||
-        productText.includes(normalizeImageToken("?쇱?"))
-      );
-    },
+    match: (product) => /목심|삼겹|한돈|돼지/.test(product.productName || ""),
     src: "/assets/products/pork-neck-pack.jpeg",
   },
 ];
 
-const DEFAULT_PRODUCT_IMAGE_SRC = "/assets/products/gs25-logo.svg";
-const SECONDARY_PRODUCT_IMAGE_SRC = "/assets/gs-logo.svg";
-
-const getDefaultProductImageSrc = (product) => {
-  const productText = normalizeImageToken(product?.productName || "");
-  if (!productText) return "";
-
-  if (productText.includes(normalizeImageToken("?뚯씤?좏뵆"))) {
-    return DEFAULT_PRODUCT_IMAGE_SRC;
-  }
-
+const getProductImageSrc = (product) => {
   const matched = PRODUCT_IMAGE_MAP.find((entry) => entry.match(product || {}));
-  return matched?.src || DEFAULT_PRODUCT_IMAGE_SRC;
+  return matched?.src || "";
 };
-
-const getProductImageSrc = (product, customImageMap = {}) => {
-  const productText = normalizeImageToken(product?.productName || "");
-  if (!productText) return "";
-
-  if (productText.includes(normalizeImageToken("?뚯씤?좏뵆"))) {
-    return "";
-  }
-
-  const customKey = makeProductImageMapKey({
-    productCode: product?.productCode || "",
-    partner: product?.partner || "",
-    productName: product?.productName || "",
-  });
-
-  if (customKey && customImageMap[customKey]) {
-    return customImageMap[customKey];
-  }
-
-  return getDefaultProductImageSrc(product);
-};
-
-const buildProductImageMapFromRows = (rows) =>
-  (Array.isArray(rows) ? rows : []).reduce((acc, item) => {
-    const key = String(
-      item?.["?대?吏留ㅽ븨??] ||
-      item?.["留듯궎"] ||
-      ""
-    ).trim();
-    const fileId = String(
-      item?.["?쒕씪?대툕?뚯씪ID"] ||
-      item?.["?뚯씪ID"] ||
-      ""
-    ).trim();
-    const url = fileId
-      ? `https://drive.google.com/thumbnail?id=${fileId}&sz=w1200`
-      : String(item?.["?대?吏URL"] || "").trim();
-
-    if (key && url) {
-      acc[key] = url;
-    }
-    return acc;
-  }, {});
 
 const getValue = (row, candidates) => {
   for (const key of candidates) {
@@ -711,7 +287,7 @@ const getValue = (row, candidates) => {
 const isTruthyUsage = (value) => {
   if (value === true) return true;
   const text = normalizeText(value);
-  return ["true", "y", "yes", "1", "?ъ슜", "?쒖꽦"].includes(text);
+  return ["true", "y", "yes", "1", "사용", "활성"].includes(text);
 };
 
 const isExplicitFalseUsage = (value) => {
@@ -728,7 +304,7 @@ const decodeCsvFile = async (file) => {
     return decoder.decode(buffer);
   };
 
-  const isBrokenText = (text) => (text.match(/占?g) || []).length > 5;
+  const isBrokenText = (text) => (text.match(/�/g) || []).length > 5;
 
   let text = tryDecode("utf-8");
   if (isBrokenText(text)) text = tryDecode("euc-kr");
@@ -764,16 +340,16 @@ const buildNormalizedRows = (parsedRows) =>
     });
 
     const productCode = normalizeProductCode(
-      getValue(row, ["?곹뭹肄붾뱶", "?곹뭹 肄붾뱶", "諛붿퐫??, "肄붾뱶"])
+      getValue(row, ["상품코드", "상품 코드", "바코드", "코드"])
     );
     const productName = String(
-      getValue(row, ["?곹뭹紐?, "?곹뭹 紐?, "?덈ぉ紐?, "?덈챸"]) || ""
+      getValue(row, ["상품명", "상품 명", "품목명", "품명"]) || ""
     ).trim();
     const partner = String(
-      getValue(row, ["嫄곕옒泥섎챸(援щℓ議곌굔紐?", "嫄곕옒泥섎챸", "?묐젰?щ챸", "?묐젰??]) || ""
+      getValue(row, ["거래처명(구매조건명)", "거래처명", "협력사명", "협력사"]) || ""
     ).trim();
-    const center = String(getValue(row, ["?쇳꽣紐?, "?쇳꽣"]) || "").trim();
-    const qty = parseQty(getValue(row, ["珥?諛쒖＜?섎웾", "諛쒖＜?섎웾", "?섎웾"]));
+    const center = String(getValue(row, ["센터명", "센터"]) || "").trim();
+    const qty = parseQty(getValue(row, ["총 발주수량", "발주수량", "수량"]));
 
     return {
       ...row,
@@ -798,13 +374,13 @@ const buildReservationRows = (reservationRows) =>
     });
 
     const productCode = normalizeProductCode(
-      getValue(row, ["?곹뭹肄붾뱶", "?곹뭹 肄붾뱶", "諛붿퐫??, "肄붾뱶"])
+      getValue(row, ["상품코드", "상품 코드", "바코드", "코드"])
     );
-    const productName = String(getValue(row, ["?곹뭹紐?, "?곹뭹 紐?, "?덈ぉ紐?, "?덈챸"]) || "").trim();
-    const partner = String(getValue(row, ["?묐젰?щ챸", "?묐젰??, "嫄곕옒泥섎챸"]) || "").trim();
-    const center = String(getValue(row, ["?쇳꽣紐?, "?쇳꽣"]) || "").trim();
-    const qty = parseQty(getValue(row, ["諛쒖＜?섎웾", "?섎웾"]));
-    const incomingCost = parseQty(getValue(row, ["?낃퀬?먭?", "?먭?"]));
+    const productName = String(getValue(row, ["상품명", "상품 명", "품목명", "품명"]) || "").trim();
+    const partner = String(getValue(row, ["협력사명", "협력사", "거래처명"]) || "").trim();
+    const center = String(getValue(row, ["센터명", "센터"]) || "").trim();
+    const qty = parseQty(getValue(row, ["발주수량", "수량"]));
+    const incomingCost = parseQty(getValue(row, ["입고원가", "원가"]));
 
     return {
       ...row,
@@ -885,11 +461,6 @@ const computeJobKey = (rows) =>
     )
   )}`;
 
-const PENDING_STORAGE_KEY = "inspection_pending_v2";
-const DRAFT_STORAGE_KEY = "inspection_drafts_v2";
-const MAX_SAVE_PARALLEL = 2;
-const RETRY_DELAYS_MS = [800, 2000, 4000];
-
 const fileToBase64 = (file) =>
   new Promise((resolve, reject) => {
     if (!file) {
@@ -907,7 +478,7 @@ const fileToBase64 = (file) =>
         imageBase64: base64,
       });
     };
-    reader.onerror = () => reject(new Error("?ъ쭊 ?쎄린 ?ㅽ뙣"));
+    reader.onerror = () => reject(new Error("사진 읽기 실패"));
     reader.readAsDataURL(file);
   });
 
@@ -925,23 +496,6 @@ const filesToBase64 = async (files) => {
   return results;
 };
 
-const delay = (ms) =>
-  new Promise((resolve) => {
-    window.setTimeout(resolve, ms);
-  });
-
-const createUploadedPhotoItem = (item) => ({
-  __uploaded: true,
-  fileId: String(item?.fileId || "").trim(),
-  viewUrl: String(item?.viewUrl || "").trim(),
-  driveUrl: String(item?.driveUrl || "").trim(),
-  fileName: String(item?.fileName || "").trim(),
-  name: String(item?.fileName || item?.name || "").trim(),
-});
-
-const isUploadedPhotoItem = (item) =>
-  !!item && typeof item === "object" && item.__uploaded === true && !!item.fileId;
-
 const formatDateTime = (value) => {
   if (!value) return "-";
   const date = new Date(value);
@@ -951,7 +505,7 @@ const formatDateTime = (value) => {
 
 const formatDashboardValue = (label, value) => {
   if (value == null || value === "") return "-";
-  if (String(label).includes("??) || String(label).includes("瑜?) || String(label).includes("而ㅻ쾭由ъ?")) {
+  if (String(label).includes("율") || String(label).includes("률") || String(label).includes("커버리지")) {
     const numeric = Number(value);
     return Number.isFinite(numeric) ? `${(numeric * 100).toFixed(1)}%` : String(value);
   }
@@ -968,24 +522,24 @@ const formatDashboardValue = (label, value) => {
 void formatDashboardValue;
 
 const getRecordType = (record) => {
-  const type = String(record.泥섎━?좏삎 || "").trim();
+  const type = String(record.처리유형 || "").trim();
   if (type) return type;
-  if (parseQty(record.?뚯넚?섎웾) > 0) return "?뚯넚";
-  if (parseQty(record.援먰솚?섎웾) > 0) return "援먰솚";
-  return "湲고?";
+  if (parseQty(record.회송수량) > 0) return "회송";
+  if (parseQty(record.교환수량) > 0) return "교환";
+  return "기타";
 };
 
 const getRecordQtyText = (record) => {
   const type = getRecordType(record);
-  if (type === "?뚯넚" || type === "RETURN") return `${parseQty(record.?뚯넚?섎웾)}媛?;
-  if (type === "援먰솚" || type === "EXCHANGE") return `${parseQty(record.援먰솚?섎웾)}媛?;
+  if (type === "회송" || type === "RETURN") return `${parseQty(record.회송수량)}개`;
+  if (type === "교환" || type === "EXCHANGE") return `${parseQty(record.교환수량)}개`;
 
-  const returnQty = parseQty(record.?뚯넚?섎웾);
-  const exchangeQty = parseQty(record.援먰솚?섎웾);
+  const returnQty = parseQty(record.회송수량);
+  const exchangeQty = parseQty(record.교환수량);
   if (returnQty > 0 && exchangeQty > 0) {
-    return `?뚯넚 ${returnQty}媛?/ 援먰솚 ${exchangeQty}媛?;
+    return `회송 ${returnQty}개 / 교환 ${exchangeQty}개`;
   }
-  return `${Math.max(returnQty, exchangeQty, 0)}媛?;
+  return `${Math.max(returnQty, exchangeQty, 0)}개`;
 };
 
 const formatDateForFileName = () => new Date().toLocaleDateString("sv-SE");
@@ -1067,10 +621,10 @@ const splitPhotoSourceText = (value) =>
 
 const getPhotoCandidatesFromRecord = (record) => {
   const rawItems = [
-    record?.?ъ쭊URL,
-    record?.?ъ쭊留곹겕,
-    ...splitPhotoSourceText(record?.?ъ쭊留곹겕紐⑸줉),
-    ...splitPhotoSourceText(record?.?ъ쭊?뚯씪ID紐⑸줉),
+    record?.사진URL,
+    record?.사진링크,
+    ...splitPhotoSourceText(record?.사진링크목록),
+    ...splitPhotoSourceText(record?.사진파일ID목록),
   ];
 
   const seen = {};
@@ -1090,13 +644,13 @@ function HistoryPhotoItem({ candidate, index, onOpen, styles }) {
   const [failed, setFailed] = useState(false);
 
   if (failed) {
-    return <div style={styles.photoThumbEmpty}>誘몃━蹂닿린 遺덇?</div>;
+    return <div style={styles.photoThumbEmpty}>미리보기 불가</div>;
   }
 
   return (
     <img
       src={candidate.previewUrl}
-      alt={`泥⑤? ?ъ쭊 ${index + 1}`}
+      alt={`첨부 사진 ${index + 1}`}
       style={styles.photoThumb}
       onClick={() => onOpen(candidate.previewUrl)}
       onError={() => setFailed(true)}
@@ -1108,7 +662,7 @@ function HistoryPhotoPreview({ record, onOpen, styles }) {
   const candidates = useMemo(() => getPhotoCandidatesFromRecord(record), [record]);
 
   if (!candidates.length) {
-    return <div style={styles.photoEmpty}>?ъ쭊 ?놁쓬</div>;
+    return <div style={styles.photoEmpty}>사진 없음</div>;
   }
 
   return (
@@ -1123,97 +677,6 @@ function HistoryPhotoPreview({ record, onOpen, styles }) {
         />
       ))}
     </div>
-  );
-}
-
-function DraftPhotoPreviewItem({ file, index, onRemove, styles }) {
-  const [previewUrl, setPreviewUrl] = useState("");
-
-  useEffect(() => {
-    if (!file) {
-      setPreviewUrl("");
-      return undefined;
-    }
-
-    if (isUploadedPhotoItem(file)) {
-      setPreviewUrl(file.viewUrl || "");
-      return undefined;
-    }
-
-    const nextUrl = URL.createObjectURL(file);
-    setPreviewUrl(nextUrl);
-
-    return () => {
-      URL.revokeObjectURL(nextUrl);
-    };
-  }, [file]);
-
-  return (
-    <div style={styles.draftPhotoCard}>
-      {previewUrl ? (
-        <img src={previewUrl} alt={file?.fileName || file?.name || `?좏깮 ?ъ쭊 ${index + 1}`} style={styles.draftPhotoImage} />
-      ) : (
-        <div style={styles.photoThumbEmpty}>誘몃━蹂닿린 遺덇?</div>
-      )}
-      <button
-        type="button"
-        onClick={() => onRemove(index)}
-        style={styles.draftPhotoRemoveButton}
-        aria-label={`?좏깮 ?ъ쭊 ${index + 1} ??젣`}
-      >
-        횞
-      </button>
-    </div>
-  );
-}
-
-function DraftPhotoPreviewList({ files, onRemove, styles }) {
-  if (!Array.isArray(files) || files.length === 0) {
-    return <div style={styles.draftPhotoEmpty}>?좏깮???ъ쭊 ?놁쓬</div>;
-  }
-
-  return (
-    <div style={styles.draftPhotoGrid}>
-      {files.map((file, index) => (
-        <DraftPhotoPreviewItem
-          key={`${file?.name || "photo"}-${file?.lastModified || index}-${index}`}
-          file={file}
-          index={index}
-          onRemove={onRemove}
-          styles={styles}
-        />
-      ))}
-    </div>
-  );
-}
-
-function ProductImage({ product, src, alt, style }) {
-  const [currentSrc, setCurrentSrc] = useState(src || getDefaultProductImageSrc(product) || DEFAULT_PRODUCT_IMAGE_SRC);
-
-  useEffect(() => {
-    setCurrentSrc(src || getDefaultProductImageSrc(product) || DEFAULT_PRODUCT_IMAGE_SRC);
-  }, [product, src]);
-
-  return (
-    <img
-      src={currentSrc}
-      alt={alt}
-      style={style}
-      onError={() => {
-        const fallbackSrc = getDefaultProductImageSrc(product);
-        if (fallbackSrc && fallbackSrc !== currentSrc) {
-          setCurrentSrc(fallbackSrc);
-          return;
-        }
-        if (currentSrc !== DEFAULT_PRODUCT_IMAGE_SRC) {
-          setCurrentSrc(DEFAULT_PRODUCT_IMAGE_SRC);
-          return;
-        }
-        if (currentSrc !== SECONDARY_PRODUCT_IMAGE_SRC) {
-          setCurrentSrc(SECONDARY_PRODUCT_IMAGE_SRC);
-        }
-      }}
-    />
   );
 }
 
@@ -1249,40 +712,28 @@ function App() {
   const [showHistory, setShowHistory] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyRows, setHistoryRows] = useState([]);
-  const [inspectionRows, setInspectionRows] = useState([]);
   const [zoomPhotoUrl, setZoomPhotoUrl] = useState("");
   const [zipDownloading, setZipDownloading] = useState("");
   const [showAdminReset, setShowAdminReset] = useState(false);
   const [adminPassword, setAdminPassword] = useState("");
   const [adminResetting, setAdminResetting] = useState(false);
   const [uploadingHappycallCsv, setUploadingHappycallCsv] = useState(false);
-  const [productImageMap, setProductImageMap] = useState({});
-  const [showImageRegister, setShowImageRegister] = useState(false);
-  const [imageRegisterSearch, setImageRegisterSearch] = useState("");
-  const [selectedImageTargetKey, setSelectedImageTargetKey] = useState("");
-  const [uploadingImageKey, setUploadingImageKey] = useState("");
 
   const [isScannerOpen, setIsScannerOpen] = useState(false);
   const [scannerError, setScannerError] = useState("");
-  const [scannerStatus, setScannerStatus] = useState("移대찓?쇰? 以鍮꾪븯怨??덉뒿?덈떎...");
+  const [scannerStatus, setScannerStatus] = useState("카메라를 준비하고 있습니다...");
   const [scannerReady, setScannerReady] = useState(false);
   const [torchSupported, setTorchSupported] = useState(false);
   const [torchOn, setTorchOn] = useState(false);
 
   const fileInputRef = useRef(null);
   const happycallFileInputRef = useRef(null);
-  const imageRegisterInputRef = useRef(null);
   const searchInputRef = useRef(null);
   const scannerVideoRef = useRef(null);
   const scannerControlsRef = useRef(null);
   const scannerTrackRef = useRef(null);
   const scannerStatusTimerRef = useRef(null);
-  const draftsRef = useRef({});
   const pendingRef = useRef({});
-  const saveQueueRef = useRef({});
-  const uploadQueueRef = useRef({});
-  const retryMapRef = useRef({});
-  const activeSaveCountRef = useRef(0);
   const savingRef = useRef(false);
   const flushTimerRef = useRef(null);
 
@@ -1314,127 +765,6 @@ function App() {
       centerName || "",
     ].join("||");
 
-  const getStatusLabel = (status) => {
-    if (status === "pending") return "??λ?湲?;
-    if (status === "uploading") return "?낅줈?쒖쨷";
-    if (status === "saving") return "??ν솗?몄쨷";
-    if (status === "retrying") return "?ъ쟾?≪쨷";
-    if (status === "saved") return "??μ셿猷?;
-    if (status === "failed") return "?뺤씤?꾩슂";
-    return "";
-  };
-
-  const serializePhotoItems = useCallback(
-    (items) =>
-      (Array.isArray(items) ? items : [])
-        .filter(isUploadedPhotoItem)
-        .map((item) => createUploadedPhotoItem(item)),
-    []
-  );
-
-  const persistDrafts = useCallback((nextDrafts) => {
-    try {
-      const serializable = Object.fromEntries(
-        Object.entries(nextDrafts || {}).map(([key, value]) => [
-          key,
-          {
-            ...value,
-            photoFiles: serializePhotoItems(value?.photoFiles),
-            photoNames: Array.isArray(value?.photoNames) ? value.photoNames : [],
-          },
-        ])
-      );
-      window.localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(serializable));
-    } catch (_) {}
-  }, [serializePhotoItems]);
-
-  const persistPending = useCallback((nextPending) => {
-    try {
-      const serializable = Object.fromEntries(
-        Object.entries(nextPending || {}).map(([key, value]) => [
-          key,
-          {
-            ...value,
-            photoFiles: undefined,
-            photoItems: serializePhotoItems(value?.photoItems || value?.photoFiles),
-          },
-        ])
-      );
-      window.localStorage.setItem(PENDING_STORAGE_KEY, JSON.stringify(serializable));
-    } catch (_) {}
-  }, [serializePhotoItems]);
-
-  const restoreLocalState = useCallback(() => {
-    try {
-      const rawDrafts = window.localStorage.getItem(DRAFT_STORAGE_KEY);
-      if (rawDrafts) {
-        const parsedDrafts = JSON.parse(rawDrafts);
-        setDrafts(parsedDrafts || {});
-      }
-    } catch (_) {}
-
-    try {
-      const rawPending = window.localStorage.getItem(PENDING_STORAGE_KEY);
-      if (rawPending) {
-        const parsedPending = JSON.parse(rawPending) || {};
-        setPendingMap(parsedPending);
-        pendingRef.current = parsedPending;
-        setItemStatusMap((prev) => {
-          const next = { ...prev };
-          Object.keys(parsedPending).forEach((key) => {
-            next[key] = "pending";
-          });
-          return next;
-        });
-      }
-    } catch (_) {}
-  }, []);
-
-  useEffect(() => {
-    persistDrafts(drafts);
-    draftsRef.current = drafts;
-  }, [drafts, persistDrafts]);
-
-  const runQueuedTask = useCallback((queueRef, itemKey, task) => {
-    const previous = queueRef.current[itemKey] || Promise.resolve();
-    const next = previous.catch(() => undefined).then(task);
-    queueRef.current[itemKey] = next.finally(() => {
-      if (queueRef.current[itemKey] === next) {
-        delete queueRef.current[itemKey];
-      }
-    });
-    return queueRef.current[itemKey];
-  }, []);
-
-  const runWithSaveSlot = useCallback(async (task) => {
-    while (activeSaveCountRef.current >= MAX_SAVE_PARALLEL) {
-      await delay(120);
-    }
-    activeSaveCountRef.current += 1;
-    try {
-      return await task();
-    } finally {
-      activeSaveCountRef.current = Math.max(0, activeSaveCountRef.current - 1);
-    }
-  }, []);
-
-  const runWithRetry = useCallback(async (task, onRetry) => {
-    let lastError = null;
-    for (let attempt = 0; attempt < RETRY_DELAYS_MS.length; attempt += 1) {
-      try {
-        return await task(attempt);
-      } catch (error) {
-        lastError = error;
-        if (attempt === RETRY_DELAYS_MS.length - 1) break;
-        if (typeof onRetry === "function") {
-          await onRetry(attempt + 1, error);
-        }
-        await delay(RETRY_DELAYS_MS[attempt]);
-      }
-    }
-    throw lastError || new Error("request failed");
-  }, []);
-
   const setItemStatuses = (keys, status) => {
     if (!keys.length) return;
     setItemStatusMap((prev) => {
@@ -1446,7 +776,7 @@ function App() {
     });
   };
 
-  const removePendingKeys = useCallback((keys) => {
+  const removePendingKeys = (keys) => {
     if (!keys.length) return;
     setPendingMap((prev) => {
       const next = { ...prev };
@@ -1454,12 +784,11 @@ function App() {
         delete next[key];
       });
       pendingRef.current = next;
-      persistPending(next);
       return next;
     });
-  }, [persistPending]);
+  };
 
-  const upsertPendingEntries = useCallback((entries) => {
+  const upsertPendingEntries = (entries) => {
     if (!entries.length) return;
     setPendingMap((prev) => {
       const next = { ...prev };
@@ -1471,44 +800,41 @@ function App() {
         };
 
         if (entry.type === "inspection") {
-          merged.?뚯넚?섎웾 = prevEntry.?뚯넚?섎웾 || 0;
-          merged.援먰솚?섎웾 = prevEntry.援먰솚?섎웾 || 0;
-          merged.?쇳꽣紐?= prevEntry.?쇳꽣紐?|| merged.?쇳꽣紐?|| "";
-          merged.鍮꾧퀬 = prevEntry.鍮꾧퀬 || merged.鍮꾧퀬 || "";
-          merged.photoItems =
-            (Array.isArray(entry.photoItems) && entry.photoItems.length
-              ? entry.photoItems
-              : prevEntry.photoItems) || [];
+          merged.회송수량 = prevEntry.회송수량 || 0;
+          merged.교환수량 = prevEntry.교환수량 || 0;
+          merged.센터명 = prevEntry.센터명 || merged.센터명 || "";
+          merged.비고 = prevEntry.비고 || merged.비고 || "";
+          merged.photoFiles =
+            (Array.isArray(entry.photoFiles) && entry.photoFiles.length
+              ? entry.photoFiles
+              : prevEntry.photoFiles) || [];
         }
 
         if (entry.type === "return" || entry.type === "exchange") {
-          merged.寃?덉닔??= prevEntry.寃?덉닔??|| merged.寃?덉닔??|| 0;
+          merged.검품수량 = prevEntry.검품수량 || merged.검품수량 || 0;
         }
 
         if (entry.type === "movement") {
-          merged.qty = parseQty(entry.qty);
-          merged.?뚯넚?섎웾 = parseQty(entry.?뚯넚?섎웾);
-          merged.援먰솚?섎웾 = parseQty(entry.援먰솚?섎웾);
-          merged.鍮꾧퀬 = entry.鍮꾧퀬 || prevEntry.鍮꾧퀬 || "";
-          merged.photoItems = serializePhotoItems(
-            [
-              ...(Array.isArray(prevEntry.photoItems) ? prevEntry.photoItems : []),
-              ...(Array.isArray(entry.photoItems) ? entry.photoItems : []),
-            ]
-          );
+          merged.qty = parseQty(prevEntry.qty) + parseQty(entry.qty);
+          merged.회송수량 = parseQty(prevEntry.회송수량) + parseQty(entry.회송수량);
+          merged.교환수량 = parseQty(prevEntry.교환수량) + parseQty(entry.교환수량);
+          merged.비고 = entry.비고 || prevEntry.비고 || "";
+          merged.photoFiles = [
+            ...(Array.isArray(prevEntry.photoFiles) ? prevEntry.photoFiles : []),
+            ...(Array.isArray(entry.photoFiles) ? entry.photoFiles : []),
+          ];
         }
 
         next[entry.key] = merged;
       });
       pendingRef.current = next;
-      persistPending(next);
       return next;
     });
     setItemStatuses(
       entries.map((entry) => entry.key),
       "pending"
     );
-  }, [persistPending, serializePhotoItems]);
+  };
 
   const stopScanner = useCallback(() => {
     if (scannerStatusTimerRef.current) {
@@ -1560,7 +886,7 @@ function App() {
     try {
       setScannerError("");
       setScannerReady(false);
-      setScannerStatus("移대찓?쇰? 以鍮꾪븯怨??덉뒿?덈떎...");
+      setScannerStatus("카메라를 준비하고 있습니다...");
 
       const reader = new BrowserMultiFormatReader();
       const devices = await BrowserCodeReader.listVideoInputDevices();
@@ -1634,16 +960,16 @@ function App() {
 
       scannerStatusTimerRef.current = setInterval(() => {
         setScannerStatus((prev) =>
-          prev === "諛붿퐫???몄떇 以?.."
-            ? "諛붿퐫?쒕? ?붾㈃ 以묒븰??留욎떠二쇱꽭??"
-            : "諛붿퐫???몄떇 以?.."
+          prev === "바코드 인식 중..."
+            ? "바코드를 화면 중앙에 맞춰주세요."
+            : "바코드 인식 중..."
         );
       }, 2200);
 
-      setScannerStatus("諛붿퐫???몄떇 以?..");
+      setScannerStatus("바코드 인식 중...");
     } catch (err) {
-      setScannerError(err.message || "移대찓?쇰? ?쒖옉?????놁뒿?덈떎.");
-      setScannerStatus("移대찓?쇰? ?ъ슜?????놁뒿?덈떎.");
+      setScannerError(err.message || "카메라를 시작할 수 없습니다.");
+      setScannerStatus("카메라를 사용할 수 없습니다.");
       stopScanner();
     }
   }, [closeScanner, stopScanner]);
@@ -1683,7 +1009,7 @@ function App() {
 
       const result = await response.json();
       if (!response.ok || result.ok === false) {
-        throw new Error(result.message || "CSV 罹먯떆 ????ㅽ뙣");
+        throw new Error(result.message || "CSV 캐시 저장 실패");
       }
 
       const nextJob = result.job || {
@@ -1699,9 +1025,9 @@ function App() {
       setCurrentFileModifiedAt(new Date(file.lastModified).toISOString());
       setDashboardSummary(result.summary || {});
   
-      setMessage("CSV ?낅줈???꾨즺");
+      setMessage("CSV 업로드 완료");
     } catch (err) {
-      setError(err.message || "CSV 泥섎━ ?ㅽ뙣");
+      setError(err.message || "CSV 처리 실패");
     } finally {
       setUploadingCsv(false);
       if (e.target) {
@@ -1723,7 +1049,7 @@ function App() {
   const loadBootstrap = useCallback(async () => {
     if (!SCRIPT_URL.trim()) {
       setBootLoading(false);
-      setError("REACT_APP_GOOGLE_SCRIPT_URL ?섍꼍蹂?섍? ?꾩슂?⑸땲??");
+      setError("REACT_APP_GOOGLE_SCRIPT_URL 환경변수가 필요합니다.");
       return;
     }
 
@@ -1735,7 +1061,7 @@ function App() {
       const result = await response.json();
 
       if (!response.ok || result.ok === false) {
-        throw new Error(result.message || "珥덇린 ?곗씠?곕? 遺덈윭?ㅼ? 紐삵뻽?듬땲??");
+        throw new Error(result.message || "초기 데이터를 불러오지 못했습니다.");
       }
 
       const data = result.data || {};
@@ -1749,10 +1075,10 @@ function App() {
 
       (config.exclude_rows || []).forEach((row) => {
         const productCode = normalizeProductCode(
-          getValue(row, ["?곹뭹肄붾뱶", "?곹뭹 肄붾뱶", "肄붾뱶", "諛붿퐫??])
+          getValue(row, ["상품코드", "상품 코드", "코드", "바코드"])
         );
-        const partner = String(getValue(row, ["?묐젰??, "?묐젰?щ챸"]) || "").trim();
-        const useFlag = getValue(row, ["?ъ슜?щ?"]);
+        const partner = String(getValue(row, ["협력사", "협력사명"]) || "").trim();
+        const useFlag = getValue(row, ["사용여부"]);
 
         if (!isTruthyUsage(useFlag)) return;
         if (!productCode) return;
@@ -1767,17 +1093,17 @@ function App() {
       const nextEventMap = {};
       (config.event_rows || []).forEach((row) => {
         const productCode = normalizeProductCode(
-          getValue(row, ["?곹뭹肄붾뱶", "?곹뭹 肄붾뱶", "肄붾뱶", "諛붿퐫??])
+          getValue(row, ["상품코드", "상품 코드", "코드", "바코드"])
         );
-        const eventName = String(getValue(row, ["?됱궗紐?]) || "").trim();
-        const useFlag = getValue(row, ["?ъ슜?щ?"]);
+        const eventName = String(getValue(row, ["행사명"]) || "").trim();
+        const useFlag = getValue(row, ["사용여부"]);
 
         if (!productCode) return;
         if (isExplicitFalseUsage(useFlag)) return;
 
         nextEventMap[productCode] = {
-          ?됱궗?щ?: "?됱궗",
-          ?됱궗紐? eventName,
+          행사여부: "행사",
+          행사명: eventName,
         };
       });
 
@@ -1791,10 +1117,9 @@ function App() {
       setCurrentFileModifiedAt(job?.source_file_modified || "");
       setDashboardSummary(data.summary || {});
       setHappycallAnalytics(data.happycall || {});
-      setProductImageMap(buildProductImageMapFromRows(data.product_images));
-      setMessage(job ? "理쒓렐 ?묒뾽??遺덈윭?붿뒿?덈떎." : "CSV瑜??낅줈?쒗빐 二쇱꽭??");
+      setMessage(job ? "최근 작업을 불러왔습니다." : "CSV를 업로드해 주세요.");
     } catch (err) {
-      setError(err.message || "珥덇린 ?곗씠?곕? 遺덈윭?ㅼ? 紐삵뻽?듬땲??");
+      setError(err.message || "초기 데이터를 불러오지 못했습니다.");
     } finally {
       setBootLoading(false);
     }
@@ -1805,23 +1130,12 @@ function App() {
     const result = await response.json();
 
     if (!response.ok || result.ok === false) {
-      throw new Error(result.message || "?댁뿭 遺덈윭?ㅺ린 ?ㅽ뙣");
+      throw new Error(result.message || "내역 불러오기 실패");
     }
 
     return (Array.isArray(result.records) ? result.records : []).sort((a, b) =>
-      String(b.?묒꽦?쇱떆 || "").localeCompare(String(a.?묒꽦?쇱떆 || ""), "ko")
+      String(b.작성일시 || "").localeCompare(String(a.작성일시 || ""), "ko")
     );
-  }, []);
-
-  const fetchInspectionRowsData = useCallback(async () => {
-    const response = await fetch(`${SCRIPT_URL}?action=getInspectionRows`);
-    const result = await response.json();
-
-    if (!response.ok || result.ok === false) {
-      throw new Error(result.message || "寃???곗씠??遺덈윭?ㅺ린 ?ㅽ뙣");
-    }
-
-    return Array.isArray(result.rows) ? result.rows : [];
   }, []);
 
   const loadHistoryRows = useCallback(async () => {
@@ -1832,7 +1146,7 @@ function App() {
       setHistoryRows(nextRows);
       return nextRows;
     } catch (err) {
-      setError(err.message || "?댁뿭??遺덈윭?ㅼ? 紐삵뻽?듬땲??");
+      setError(err.message || "내역을 불러오지 못했습니다.");
       setHistoryRows([]);
       return [];
     } finally {
@@ -1840,27 +1154,10 @@ function App() {
     }
   }, [fetchHistoryRowsData]);
 
-  const loadInspectionRows = useCallback(async () => {
-    try {
-      const nextRows = await fetchInspectionRowsData();
-      setInspectionRows(nextRows);
-      return nextRows;
-    } catch (err) {
-      setError(err.message || "寃???곗씠?곕? 遺덈윭?ㅼ? 紐삵뻽?듬땲??");
-      setInspectionRows([]);
-      return [];
-    }
-  }, [fetchInspectionRowsData]);
-
   useEffect(() => {
     loadBootstrap();
     loadHistoryRows();
-    loadInspectionRows();
-  }, [loadBootstrap, loadHistoryRows, loadInspectionRows]);
-
-  useEffect(() => {
-    restoreLocalState();
-  }, [restoreLocalState]);
+  }, [loadBootstrap, loadHistoryRows]);
 
   const filteredRows = useMemo(() => {
     return rows.filter((row) => {
@@ -1881,9 +1178,9 @@ function App() {
 
     filteredRows.forEach((row) => {
       const productCode = row.__productCode;
-      const productName = row.__productName || "?곹뭹紐??놁쓬";
-      const partner = row.__partner || "?묐젰???놁쓬";
-      const center = row.__center || "?쇳꽣 ?놁쓬";
+      const productName = row.__productName || "상품명 없음";
+      const partner = row.__partner || "협력사 없음";
+      const center = row.__center || "센터 없음";
       const qty = row.__qty || 0;
 
       const matched =
@@ -1968,7 +1265,7 @@ function App() {
         partner,
         products: products.map((product) => ({
           ...product,
-          imageSrc: getProductImageSrc(product, productImageMap),
+          imageSrc: getProductImageSrc(product),
           happycallStats: {
             "1d": visibleHappycallRankMap[`${product.partner}||${product.productCode}`]?.["1d"] || null,
             "7d": visibleHappycallRankMap[`${product.partner}||${product.productCode}`]?.["7d"] || null,
@@ -1977,70 +1274,24 @@ function App() {
           centers: product.centers.sort((a, b) => (b.totalQty || 0) - (a.totalQty || 0)),
         })),
       }));
-  }, [filteredRows, search, eventMap, happycallAnalytics, productImageMap]);
+  }, [filteredRows, search, eventMap, happycallAnalytics]);
 
   const historyCountMap = useMemo(() => {
     const map = {};
 
     (historyRows || []).forEach((record) => {
-      const key = `${record.?묐젰?щ챸 || ""}||${record.?곹뭹肄붾뱶 || ""}`;
+      const key = `${record.협력사명 || ""}||${record.상품코드 || ""}`;
       if (!map[key]) {
         map[key] = { returnCount: 0, exchangeCount: 0 };
       }
 
-      if (parseQty(record.?뚯넚?섎웾) > 0) {
+      if (parseQty(record.회송수량) > 0) {
         map[key].returnCount += 1;
       }
 
-      if (parseQty(record.援먰솚?섎웾) > 0) {
+      if (parseQty(record.교환수량) > 0) {
         map[key].exchangeCount += 1;
       }
-    });
-
-    return map;
-  }, [historyRows]);
-
-  const inspectionSavedMap = useMemo(() => {
-    const map = {};
-
-    (inspectionRows || []).forEach((row) => {
-      const key = makeEntityKey(
-        row.?묒뾽湲곗??쇰삉?봀SV?앸퀎媛?
-        row.?곹뭹肄붾뱶,
-        row.?묐젰?щ챸
-      );
-      map[key] = {
-        inspectionQty: parseQty(row.寃?덉닔??,
-        returnQty: parseQty(row.?뚯넚?섎웾),
-        exchangeQty: parseQty(row.援먰솚?섎웾),
-      };
-    });
-
-    return map;
-  }, [inspectionRows]);
-
-  const movementSavedMap = useMemo(() => {
-    const map = {};
-
-    (historyRows || []).forEach((row) => {
-      const typeName = String(row.泥섎━?좏삎 || "").trim();
-      const key = makeMovementPendingKey(
-        typeName === "援먰솚" ? "EXCHANGE" : typeName === "?뚯넚" ? "RETURN" : typeName,
-        row.?묒뾽湲곗??쇰삉?봀SV?앸퀎媛?
-        row.?곹뭹肄붾뱶,
-        row.?묐젰?щ챸,
-        row.?쇳꽣紐?
-      );
-
-      if (!map[key]) {
-        map[key] = {
-          returnQty: 0,
-          exchangeQty: 0,
-        };
-      }
-
-      map[key].returnQty += parseQty(row.?뚯넚?섎웾);
-      map[key].exchangeQty += parseQty(row.援먰솚?섎웾);
     });
 
     return map;
@@ -2061,234 +1312,24 @@ function App() {
           imageSrc: getProductImageSrc({
             productName: item?.productName || "",
             partner: item?.partnerName || "",
-            productCode: item?.productCode || "",
-          }, productImageMap),
+          }),
         })),
-    [happycallAnalytics, productImageMap]
+    [happycallAnalytics]
   );
 
   const happycallHeroCard = previousDayHappycallTopList[0] || null;
   const happycallMiniCards = previousDayHappycallTopList.slice(1, 5);
   const totalVisibleProducts = groupedPartners.reduce((sum, item) => sum + item.products.length, 0);
-  const imageRegistryProducts = useMemo(() => {
-    const keyword = normalizeText(imageRegisterSearch);
-    const flatList = groupedPartners.flatMap((group) =>
-      group.products.map((product) => {
-        const imageKey = makeProductImageMapKey({
-          productCode: product.productCode,
-          partner: group.partner,
-          productName: product.productName,
-        });
-        const customImageSrc = imageKey ? productImageMap[imageKey] || "" : "";
 
-        return {
-          partner: group.partner,
-          productCode: product.productCode,
-          productName: product.productName,
-          imageSrc: product.imageSrc || "",
-          customImageSrc,
-          hasCustomImage: !!customImageSrc,
-          hasVisibleImage: !!(product.imageSrc || ""),
-          totalQty: product.totalQty || 0,
-          imageKey,
-        };
-      })
-    );
-
-    return flatList
-      .filter((item) => {
-        if (!keyword) return true;
-        return (
-          normalizeText(item.productName).includes(keyword) ||
-          normalizeText(item.partner).includes(keyword) ||
-          String(item.productCode || "").includes(imageRegisterSearch.trim())
-        );
-      })
-      .sort((a, b) => {
-        const partnerDiff = String(a.partner || "").localeCompare(String(b.partner || ""), "ko");
-        if (partnerDiff !== 0) return partnerDiff;
-        return String(a.productName || "").localeCompare(String(b.productName || ""), "ko");
-      });
-  }, [groupedPartners, imageRegisterSearch, productImageMap]);
-
-  const buildInspectionPendingEntry = useCallback((product, nextDraft = {}) => {
-    const entityKey = makeEntityKey(currentJob?.job_key, product.productCode, product.partner);
-    const draftKey = `inspection||${product.partner}||${product.productCode}`;
-    const photoItems = serializePhotoItems(nextDraft.photoFiles);
-
-    return {
-      key: entityKey,
-      draftKey,
-      type: "inspection",
-      ?묒뾽湲곗??쇰삉?봀SV?앸퀎媛? currentJob?.job_key || "",
-      ?묒꽦?쇱떆: new Date().toISOString(),
-      ?곹뭹肄붾뱶: product.productCode,
-      ?곹뭹紐? product.productName,
-      ?묐젰?щ챸: product.partner,
-      ?꾩껜諛쒖＜?섎웾: product.totalQty || 0,
-      諛쒖＜?섎웾: product.totalQty || 0,
-      寃?덉닔?? parseQty(nextDraft.inspectionQty),
-      ?뚯넚?섎웾: pendingMap[entityKey]?.?뚯넚?섎웾 || 0,
-      援먰솚?섎웾: pendingMap[entityKey]?.援먰솚?섎웾 || 0,
-      ?쇳꽣紐? pendingMap[entityKey]?.?쇳꽣紐?|| "",
-      鍮꾧퀬: pendingMap[entityKey]?.鍮꾧퀬 || "",
-      ?됱궗?щ?: product.eventInfo?.?됱궗?щ? || "",
-      ?됱궗紐? product.eventInfo?.?됱궗紐?|| "",
-      photoItems,
-      ?ъ쭊?뚯씪ID紐⑸줉: photoItems.map((item) => item.fileId).join("\n"),
-      photoNames: photoItems.map((item) => item.fileName || item.name),
-    };
-  }, [currentJob?.job_key, pendingMap, serializePhotoItems]);
-
-  const buildMovementEntries = useCallback((product, centerName, nextDraft = {}) => {
-    const centerInfo = product.centers.find((item) => item.center === centerName);
-    if (!centerInfo || !currentJob?.job_key) {
-      return [];
-    }
-
-    const returnQty = parseQty(nextDraft.returnQty);
-    const exchangeQty = parseQty(nextDraft.exchangeQty);
-    const memo = String(nextDraft.memo || "").trim();
-    const photoItems = serializePhotoItems(nextDraft.photoFiles);
-    const entries = [];
-
-    if (returnQty > 0) {
-      entries.push({
-        key: makeMovementPendingKey("RETURN", currentJob.job_key, product.productCode, product.partner, centerName),
-        draftKey: `return||${product.partner}||${product.productCode}||${centerName}`,
-        type: "movement",
-        movementType: "RETURN",
-        ?묒뾽湲곗??쇰삉?봀SV?앸퀎媛? currentJob.job_key,
-        ?묒꽦?쇱떆: new Date().toISOString(),
-        ?곹뭹紐? product.productName,
-        ?곹뭹肄붾뱶: product.productCode,
-        ?쇳꽣紐? centerName,
-        ?묐젰?щ챸: product.partner,
-        諛쒖＜?섎웾: centerInfo.totalQty || 0,
-        ?됱궗?щ?: product.eventInfo?.?됱궗?щ? || "",
-        ?됱궗紐? product.eventInfo?.?됱궗紐?|| "",
-        泥섎━?좏삎: "?뚯넚",
-        ?뚯넚?섎웾: returnQty,
-        援먰솚?섎웾: 0,
-        qty: returnQty,
-        鍮꾧퀬: memo,
-        photoItems,
-        ?ъ쭊?뚯씪ID紐⑸줉: photoItems.map((item) => item.fileId).join("\n"),
-        photoNames: photoItems.map((item) => item.fileName || item.name),
-        ?꾩껜諛쒖＜?섎웾: product.totalQty || 0,
-      });
-    }
-
-    if (exchangeQty > 0) {
-      entries.push({
-        key: makeMovementPendingKey("EXCHANGE", currentJob.job_key, product.productCode, product.partner, centerName),
-        draftKey: `return||${product.partner}||${product.productCode}||${centerName}`,
-        type: "movement",
-        movementType: "EXCHANGE",
-        ?묒뾽湲곗??쇰삉?봀SV?앸퀎媛? currentJob.job_key,
-        ?묒꽦?쇱떆: new Date().toISOString(),
-        ?곹뭹紐? product.productName,
-        ?곹뭹肄붾뱶: product.productCode,
-        ?쇳꽣紐? centerName,
-        ?묐젰?щ챸: product.partner,
-        諛쒖＜?섎웾: centerInfo.totalQty || 0,
-        ?됱궗?щ?: product.eventInfo?.?됱궗?щ? || "",
-        ?됱궗紐? product.eventInfo?.?됱궗紐?|| "",
-        泥섎━?좏삎: "援먰솚",
-        ?뚯넚?섎웾: 0,
-        援먰솚?섎웾: exchangeQty,
-        qty: exchangeQty,
-        鍮꾧퀬: memo,
-        photoItems,
-        ?ъ쭊?뚯씪ID紐⑸줉: photoItems.map((item) => item.fileId).join("\n"),
-        photoNames: photoItems.map((item) => item.fileName || item.name),
-        ?꾩껜諛쒖＜?섎웾: product.totalQty || 0,
-      });
-    }
-
-    return entries;
-  }, [currentJob?.job_key, serializePhotoItems]);
-
-  const removeDraftPhoto = useCallback((draftKey, index) => {
-    const currentDraft = drafts[draftKey] || {};
-    const currentFiles = Array.isArray(currentDraft.photoFiles) ? currentDraft.photoFiles : [];
-    const currentNames = Array.isArray(currentDraft.photoNames) ? currentDraft.photoNames : [];
-    const nextPhotoFiles = currentFiles.filter((_, fileIndex) => fileIndex !== index);
-    const nextPhotoNames = currentNames.filter((_, fileIndex) => fileIndex !== index);
-    const nextDraft = {
-      ...currentDraft,
-      photoFiles: nextPhotoFiles,
-      photoNames: nextPhotoNames,
-    };
-
+  const updateDraft = (key, field, value) => {
     setDrafts((prev) => ({
       ...prev,
-      [draftKey]: nextDraft,
+      [key]: {
+        ...prev[key],
+        [field]: value,
+      },
     }));
-  }, [drafts]);
-
-  const uploadDraftPhotos = useCallback(async ({ draftKey, itemKey, baseName, files }) => {
-    const list = Array.isArray(files) ? files : [];
-    if (!list.length) return;
-
-    await runQueuedTask(uploadQueueRef, itemKey, async () => {
-      setItemStatuses([itemKey], "uploading");
-
-      try {
-        const encodedPhotos = await filesToBase64(list);
-        const result = await runWithRetry(
-          async () => {
-            const response = await fetch(SCRIPT_URL, {
-              method: "POST",
-              headers: { "Content-Type": "text/plain;charset=utf-8" },
-              body: JSON.stringify({
-                action: "uploadPhotos",
-                payload: {
-                  itemKey,
-                  productName: baseName,
-                  photos: encodedPhotos,
-                },
-              }),
-            });
-            const payload = await response.json();
-            if (!response.ok || payload.ok === false) {
-              throw new Error(payload.message || "?ъ쭊 ?낅줈???ㅽ뙣");
-            }
-            return payload;
-          },
-          async () => {
-            setItemStatuses([itemKey], "retrying");
-          }
-        );
-
-        const uploadedPhotos = (Array.isArray(result?.data?.photos) ? result.data.photos : []).map(createUploadedPhotoItem);
-        setDrafts((prev) => {
-          const currentDraft = prev[draftKey] || {};
-          const previousPhotos = serializePhotoItems(currentDraft.photoFiles);
-          const nextPhotos = [...previousPhotos, ...uploadedPhotos];
-          const nextDraft = {
-            ...currentDraft,
-            photoFiles: nextPhotos,
-            photoNames: nextPhotos.map((photo) => photo.fileName || photo.name),
-          };
-          return {
-            ...prev,
-            [draftKey]: nextDraft,
-          };
-        });
-        setItemStatuses([itemKey], "pending");
-      } catch (err) {
-        retryMapRef.current[itemKey] = {
-          kind: "upload",
-          draftKey,
-          itemKey,
-          baseName,
-        };
-        setItemStatuses([itemKey], "failed");
-        setError(err.message || "?ъ쭊 ?낅줈???ㅽ뙣");
-      }
-    });
-  }, [runQueuedTask, runWithRetry, serializePhotoItems]);
+  };
 
   const cancelMovementEventByRow = async (rowNumber) => {
     const response = await fetch(SCRIPT_URL, {
@@ -2302,79 +1343,7 @@ function App() {
 
     const result = await response.json();
     if (!response.ok || result.ok === false) {
-      throw new Error(result.message || "?댁뿭 ??젣 ?ㅽ뙣");
-    }
-
-    return result;
-  };
-
-  const openImageRegisterPicker = (product) => {
-    const imageKey = makeProductImageMapKey({
-      productCode: product?.productCode || "",
-      partner: product?.partner || "",
-      productName: product?.productName || "",
-    });
-    setSelectedImageTargetKey(imageKey);
-    imageRegisterInputRef.current?.click();
-  };
-
-  const handleProductImageUpload = async (e) => {
-    const file = e.target.files?.[0];
-    if (!file || !selectedImageTargetKey) return;
-
-    const targetProduct = imageRegistryProducts.find((item) => item.imageKey === selectedImageTargetKey) ||
-      groupedPartners.flatMap((group) => group.products.map((product) => ({
-        partner: group.partner,
-        productCode: product.productCode,
-        productName: product.productName,
-        imageKey: makeProductImageMapKey({
-          productCode: product.productCode,
-          partner: group.partner,
-          productName: product.productName,
-        }),
-      }))).find((item) => item.imageKey === selectedImageTargetKey);
-
-    if (!targetProduct) {
-      setError("?깅줉 ????곹뭹??李얠? 紐삵뻽?듬땲??");
-      if (e.target) e.target.value = "";
-      return;
-    }
-
-    try {
-      setUploadingImageKey(selectedImageTargetKey);
-      setError("");
-      setMessage("");
-
-      const encoded = await fileToBase64(file);
-      const response = await fetch(SCRIPT_URL, {
-        method: "POST",
-        headers: { "Content-Type": "text/plain;charset=utf-8" },
-        body: JSON.stringify({
-          action: "saveProductImageMapping",
-          payload: {
-            productCode: targetProduct.productCode || "",
-            partnerName: targetProduct.partner || "",
-            productName: targetProduct.productName || "",
-            photo: encoded,
-          },
-        }),
-      });
-
-      const result = await response.json();
-      if (!response.ok || result.ok === false) {
-        throw new Error(result.message || "?대?吏 ?깅줉 ?ㅽ뙣");
-      }
-
-      const nextMap = buildProductImageMapFromRows(result.product_images);
-      setProductImageMap(nextMap);
-      setToast("?대?吏 ?깅줉 ?꾨즺");
-      setMessage("?곹뭹 ?대?吏媛 ?깅줉?섏뿀?듬땲??");
-    } catch (err) {
-      setError(err.message || "?대?吏 ?깅줉 ?ㅽ뙣");
-    } finally {
-      setUploadingImageKey("");
-      setSelectedImageTargetKey("");
-      if (e.target) e.target.value = "";
+      throw new Error(result.message || "내역 삭제 실패");
     }
   };
 
@@ -2382,106 +1351,70 @@ function App() {
     const rows = Object.values(pendingRef.current || {});
     if (!rows.length || savingRef.current) return;
 
+    const targetKeys = rows.map((row) => row.key);
+
     clearFlushTimer();
     savingRef.current = true;
     setSaving(true);
+    setItemStatuses(targetKeys, "saving");
 
     try {
-      const tasks = rows.map((row) =>
-        runQueuedTask(saveQueueRef, row.key, () =>
-          runWithSaveSlot(async () => {
-            const { key, draftKey, photoItems, ...rest } = row;
-            const statusKeys = [key, draftKey].filter(Boolean);
+      const requestRows = [];
 
-            try {
-              if (draftKey && uploadQueueRef.current[draftKey]) {
-                await uploadQueueRef.current[draftKey];
-              }
-              const latestDraft = draftKey ? draftsRef.current[draftKey] || {} : {};
-              const latestPhotoItems = serializePhotoItems(latestDraft.photoFiles);
-              setItemStatuses(statusKeys, "saving");
-              const response = await runWithRetry(
-                async () => {
-                  const saveResponse = await fetch(SCRIPT_URL, {
-                    method: "POST",
-                    headers: { "Content-Type": "text/plain;charset=utf-8" },
-                    body: JSON.stringify({
-                      action: "saveBatch",
-                      rows: [
-                        {
-                          ...rest,
-                          ?ъ쭊?뚯씪ID紐⑸줉: (latestPhotoItems.length ? latestPhotoItems : Array.isArray(photoItems) ? photoItems : [])
-                            .map((item) => item.fileId)
-                            .join("\n")
-                            || rest.?ъ쭊?뚯씪ID紐⑸줉
-                            || "",
-                          photoItems: latestPhotoItems.length ? latestPhotoItems : photoItems,
-                          photoNames: (latestPhotoItems.length ? latestPhotoItems : Array.isArray(photoItems) ? photoItems : [])
-                            .map((item) => item.fileName || item.name),
-                        },
-                      ],
-                    }),
-                  });
-                  const payload = await saveResponse.json();
-                  if (!saveResponse.ok || payload.ok === false) {
-                    throw new Error(payload.message || "????ㅽ뙣");
-                  }
-                  return payload;
-                },
-                async () => {
-                  setItemStatuses(statusKeys, "retrying");
-                }
-              );
+      for (const row of rows) {
+        const { key, photoFile, photoFiles, ...rest } = row;
+        let photosPayload = [];
 
-              removePendingKeys([key]);
-              retryMapRef.current[key] = null;
-              setItemStatuses(statusKeys, "saved");
-              if (draftKey) {
-                setDrafts((prev) => ({
-                  ...prev,
-                  [draftKey]: {
-                    ...(prev[draftKey] || {}),
-                    photoFiles: [],
-                    photoNames: [],
-                  },
-                }));
-              }
+        if (Array.isArray(photoFiles) && photoFiles.length) {
+          photosPayload = await filesToBase64(photoFiles);
+        } else if (photoFile) {
+          const singlePhoto = await fileToBase64(photoFile);
+          photosPayload = singlePhoto ? [singlePhoto] : [];
+        }
 
-              if (Array.isArray(response.records)) {
-                const nextRows = [...response.records].sort((a, b) =>
-                  String(b.?묒꽦?쇱떆 || "").localeCompare(String(a.?묒꽦?쇱떆 || ""), "ko")
-                );
-                setHistoryRows(nextRows);
-              }
+        requestRows.push({
+          ...rest,
+          사진들: photosPayload,
+        });
+      }
 
-              if (Array.isArray(response.inspectionRowsSnapshot)) {
-                setInspectionRows(response.inspectionRowsSnapshot);
-              } else if (Array.isArray(response.inspectionRows)) {
-                setInspectionRows(response.inspectionRows);
-              }
+      const response = await fetch(SCRIPT_URL, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
+        body: JSON.stringify({
+          action: "saveBatch",
+          rows: requestRows,
+        }),
+      });
 
-              if (response.summary) {
-                setDashboardSummary(response.summary);
-              }
+      const result = await response.json();
+      if (!response.ok || result.ok === false) {
+        throw new Error(result.message || "배치 저장 실패");
+      }
 
-              setToast("????꾨즺");
-            } catch (err) {
-              retryMapRef.current[key] = row;
-              setItemStatuses(statusKeys, "failed");
-              setError(err.message || "????ㅽ뙣");
-            }
-          })
-        )
-      );
+      removePendingKeys(targetKeys);
+      setItemStatuses(targetKeys, "saved");
 
-      await Promise.allSettled(tasks);
+      if (Array.isArray(result.records)) {
+        const nextRows = [...result.records].sort((a, b) =>
+          String(b.작성일시 || "").localeCompare(String(a.작성일시 || ""), "ko")
+        );
+        setHistoryRows(nextRows);
+      }
+
+      if (result.summary) {
+        setDashboardSummary(result.summary);
+      }
+
+      setToast("저장 완료");
     } catch (err) {
-      setError(err.message || "???泥섎━ ?ㅽ뙣");
+      setItemStatuses(targetKeys, "failed");
+      setError(err.message || "배치 저장 실패");
     } finally {
       savingRef.current = false;
       setSaving(false);
     }
-  }, [clearFlushTimer, removePendingKeys, runQueuedTask, runWithRetry, runWithSaveSlot, serializePhotoItems]);
+  }, [clearFlushTimer]);
 
   useEffect(() => {
     pendingRef.current = pendingMap;
@@ -2514,37 +1447,43 @@ function App() {
     const draftKey = `inspection||${product.partner}||${product.productCode}`;
     const qty = parseQty(drafts[draftKey]?.inspectionQty);
     const photoFiles = Array.isArray(drafts[draftKey]?.photoFiles) ? drafts[draftKey].photoFiles : [];
+    const entityKey = makeEntityKey(currentJob?.job_key, product.productCode, product.partner);
 
-    if (qty <= 0 && !photoFiles.length) {
-      setError("寃?덉닔???먮뒗 ?ъ쭊???낅젰??二쇱꽭??");
+    if (qty <= 0) {
+      setError("검품수량을 입력해 주세요.");
       return;
     }
 
     setError("");
     setMessage("");
-    const nextEntry = buildInspectionPendingEntry(product, drafts[draftKey] || {});
-
-    console.log("[saveInspectionQtySimple] pending entry", {
-      jobKey: nextEntry.?묒뾽湲곗??쇰삉?봀SV?앸퀎媛?
-      productCode: nextEntry.?곹뭹肄붾뱶,
-      partnerName: nextEntry.?묐젰?щ챸,
-      centerName: nextEntry.?쇳꽣紐?
-      inspectionQty: nextEntry.寃?덉닔??
-      returnQty: nextEntry.?뚯넚?섎웾,
-      exchangeQty: nextEntry.援먰솚?섎웾,
-      totalQty: nextEntry.?꾩껜諛쒖＜?섎웾,
-      orderQty: nextEntry.諛쒖＜?섎웾,
-      photosCount: Array.isArray(nextEntry.photoItems) ? nextEntry.photoItems.length : 0,
-    });
-
-    upsertPendingEntries([nextEntry]);
-    flushPending();
-    setToast("??λ릺?덉뒿?덈떎.");
+    upsertPendingEntries([
+      {
+        key: entityKey,
+        type: "inspection",
+        작업기준일또는CSV식별값: currentJob?.job_key || "",
+        작성일시: new Date().toISOString(),
+        상품코드: product.productCode,
+        상품명: product.productName,
+        협력사명: product.partner,
+        전체발주수량: product.totalQty || 0,
+        발주수량: product.totalQty || 0,
+        검품수량: qty,
+        회송수량: pendingMap[entityKey]?.회송수량 || 0,
+        교환수량: pendingMap[entityKey]?.교환수량 || 0,
+        센터명: pendingMap[entityKey]?.센터명 || "",
+        비고: pendingMap[entityKey]?.비고 || "",
+        행사여부: product.eventInfo?.행사여부 || "",
+        행사명: product.eventInfo?.행사명 || "",
+        photoFiles: photoFiles.length ? photoFiles : pendingMap[entityKey]?.photoFiles || [],
+      },
+    ]);
+    setToast("저장되었습니다.");
   };
 
   const saveReturnExchange = async (product, centerName) => {
-    if (!product.centers.find((item) => item.center === centerName)) {
-      setError("?쇳꽣瑜??좏깮??二쇱꽭??");
+    const centerInfo = product.centers.find((item) => item.center === centerName);
+    if (!centerInfo) {
+      setError("센터를 선택해 주세요.");
       return;
     }
 
@@ -2552,67 +1491,115 @@ function App() {
     const draft = drafts[draftKey] || {};
     const returnQty = parseQty(draft.returnQty);
     const exchangeQty = parseQty(draft.exchangeQty);
+    const memo = String(draft.memo || "").trim();
+    const photoFiles = Array.isArray(draft.photoFiles) ? draft.photoFiles : [];
 
     if (!currentJob?.job_key) {
-      setError("???媛?ν븳 ?묒뾽 湲곗? CSV媛 ?놁뒿?덈떎.");
+      setError("저장 가능한 작업 기준 CSV가 없습니다.");
       return;
     }
 
-    if (returnQty <= 0 && exchangeQty <= 0) {
-      setError("?뚯넚?섎웾 ?먮뒗 援먰솚?섎웾???낅젰??二쇱꽭??");
+    if (returnQty <= 0 && exchangeQty <= 0 && !memo && photoFiles.length === 0) {
+      setError("회송수량, 교환수량, 비고, 사진 중 하나 이상 입력해 주세요.");
       return;
     }
 
     setError("");
     setMessage("");
 
-    const movementEntries = buildMovementEntries(product, centerName, draft);
+    const movementEntries = [];
 
-    console.log(
-      "[saveReturnExchange] pending entries",
-      movementEntries.map((entry) => ({
-        movementType: entry.movementType,
-        jobKey: entry.?묒뾽湲곗??쇰삉?봀SV?앸퀎媛?
-        productCode: entry.?곹뭹肄붾뱶,
-        partnerName: entry.?묐젰?щ챸,
-        centerName: entry.?쇳꽣紐?
-        returnQty: entry.?뚯넚?섎웾,
-        exchangeQty: entry.援먰솚?섎웾,
-        totalQty: entry.?꾩껜諛쒖＜?섎웾,
-        orderQty: entry.諛쒖＜?섎웾,
-        photosCount: Array.isArray(entry.photoItems) ? entry.photoItems.length : 0,
-      }))
-    );
+    if (returnQty > 0) {
+      movementEntries.push({
+        key: makeMovementPendingKey(
+          "RETURN",
+          currentJob?.job_key,
+          product.productCode,
+          product.partner,
+          centerName
+        ),
+        type: "movement",
+        movementType: "RETURN",
+        작업기준일또는CSV식별값: currentJob?.job_key || "",
+        작성일시: new Date().toISOString(),
+        상품명: product.productName,
+        상품코드: product.productCode,
+        센터명: centerName,
+        협력사명: product.partner,
+        발주수량: centerInfo.totalQty || 0,
+        행사여부: product.eventInfo?.행사여부 || "",
+        행사명: product.eventInfo?.행사명 || "",
+        처리유형: "회송",
+        회송수량: returnQty,
+        교환수량: 0,
+        qty: returnQty,
+        비고: memo,
+        photoFiles,
+        전체발주수량: product.totalQty || 0,
+      });
+    }
+
+    if (exchangeQty > 0) {
+      movementEntries.push({
+        key: makeMovementPendingKey(
+          "EXCHANGE",
+          currentJob?.job_key,
+          product.productCode,
+          product.partner,
+          ""
+        ),
+        type: "movement",
+        movementType: "EXCHANGE",
+        작업기준일또는CSV식별값: currentJob?.job_key || "",
+        작성일시: new Date().toISOString(),
+        상품명: product.productName,
+        상품코드: product.productCode,
+        센터명: "",
+        협력사명: product.partner,
+        발주수량: product.totalQty || 0,
+        행사여부: product.eventInfo?.행사여부 || "",
+        행사명: product.eventInfo?.행사명 || "",
+        처리유형: "교환",
+        회송수량: 0,
+        교환수량: exchangeQty,
+        qty: exchangeQty,
+        비고: memo,
+        photoFiles,
+        전체발주수량: product.totalQty || 0,
+      });
+    }
 
     upsertPendingEntries(movementEntries);
-    flushPending();
-    setToast("??λ릺?덉뒿?덈떎.");
+    setDrafts((prev) => ({
+      ...prev,
+      [draftKey]: {
+        returnQty: "",
+        exchangeQty: "",
+        memo: "",
+        photoFiles: [],
+        photoNames: [],
+      },
+    }));
+    setToast("저장되었습니다.");
   };
 
   const deleteHistoryRecord = async (record) => {
     const rowNumber = Number(record.__rowNumber || 0);
     if (!rowNumber) {
-      setError("??젣?????뺣낫瑜?李얠? 紐삵뻽?듬땲??");
+      setError("삭제할 행 정보를 찾지 못했습니다.");
       return;
     }
 
-    const ok = window.confirm("???댁뿭????젣?좉퉴??");
+    const ok = window.confirm("이 내역을 삭제할까요?");
     if (!ok) return;
 
     try {
       setDeletingRowNumber(rowNumber);
-      const result = await cancelMovementEventByRow(rowNumber);
-      if (Array.isArray(result?.records)) {
-        setHistoryRows(result.records);
-      } else {
-        setHistoryRows((prev) => prev.filter((item) => Number(item.__rowNumber) !== rowNumber));
-      }
-      if (Array.isArray(result?.inspectionRows)) {
-        setInspectionRows(result.inspectionRows);
-      }
-      setToast("??젣 ?꾨즺");
+      await cancelMovementEventByRow(rowNumber);
+      setHistoryRows((prev) => prev.filter((item) => Number(item.__rowNumber) !== rowNumber));
+      setToast("삭제 완료");
     } catch (err) {
-      setError(err.message || "?댁뿭 ??젣 ?ㅽ뙣");
+      setError(err.message || "내역 삭제 실패");
     } finally {
       setDeletingRowNumber(null);
     }
@@ -2635,24 +1622,11 @@ function App() {
 
       const result = await response.json();
       if (!response.ok || result.ok === false) {
-        throw new Error(result.message || "ZIP ?ㅼ슫濡쒕뱶 ?ㅽ뙣");
-      }
-
-      if (result.downloadUrl) {
-        const link = document.createElement("a");
-        link.href = result.downloadUrl;
-        link.target = "_blank";
-        link.rel = "noreferrer";
-        link.download = result.fileName || "";
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-        setToast("ZIP ?ㅼ슫濡쒕뱶 以鍮??꾨즺");
-        return;
+        throw new Error(result.message || "ZIP 다운로드 실패");
       }
 
       if (!result.zipBase64) {
-        setToast("?ㅼ슫濡쒕뱶 媛?ν븳 ?ъ쭊???놁뒿?덈떎.");
+        setToast("다운로드 가능한 사진이 없습니다.");
         return;
       }
 
@@ -2661,10 +1635,10 @@ function App() {
       const href = URL.createObjectURL(blob);
       const fileName = result.fileName ||
         (mode === "movement"
-          ? `?뚯넚_援먰솚_?ъ쭊_${formatDateForFileName()}.zip`
+          ? `회송_교환_사진_${formatDateForFileName()}.zip`
           : mode === "inspection"
-          ? `寃?덉궗吏?${formatDateForFileName()}.zip`
-          : `李멸퀬?ъ쭊_${formatDateForFileName()}.zip`);
+          ? `검품사진_${formatDateForFileName()}.zip`
+          : `참고사진_${formatDateForFileName()}.zip`);
 
       link.href = href;
       link.download = fileName;
@@ -2672,9 +1646,9 @@ function App() {
       link.click();
       link.remove();
       URL.revokeObjectURL(href);
-      setToast("ZIP ?ㅼ슫濡쒕뱶 ?꾨즺");
+      setToast("ZIP 다운로드 완료");
     } catch (err) {
-      setError(err.message || "ZIP ?ㅼ슫濡쒕뱶 ?ㅽ뙣");
+      setError(err.message || "ZIP 다운로드 실패");
     } finally {
       setZipDownloading("");
     }
@@ -2682,12 +1656,12 @@ function App() {
 
   const resetCurrentJobInputs = async () => {
     if (!currentJob?.job_key) {
-      setError("珥덇린?뷀븷 ?꾩옱 ?묒뾽???놁뒿?덈떎.");
+      setError("초기화할 현재 작업이 없습니다.");
       return;
     }
 
     if (!adminPassword.trim()) {
-      setError("愿由ъ옄 鍮꾨?踰덊샇瑜??낅젰??二쇱꽭??");
+      setError("관리자 비밀번호를 입력해 주세요.");
       return;
     }
 
@@ -2710,7 +1684,7 @@ function App() {
 
       const result = await response.json();
       if (!response.ok || result.ok === false) {
-        throw new Error(result.message || "珥덇린???ㅽ뙣");
+        throw new Error(result.message || "초기화 실패");
       }
 
       clearFlushTimer();
@@ -2721,16 +1695,15 @@ function App() {
       setItemStatusMap({});
       setDrafts({});
       setHistoryRows(Array.isArray(result.records) ? result.records : []);
-      setInspectionRows(Array.isArray(result.inspectionRows) ? result.inspectionRows : []);
       setShowAdminReset(false);
       setAdminPassword("");
       await loadBootstrap();
       if (result.summary) {
         setDashboardSummary(result.summary);
       }
-      setToast("?꾩옱 ?묒뾽 ?낅젰 ?곗씠??珥덇린???꾨즺");
+      setToast("현재 작업 입력 데이터 초기화 완료");
     } catch (err) {
-      setError(err.message || "珥덇린???ㅽ뙣");
+      setError(err.message || "초기화 실패");
     } finally {
       setAdminResetting(false);
     }
@@ -2749,27 +1722,27 @@ function App() {
 
       const rawRows = (parsedRows || [])
         .map((row) => ({
-          ?쒕ぉ: clampText(row["?쒕ぉ"] || row["subject"] || "", 300),
-          蹂몃Ц: clampText(row["蹂몃Ц"] || row["body"] || row["?댁슜(?뷀샇??"] || "", 8000),
-          硫붿씪ID: clampText(row["?명꽣??硫붿떆吏 ID"] || row["硫붿씪ID"] || row["?묒닔踰덊샇"] || "", 200),
-          蹂대궦?щ엺: clampText(row["蹂대궦?щ엺:(?대쫫)"] || row["senderName"] || "", 200),
-          ?묒닔?쇱떆: clampText(row["?묒닔?쇱떆"] || row["receivedAt"] || "", 100),
-          ?뚰듃?덉궗: clampText(row["泥섎━?뚰듃?덉궗"] || row["?뚰듃?덉궗"] || row["?묐젰?щ챸"] || "", 200),
-          ?μ븷?좏삎: clampText(
-            row["?μ븷?좏삎(??"] || row["?μ븷?좏삎(以?"] || row["?μ븷?좏삎(?)"] || row["?μ븷?좏삎"] || "",
+          제목: clampText(row["제목"] || row["subject"] || "", 300),
+          본문: clampText(row["본문"] || row["body"] || row["내용(암호화)"] || "", 8000),
+          메일ID: clampText(row["인터넷 메시지 ID"] || row["메일ID"] || row["접수번호"] || "", 200),
+          보낸사람: clampText(row["보낸사람:(이름)"] || row["senderName"] || "", 200),
+          접수일시: clampText(row["접수일시"] || row["receivedAt"] || "", 100),
+          파트너사: clampText(row["처리파트너사"] || row["파트너사"] || row["협력사명"] || "", 200),
+          장애유형: clampText(
+            row["장애유형(소)"] || row["장애유형(중)"] || row["장애유형(대)"] || row["장애유형"] || "",
             200
           ),
         }))
-        .filter((row) => String(row.?쒕ぉ || "").trim() || String(row.蹂몃Ц || "").trim());
+        .filter((row) => String(row.제목 || "").trim() || String(row.본문 || "").trim());
 
       const dedupedMap = new Map();
       rawRows.forEach((row) => {
         const dedupeKey = [
-          String(row.硫붿씪ID || "").trim(),
-          String(row.?뚰듃?덉궗 || "").trim(),
-          String(row.?묒닔?쇱떆 || "").trim(),
-          String(row.?쒕ぉ || "").trim(),
-          String(row.蹂몃Ц || "").trim().slice(0, 300),
+          String(row.메일ID || "").trim(),
+          String(row.파트너사 || "").trim(),
+          String(row.접수일시 || "").trim(),
+          String(row.제목 || "").trim(),
+          String(row.본문 || "").trim().slice(0, 300),
         ].join("||");
         dedupedMap.set(dedupeKey, row);
       });
@@ -2778,7 +1751,7 @@ function App() {
       const skippedCount = Math.max(0, rawRows.length - rows.length);
 
       if (!rows.length) {
-        throw new Error("?댄뵾肄?CSV?먯꽌 媛?몄삱 ???덈뒗 ?됱씠 ?놁뒿?덈떎.");
+        throw new Error("해피콜 CSV에서 가져올 수 있는 행이 없습니다.");
       }
 
       const batchSize = rows.length >= 1500 ? 500 : 300;
@@ -2792,7 +1765,7 @@ function App() {
         const batchNumber = Math.floor(index / batchSize) + 1;
         const processedCount = Math.min(index + batchRows.length, rows.length);
         setMessage(
-          `?댄뵾肄?CSV 泥섎━ 以?.. ${batchNumber}/${totalBatches} 諛곗튂 (${processedCount} / ${rows.length})`
+          `해피콜 CSV 처리 중... ${batchNumber}/${totalBatches} 배치 (${processedCount} / ${rows.length})`
         );
 
         const response = await fetch(SCRIPT_URL, {
@@ -2807,7 +1780,7 @@ function App() {
         const result = await response.json();
         if (!response.ok || result.ok === false) {
           throw new Error(
-            result.message || `?댄뵾肄?CSV 媛?몄삤湲곗뿉 ?ㅽ뙣?덉뒿?덈떎. (${batchNumber}/${totalBatches} 諛곗튂)`
+            result.message || `해피콜 CSV 가져오기에 실패했습니다. (${batchNumber}/${totalBatches} 배치)`
           );
         }
 
@@ -2819,13 +1792,13 @@ function App() {
       setHappycallAnalytics(lastResult?.happycall || {});
       setMessage("");
       setToast(
-        `?댄뵾肄?CSV 諛섏쁺 ?꾨즺 쨌 ?좉퇋 ${insertedTotal}嫄?쨌 媛깆떊 ${updatedTotal}嫄?{
-          skippedCount > 0 ? ` 쨌 以묐났 ?쒖쇅 ${skippedCount}嫄? : ""
+        `해피콜 CSV 반영 완료 · 신규 ${insertedTotal}건 · 갱신 ${updatedTotal}건${
+          skippedCount > 0 ? ` · 중복 제외 ${skippedCount}건` : ""
         }`
       );
     } catch (err) {
       setError(
-        `${err.message || "?댄뵾肄?CSV 媛?몄삤湲곗뿉 ?ㅽ뙣?덉뒿?덈떎."} 媛숈? CSV瑜??ㅼ떆 ?щ━硫??댁뼱??諛섏쁺?⑸땲??`
+        `${err.message || "해피콜 CSV 가져오기에 실패했습니다."} 같은 CSV를 다시 올리면 이어서 반영됩니다.`
       );
     } finally {
       setUploadingHappycallCsv(false);
@@ -2844,31 +1817,24 @@ function App() {
         onChange={handleCsvUpload}
         style={styles.hiddenInput}
       />
-        <input
-          ref={happycallFileInputRef}
-          type="file"
-          accept=".csv,.xls,.xlsx"
-          onChange={handleHappycallCsvUpload}
-          style={styles.hiddenInput}
-        />
-        <input
-          ref={imageRegisterInputRef}
-          type="file"
-          accept="image/*"
-          onChange={handleProductImageUpload}
-          style={styles.hiddenInput}
-        />
+      <input
+        ref={happycallFileInputRef}
+        type="file"
+        accept=".csv,.xls,.xlsx"
+        onChange={handleHappycallCsvUpload}
+        style={styles.hiddenInput}
+      />
 
       <div style={styles.headerCard}>
         <div style={styles.headerTopRow}>
           <div style={styles.brandBlock}>
             <div style={styles.brandRow}>
-              <img src="/assets/gs-logo.svg" alt="GS 濡쒓퀬" style={styles.brandLogo} />
-              <h1 style={styles.title}>?좎꽑媛뺥솕吏?먰? 寃???쒖뒪??/h1>
+              <img src="/assets/gs-logo.svg" alt="GS 로고" style={styles.brandLogo} />
+              <h1 style={styles.title}>GS신선강화지원단 검품 시스템</h1>
             </div>
             <div style={styles.headerLinkRow}>
               <a href={worksheetUrl || "#"} target="_blank" rel="noreferrer" style={styles.headerLink}>
-                {worksheetUrl || "?뚰겕?쒗듃 URL ?놁쓬"}
+                {worksheetUrl || "워크시트 URL 없음"}
               </a>
               <button
                 type="button"
@@ -2876,18 +1842,18 @@ function App() {
                   if (!worksheetUrl) return;
                   try {
                     await navigator.clipboard.writeText(worksheetUrl);
-                    setToast("?뚰겕?쒗듃 留곹겕 蹂듭궗 ?꾨즺");
+                    setToast("워크시트 링크 복사 완료");
                   } catch (_) {
-                    setError("?뚰겕?쒗듃 留곹겕 蹂듭궗 ?ㅽ뙣");
+                    setError("워크시트 링크 복사 실패");
                   }
                 }}
                 style={styles.copyButton}
               >
-                蹂듭궗
+                복사
               </button>
             </div>
           </div>
-          <div style={styles.headerModeBadge}>{mode === "inspection" ? "寃??紐⑤뱶" : "?뚯넚/援먰솚 紐⑤뱶"}</div>
+          <div style={styles.headerModeBadge}>{mode === "inspection" ? "검품 모드" : "회송/교환 모드"}</div>
         </div>
         <div style={styles.quickActionGrid}>
           <button
@@ -2895,16 +1861,16 @@ function App() {
             onClick={() => setMode("inspection")}
             style={{ ...styles.quickActionCard, ...(mode === "inspection" ? styles.quickActionCardActive : {}) }}
           >
-            <span style={styles.quickActionIcon}>?뵊</span>
-            <span style={styles.quickActionText}>寃??/span>
+            <span style={styles.quickActionIcon}>🔎</span>
+            <span style={styles.quickActionText}>검품</span>
           </button>
           <button
             type="button"
             onClick={() => setMode("return")}
             style={{ ...styles.quickActionCard, ...(mode === "return" ? styles.quickActionCardActive : {}) }}
           >
-            <span style={styles.quickActionIcon}>?벀</span>
-            <span style={styles.quickActionText}>?뚯넚</span>
+            <span style={styles.quickActionIcon}>📦</span>
+            <span style={styles.quickActionText}>회송</span>
           </button>
           <button
             type="button"
@@ -2914,8 +1880,8 @@ function App() {
             }}
             style={styles.quickActionCard}
           >
-            <span style={styles.quickActionIcon}>?뱞</span>
-            <span style={styles.quickActionText}>?댁뿭</span>
+            <span style={styles.quickActionIcon}>📄</span>
+            <span style={styles.quickActionText}>내역</span>
           </button>
         </div>
       </div>
@@ -2923,12 +1889,12 @@ function App() {
       <div style={styles.panel}>
         <div style={styles.csvHeaderRow}>
           <div>
-            <div style={styles.sectionTitle}>CSV ?낅줈??/div>
+            <div style={styles.sectionTitle}>CSV 업로드</div>
             <div style={styles.metaText}>
-              ?꾩옱 ?묒뾽: {currentFileName || "?낅줈?쒕맂 ?뚯씪 ?놁쓬"}
+              현재 작업: {currentFileName || "업로드된 파일 없음"}
             </div>
             <div style={styles.metaText}>
-              ?뚯씪 ?섏젙?쇱옄: {currentFileModifiedAt ? formatDateTime(currentFileModifiedAt) : "-"}
+              파일 수정일자: {currentFileModifiedAt ? formatDateTime(currentFileModifiedAt) : "-"}
             </div>
           </div>
           <div style={styles.csvActionRow}>
@@ -2937,7 +1903,7 @@ function App() {
               onClick={() => fileInputRef.current?.click()}
               style={styles.primaryButton}
             >
-              {uploadingCsv ? "泥섎━ 以?.." : "?뱞 寃??CSV ?낅줈??}
+              {uploadingCsv ? "처리 중..." : "📄 검품 CSV 업로드"}
             </button>
             <button
               type="button"
@@ -2948,19 +1914,7 @@ function App() {
                 opacity: uploadingHappycallCsv ? 0.7 : 1,
               }}
             >
-              {uploadingHappycallCsv ? "泥섎━ 以?.." : "?뾺 ?댄뵾肄??낅줈??}
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setError("");
-                setMessage("");
-                setImageRegisterSearch("");
-                setShowImageRegister(true);
-              }}
-              style={styles.secondaryButton}
-            >
-              ?뼹 ?대?吏 ?깅줉
+              {uploadingHappycallCsv ? "처리 중..." : "🗂 해피콜 업로드"}
             </button>
             <button
               type="button"
@@ -2971,7 +1925,7 @@ function App() {
               }}
               style={styles.secondaryButton}
             >
-              ?뫀 愿由ъ옄 珥덇린??
+              👤 관리자 초기화
             </button>
           </div>
         </div>
@@ -2983,11 +1937,11 @@ function App() {
             ref={searchInputRef}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="?곹뭹紐?/ ?곹뭹肄붾뱶 / ?묐젰??寃??
+            placeholder="상품명 / 상품코드 / 협력사 검색"
             style={styles.searchInput}
           />
-          <button type="button" onClick={() => setIsScannerOpen(true)} style={styles.scanButton} aria-label="諛붿퐫???ㅼ틪">
-            <span style={styles.scanIcon}>?ㅼ틪</span>
+          <button type="button" onClick={() => setIsScannerOpen(true)} style={styles.scanButton} aria-label="바코드 스캔">
+            <span style={styles.scanIcon}>스캔</span>
           </button>
         </div>
       </div>
@@ -2995,9 +1949,9 @@ function App() {
       {(bootLoading || uploadingCsv || error || message) && (
         <div style={error ? styles.errorBox : styles.infoBox}>
           {bootLoading
-            ? "珥덇린 ?곗씠?곕? 遺덈윭?ㅻ뒗 以?.."
+            ? "초기 데이터를 불러오는 중..."
             : uploadingCsv
-            ? "CSV 泥섎━ 以?.."
+            ? "CSV 처리 중..."
             : error || message}
         </div>
       )}
@@ -3005,13 +1959,13 @@ function App() {
       <div style={styles.panel}>
         <div style={styles.happycallHeader}>
           <div>
-            <div style={styles.sectionTitle}>?꾩씪 ?댄뵾肄?TOP 5 {totalVisibleProducts ? `(${totalVisibleProducts}嫄?` : ""}</div>
-            <div style={styles.heroSubtext}>?꾩씪 ?묒닔 ?댄뵾肄?湲곗?</div>
+            <div style={styles.sectionTitle}>전일 해피콜 TOP 5 {totalVisibleProducts ? `(${totalVisibleProducts}건)` : ""}</div>
+            <div style={styles.heroSubtext}>전일 접수 해피콜 기준</div>
           </div>
         </div>
 
         {previousDayHappycallTopList.length === 0 ? (
-          <div style={styles.emptyBox}>?꾩씪 ?댄뵾肄??곗씠?곌? ?놁뒿?덈떎.</div>
+          <div style={styles.emptyBox}>전일 해피콜 데이터가 없습니다.</div>
         ) : (
           <div style={styles.happycallShowcase}>
             {happycallHeroCard ? (
@@ -3023,7 +1977,7 @@ function App() {
                   </div>
                   <div style={styles.heroTopName}>{happycallHeroCard.productName}</div>
                   <div style={styles.heroTopMeta}>
-                    {happycallHeroCard.count.toLocaleString("ko-KR")}嫄?쨌 {formatPercent(happycallHeroCard.share)}
+                    {happycallHeroCard.count.toLocaleString("ko-KR")}건 · {formatPercent(happycallHeroCard.share)}
                   </div>
                   <div style={styles.heroProgressRow}>
                     <div style={styles.heroProgressTrack}>
@@ -3039,18 +1993,13 @@ function App() {
                 </div>
                 <div style={styles.heroImageFrame}>
                   {happycallHeroCard.imageSrc ? (
-                    <ProductImage
-                      product={{
-                        productName: happycallHeroCard.productName,
-                        partner: happycallHeroCard.partnerName,
-                        productCode: happycallHeroCard.productCode,
-                      }}
+                    <img
                       src={happycallHeroCard.imageSrc}
                       alt={happycallHeroCard.productName}
                       style={styles.heroImage}
                     />
                   ) : (
-                    <div style={styles.heroFallbackImage}>?벀</div>
+                    <div style={styles.heroFallbackImage}>📦</div>
                   )}
                 </div>
               </div>
@@ -3068,28 +2017,19 @@ function App() {
                     }}
                   >
                     <div style={styles.heroMiniLabel}>
-                      <span>{getTopMedal(card.rank) || "??}</span>
+                      <span>{getTopMedal(card.rank) || "•"}</span>
                       <span>{card.rank <= 3 ? `TOP ${card.rank}` : ""}</span>
                     </div>
                     <div style={styles.heroMiniContent}>
                       <div style={styles.heroMiniCopy}>
                         <div style={styles.heroMiniName}>{card.productName}</div>
                         <div style={styles.heroMiniMeta}>
-                          {card.count.toLocaleString("ko-KR")}嫄?쨌 {formatPercent(card.share)}
+                          {card.count.toLocaleString("ko-KR")}건 · {formatPercent(card.share)}
                         </div>
                       </div>
                       {card.imageSrc ? (
                         <div style={styles.heroMiniThumbFrame}>
-                          <ProductImage
-                            product={{
-                              productName: card.productName,
-                              partner: card.partnerName,
-                              productCode: card.productCode,
-                            }}
-                            src={card.imageSrc}
-                            alt={card.productName}
-                            style={styles.heroMiniThumbImage}
-                          />
+                          <img src={card.imageSrc} alt={card.productName} style={styles.heroMiniThumbImage} />
                         </div>
                       ) : null}
                     </div>
@@ -3098,44 +2038,42 @@ function App() {
               </div>
             ) : null}
 
+            <div style={styles.heroActionRow}>
+              <button
+                type="button"
+                onClick={() => downloadPhotoZip("movement")}
+                style={styles.heroActionButton}
+              >
+                {zipDownloading === "movement" ? "ZIP 생성 중..." : "📷 불량사진"}
+              </button>
+              <button
+                type="button"
+                onClick={() => downloadPhotoZip("inspection")}
+                style={styles.heroActionButton}
+              >
+                {zipDownloading === "inspection" ? "ZIP 생성 중..." : "🧾 검품사진"}
+              </button>
+              <button
+                type="button"
+                onClick={() => downloadPhotoZip("photoOnly")}
+                style={styles.heroActionButton}
+              >
+                {zipDownloading === "photoOnly" ? "ZIP 생성 중..." : "🔗 참고사진"}
+              </button>
+            </div>
           </div>
         )}
       </div>
 
       <div style={styles.partnerPanel}>
         <div style={styles.partnerSectionHeader}>
-          <div style={styles.sectionTitle}>?묐젰??紐⑸줉</div>
-          <div style={styles.partnerSectionCount}>珥?{totalVisibleProducts}嫄?/div>
-        </div>
-        <div style={styles.partnerDownloadRow}>
-          {mode === "inspection" ? (
-            <button
-              type="button"
-              onClick={() => downloadPhotoZip("inspection")}
-              style={{
-                ...styles.historyButton,
-                ...styles.partnerDownloadButtonActive,
-              }}
-            >
-              {zipDownloading === "inspection" ? "ZIP ?앹꽦 以?.." : "寃?덉궗吏????}
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={() => downloadPhotoZip("movement")}
-              style={{
-                ...styles.historyButton,
-                ...styles.partnerDownloadButtonActive,
-              }}
-            >
-              {zipDownloading === "movement" ? "ZIP ?앹꽦 以?.." : "遺덈웾?ъ쭊 ???}
-            </button>
-          )}
+          <div style={styles.sectionTitle}>협력사 목록</div>
+          <div style={styles.partnerSectionCount}>총 {totalVisibleProducts}건</div>
         </div>
 
       <div style={styles.list}>
         {groupedPartners.length === 0 ? (
-          <div style={styles.emptyBox}>?쒖떆???곹뭹???놁뒿?덈떎.</div>
+          <div style={styles.emptyBox}>표시할 상품이 없습니다.</div>
         ) : (
           groupedPartners.map((partnerGroup) => (
             <div key={partnerGroup.partner} style={styles.partnerGroup}>
@@ -3148,8 +2086,8 @@ function App() {
               >
                 <div style={styles.partnerTitle}>{partnerGroup.partner}</div>
                 <div style={styles.partnerHeaderRight}>
-                  <div style={styles.partnerCount}>{partnerGroup.products.length}嫄?/div>
-                  <div style={styles.partnerChevron}>??/div>
+                  <div style={styles.partnerCount}>{partnerGroup.products.length}건</div>
+                  <div style={styles.partnerChevron}>›</div>
                 </div>
               </button>
 
@@ -3162,8 +2100,8 @@ function App() {
                       exchangeCount: 0,
                     };
                     const historySummary = [
-                      historyCounts.returnCount > 0 ? `?뚯넚 ${historyCounts.returnCount}` : "",
-                      historyCounts.exchangeCount > 0 ? `援먰솚 ${historyCounts.exchangeCount}` : "",
+                      historyCounts.returnCount > 0 ? `회송 ${historyCounts.returnCount}` : "",
+                      historyCounts.exchangeCount > 0 ? `교환 ${historyCounts.exchangeCount}` : "",
                     ]
                       .filter(Boolean)
                       .join(" / ");
@@ -3179,43 +2117,16 @@ function App() {
                         : `return||${product.partner}||${product.productCode}||${selectedCenter}`;
                     const draft = drafts[draftKey] || {};
                     const entityKey = makeEntityKey(currentJob?.job_key, product.productCode, product.partner);
-                    const inspectionSaved = inspectionSavedMap[entityKey] || {
-                      inspectionQty: 0,
-                      returnQty: 0,
-                      exchangeQty: 0,
-                    };
-                    const returnSavedKey = makeMovementPendingKey(
-                      "RETURN",
-                      currentJob?.job_key,
-                      product.productCode,
-                      product.partner,
-                      selectedCenter
-                    );
-                    const exchangeSavedKey = makeMovementPendingKey(
-                      "EXCHANGE",
-                      currentJob?.job_key,
-                      product.productCode,
-                      product.partner,
-                      selectedCenter
-                    );
-                    const returnSavedQty = parseQty(movementSavedMap[returnSavedKey]?.returnQty);
-                    const exchangeSavedQty = parseQty(movementSavedMap[exchangeSavedKey]?.exchangeQty);
-                    const inspectionInputQty = parseQty(draft.inspectionQty);
-                    const returnInputQty = parseQty(draft.returnQty);
-                    const exchangeInputQty = parseQty(draft.exchangeQty);
-                    const inspectionPreviewText = `?꾩옱 ${inspectionSaved.inspectionQty}媛? ?낅젰 ${inspectionInputQty}媛? ?????${inspectionInputQty || inspectionSaved.inspectionQty}媛?;
-                    const returnPreviewText = `?꾩옱 ${returnSavedQty}媛? ?낅젰 ${returnInputQty}媛? ??????꾩쟻 ${returnSavedQty + returnInputQty}媛?;
-                    const exchangePreviewText = `?꾩옱 ${exchangeSavedQty}媛? ?낅젰 ${exchangeInputQty}媛? ??????꾩쟻 ${exchangeSavedQty + exchangeInputQty}媛?;
-                    const inspectionStatus = itemStatusMap[draftKey] || itemStatusMap[entityKey];
-                    const movementStatus = itemStatusMap[draftKey];
+                    const inspectionStatus = itemStatusMap[entityKey];
+                    const returnStatus = itemStatusMap[entityKey];
+                    const exchangeStatus = itemStatusMap[entityKey];
                     const actionStatus = mode === "inspection"
                       ? inspectionStatus
-                      : movementStatus;
-                    const actionStatusLabel = getStatusLabel(actionStatus);
+                      : returnStatus || exchangeStatus;
                     const happycallBadges = [
-                      ["1d", "?꾩씪"],
-                      ["7d", "?쇱＜??],
-                      ["30d", "?쒕떖"],
+                      ["1d", "전일"],
+                      ["7d", "일주일"],
+                      ["30d", "한달"],
                     ]
                       .map(([periodKey, label]) => {
                         const stats = product.happycallStats?.[periodKey];
@@ -3223,7 +2134,7 @@ function App() {
                         return {
                           key: periodKey,
                           rank: stats.rank,
-                          label: stats.rank <= 3 ? `${label} ?댄뵾肄?TOP${stats.rank}` : `${label} ?댄뵾肄?,
+                          label: stats.rank <= 3 ? `${label} 해피콜 TOP${stats.rank}` : `${label} 해피콜`,
                         };
                       })
                       .filter(Boolean);
@@ -3247,27 +2158,22 @@ function App() {
                               <div style={styles.cardContentRow}>
                                 <div style={styles.cardMainCopy}>
                                   <div style={styles.cardTitleRow}>
-                                    <div style={styles.cardTitle}>{product.productName || "?곹뭹紐??놁쓬"}</div>
-                                    {product.eventInfo?.?됱궗?щ? ? (
+                                    <div style={styles.cardTitle}>{product.productName || "상품명 없음"}</div>
+                                    {product.eventInfo?.행사여부 ? (
                                       <span style={styles.eventBadge}>
-                                        {product.eventInfo.?됱궗紐?|| "?됱궗"}
+                                        {product.eventInfo.행사명 || "행사"}
                                       </span>
                                     ) : null}
                                   </div>
-                                  <div style={styles.cardMeta}>肄붾뱶 {product.productCode}</div>
+                                  <div style={styles.cardMeta}>코드 {product.productCode}</div>
                                   <div style={styles.qtyRow}>
-                                    <span style={styles.qtyChip}>珥?諛쒖＜ {product.totalQty}媛?/span>
+                                    <span style={styles.qtyChip}>총 발주 {product.totalQty}개</span>
                                     {historySummary ? <span style={styles.qtyChip}>{historySummary}</span> : null}
                                   </div>
                                 </div>
                                 {product.imageSrc ? (
                                   <div style={styles.cardThumbFrame}>
-                                    <ProductImage
-                                      product={product}
-                                      src={product.imageSrc}
-                                      alt={product.productName}
-                                      style={styles.cardThumbImage}
-                                    />
+                                    <img src={product.imageSrc} alt={product.productName} style={styles.cardThumbImage} />
                                   </div>
                                 ) : null}
                               </div>
@@ -3280,55 +2186,83 @@ function App() {
                                 value={draft.inspectionQty || ""}
                                 onChange={(e) => {
                                   const nextValue = e.target.value;
-                                  const nextDraft = {
-                                    ...draft,
-                                    inspectionQty: nextValue,
-                                  };
-                                  setDrafts((prev) => ({
-                                    ...prev,
-                                    [draftKey]: nextDraft,
-                                  }));
+                                  updateDraft(draftKey, "inspectionQty", nextValue);
+
+                                  const qty = parseQty(nextValue);
+                                  if (qty > 0) {
+                                    upsertPendingEntries([
+                                      {
+                                        key: entityKey,
+                                        type: "inspection",
+                                        작업기준일또는CSV식별값: currentJob?.job_key || "",
+                                        작성일시: new Date().toISOString(),
+                                        상품코드: product.productCode,
+                                        상품명: product.productName,
+                                        협력사명: product.partner,
+                                        전체발주수량: product.totalQty || 0,
+                                        발주수량: product.totalQty || 0,
+                                        검품수량: qty,
+                                        회송수량: 0,
+                                        교환수량: 0,
+                                      },
+                                    ]);
+                                  } else {
+                                    removePendingKeys([entityKey]);
+                                  }
                                 }}
                                 style={styles.inlineQtyInput}
-                                placeholder="寃?덉닔??
+                                placeholder="검품수량"
                               />
                             </div>
-                            <div style={styles.inputHintText}>{inspectionPreviewText}</div>
                             <div style={styles.formGroup}>
-                              <label style={styles.label}>寃???ъ쭊</label>
+                              <label style={styles.label}>검품 사진</label>
                               <input
                                 type="file"
                                 accept="image/*"
                                 multiple
                                 onChange={(e) => {
                                   const files = Array.from(e.target.files || []);
-                                  uploadDraftPhotos({
+                                  updateDraft(draftKey, "photoFiles", files);
+                                  updateDraft(
                                     draftKey,
-                                    itemKey: entityKey,
-                                    baseName: product.productName || "寃??,
-                                    files,
-                                  });
-                                  e.target.value = "";
+                                    "photoNames",
+                                    files.map((file) => file.name)
+                                  );
+
+                                  if (files.length) {
+                                    upsertPendingEntries([
+                                      {
+                                        key: entityKey,
+                                        type: "inspection",
+                                        작업기준일또는CSV식별값: currentJob?.job_key || "",
+                                        작성일시: new Date().toISOString(),
+                                        상품코드: product.productCode,
+                                        상품명: product.productName,
+                                        협력사명: product.partner,
+                                        전체발주수량: product.totalQty || 0,
+                                        발주수량: product.totalQty || 0,
+                                        검품수량: parseQty(draft.inspectionQty),
+                                        회송수량: 0,
+                                        교환수량: 0,
+                                        photoFiles: files,
+                                      },
+                                    ]);
+                                  }
                                 }}
                                 style={styles.fileInput}
                               />
-                              <DraftPhotoPreviewList
-                                files={draft.photoFiles}
-                                onRemove={(index) =>
-                                  removeDraftPhoto(draftKey, index)
-                                }
-                                styles={styles}
-                              />
-                              {actionStatusLabel ? (
-                                <div style={styles.inputHintText}>{actionStatusLabel}</div>
-                              ) : null}
+                              <div style={styles.metaText}>
+                                {Array.isArray(draft.photoNames) && draft.photoNames.length
+                                  ? draft.photoNames.join(", ")
+                                  : "선택된 사진 없음"}
+                              </div>
                             </div>
                             <button
                               type="button"
                               onClick={() => saveInspectionQtySimple(product)}
                               style={styles.saveButton}
                             >
-                              {inspectionStatus === "saving" ? "??μ쨷..." : "???}
+                              {inspectionStatus === "saving" ? "저장중..." : "저장"}
                             </button>
                           </div>
                         ) : (
@@ -3360,27 +2294,22 @@ function App() {
                               <div style={styles.cardContentRow}>
                                 <div style={styles.cardMainCopy}>
                                   <div style={styles.cardTitleRow}>
-                                    <div style={styles.cardTitle}>{product.productName || "?곹뭹紐??놁쓬"}</div>
-                                    {product.eventInfo?.?됱궗?щ? ? (
+                                    <div style={styles.cardTitle}>{product.productName || "상품명 없음"}</div>
+                                    {product.eventInfo?.행사여부 ? (
                                       <span style={styles.eventBadge}>
-                                        {product.eventInfo.?됱궗紐?|| "?됱궗"}
+                                        {product.eventInfo.행사명 || "행사"}
                                       </span>
                                     ) : null}
                                   </div>
-                                  <div style={styles.cardMeta}>肄붾뱶 {product.productCode}</div>
+                                  <div style={styles.cardMeta}>코드 {product.productCode}</div>
                                   <div style={styles.qtyRow}>
-                                    <span style={styles.qtyChip}>珥?諛쒖＜ {product.totalQty}媛?/span>
+                                    <span style={styles.qtyChip}>총 발주 {product.totalQty}개</span>
                                     {historySummary ? <span style={styles.qtyChip}>{historySummary}</span> : null}
                                   </div>
                                 </div>
                                 {product.imageSrc ? (
                                   <div style={styles.cardThumbFrame}>
-                                    <ProductImage
-                                      product={product}
-                                      src={product.imageSrc}
-                                      alt={product.productName}
-                                      style={styles.cardThumbImage}
-                                    />
+                                    <img src={product.imageSrc} alt={product.productName} style={styles.cardThumbImage} />
                                   </div>
                                 ) : null}
                               </div>
@@ -3389,7 +2318,7 @@ function App() {
                             {isOpen && (
                           <div style={styles.editorBox}>
                             <div style={styles.formGroup}>
-                              <label style={styles.label}>?쇳꽣 ?좏깮</label>
+                              <label style={styles.label}>센터 선택</label>
                               <select
                                 value={selectedCenter}
                                 onChange={(e) =>
@@ -3402,7 +2331,7 @@ function App() {
                               >
                                 {product.centers.map((center) => (
                                   <option key={center.center} value={center.center}>
-                                    {center.center} / {center.totalQty}媛?
+                                    {center.center} / {center.totalQty}개
                                   </option>
                                 ))}
                               </select>
@@ -3411,11 +2340,11 @@ function App() {
                             {selectedCenterInfo && (
                               <div style={styles.detailBlock}>
                                 <div style={styles.metaText}>
-                                  ?좏깮 ?쇳꽣 諛쒖＜?섎웾: {selectedCenterInfo.totalQty}媛?
+                                  선택 센터 발주수량: {selectedCenterInfo.totalQty}개
                                 </div>
                                 <div style={styles.metaText}>
-                                  ?됱궗: {product.eventInfo?.?됱궗?щ? || ""}
-                                  {product.eventInfo?.?됱궗紐?? ` (${product.eventInfo.?됱궗紐?)` : ""}
+                                  행사: {product.eventInfo?.행사여부 || ""}
+                                  {product.eventInfo?.행사명 ? ` (${product.eventInfo.행사명})` : ""}
                                 </div>
                               </div>
                             )}
@@ -3423,95 +2352,64 @@ function App() {
                               <>
                                 <div style={styles.grid2}>
                                   <div style={styles.formGroup}>
-                                    <label style={styles.label}>?뚯넚?섎웾</label>
+                                    <label style={styles.label}>회송수량</label>
                                     <input
                                       type="number"
                                       min="0"
                                       value={draft.returnQty || ""}
-                                      onChange={(e) => {
-                                        const nextDraft = {
-                                          ...draft,
-                                          returnQty: e.target.value,
-                                        };
-                                        setDrafts((prev) => ({
-                                          ...prev,
-                                          [draftKey]: nextDraft,
-                                        }));
-                                      }}
+                                      onChange={(e) =>
+                                        updateDraft(draftKey, "returnQty", e.target.value)
+                                      }
                                       style={styles.input}
                                     />
-                                    <div style={styles.inputHintText}>{returnPreviewText}</div>
                                   </div>
                                   <div style={styles.formGroup}>
-                                    <label style={styles.label}>援먰솚?섎웾</label>
+                                    <label style={styles.label}>교환수량</label>
                                     <input
                                       type="number"
                                       min="0"
                                       value={draft.exchangeQty || ""}
-                                      onChange={(e) => {
-                                        const nextDraft = {
-                                          ...draft,
-                                          exchangeQty: e.target.value,
-                                        };
-                                        setDrafts((prev) => ({
-                                          ...prev,
-                                          [draftKey]: nextDraft,
-                                        }));
-                                      }}
+                                      onChange={(e) =>
+                                        updateDraft(draftKey, "exchangeQty", e.target.value)
+                                      }
                                       style={styles.input}
                                     />
-                                    <div style={styles.inputHintText}>{exchangePreviewText}</div>
                                   </div>
                                 </div>
 
                                 <div style={styles.formGroup}>
-                                  <label style={styles.label}>鍮꾧퀬</label>
+                                  <label style={styles.label}>비고</label>
                                   <textarea
                                     value={draft.memo || ""}
-                                    onChange={(e) => {
-                                      const nextDraft = {
-                                        ...draft,
-                                        memo: e.target.value,
-                                      };
-                                      setDrafts((prev) => ({
-                                        ...prev,
-                                        [draftKey]: nextDraft,
-                                      }));
-                                    }}
+                                    onChange={(e) => updateDraft(draftKey, "memo", e.target.value)}
                                     style={styles.textarea}
                                     rows={3}
-                                    placeholder="遺덈웾 ?ъ쑀 / ?꾨떖 ?ы빆"
+                                    placeholder="불량 사유 / 전달 사항"
                                   />
                                 </div>
 
                                 <div style={styles.formGroup}>
-                                  <label style={styles.label}>?ъ쭊 泥⑤?</label>
+                                  <label style={styles.label}>사진 첨부</label>
                                   <input
                                     type="file"
                                     accept="image/*"
                                     multiple
                                     onChange={(e) => {
                                       const files = Array.from(e.target.files || []);
-                                      uploadDraftPhotos({
+                                      updateDraft(draftKey, "photoFiles", files);
+                                      updateDraft(
                                         draftKey,
-                                        itemKey: draftKey,
-                                        baseName: product.productName || "遺덈웾",
-                                        files,
-                                      });
-                                      e.target.value = "";
+                                        "photoNames",
+                                        files.map((file) => file.name)
+                                      );
                                     }}
                                     style={styles.fileInput}
                                   />
-                                  <DraftPhotoPreviewList
-                                    files={draft.photoFiles}
-                                    onRemove={(index) =>
-                                      removeDraftPhoto(draftKey, index)
-                                    }
-                                    styles={styles}
-                                  />
-                                  {actionStatusLabel ? (
-                                    <div style={styles.inputHintText}>{actionStatusLabel}</div>
-                                  ) : null}
+                                  <div style={styles.metaText}>
+                                    {Array.isArray(draft.photoNames) && draft.photoNames.length
+                                      ? draft.photoNames.join(", ")
+                                      : "선택된 사진 없음"}
+                                  </div>
                                 </div>
 
                                 <button
@@ -3519,7 +2417,7 @@ function App() {
                                   onClick={() => saveReturnExchange(product, selectedCenter)}
                                   style={styles.saveButton}
                                 >
-                                  {actionStatus === "saving" ? "??μ쨷..." : "???}
+                                  {actionStatus === "saving" ? "저장중..." : "저장"}
                                 </button>
                               </>
                           </div>
@@ -3542,21 +2440,21 @@ function App() {
           <div style={styles.bottomSheet} onClick={(e) => e.stopPropagation()}>
             <div style={styles.sheetHandle} />
             <div style={styles.sheetHeader}>
-              <h2 style={styles.sheetTitle}>????댁뿭</h2>
+              <h2 style={styles.sheetTitle}>저장 내역</h2>
               <button type="button" onClick={() => setShowHistory(false)} style={styles.sheetClose}>
-                ?リ린
+                닫기
               </button>
             </div>
 
             {historyLoading ? (
-              <div style={styles.infoBox}>?댁뿭 遺덈윭?ㅻ뒗 以?..</div>
+              <div style={styles.infoBox}>내역 불러오는 중...</div>
             ) : historyRows.length === 0 ? (
-              <div style={styles.emptyBox}>?쒖떆???댁뿭???놁뒿?덈떎.</div>
+              <div style={styles.emptyBox}>표시할 내역이 없습니다.</div>
             ) : (
               <div style={styles.sheetList}>
                 {historyRows.map((record, index) => (
                   <div
-                    key={`${record.__rowNumber || "row"}-${record.?묒꽦?쇱떆 || "time"}-${index}`}
+                    key={`${record.__rowNumber || "row"}-${record.작성일시 || "time"}-${index}`}
                     style={styles.historyCard}
                   >
                     <button
@@ -3565,21 +2463,21 @@ function App() {
                       style={styles.deleteBtn}
                       disabled={deletingRowNumber === Number(record.__rowNumber)}
                     >
-                      {deletingRowNumber === Number(record.__rowNumber) ? "..." : "횞"}
+                      {deletingRowNumber === Number(record.__rowNumber) ? "..." : "×"}
                     </button>
 
                     <div style={styles.cardTopRow}>
-                      <div style={styles.cardTitle}>{record.?곹뭹紐?|| "?곹뭹紐??놁쓬"}</div>
+                      <div style={styles.cardTitle}>{record.상품명 || "상품명 없음"}</div>
                       <span style={styles.typeBadge}>{getRecordType(record)}</span>
                     </div>
-                    <div style={styles.cardMeta}>肄붾뱶 {record.?곹뭹肄붾뱶 || "-"}</div>
-                    <div style={styles.cardMeta}>?쇳꽣 {record.?쇳꽣紐?|| "-"}</div>
-                    <div style={styles.cardMeta}>?묐젰??{record.?묐젰?щ챸 || "-"}</div>
+                    <div style={styles.cardMeta}>코드 {record.상품코드 || "-"}</div>
+                    <div style={styles.cardMeta}>센터 {record.센터명 || "-"}</div>
+                    <div style={styles.cardMeta}>협력사 {record.협력사명 || "-"}</div>
                     <div style={styles.qtyRow}>
-                      <span style={styles.qtyChip}>泥섎━?섎웾 {getRecordQtyText(record)}</span>
-                      <span style={styles.qtyChip}>{formatDateTime(record.?묒꽦?쇱떆)}</span>
+                      <span style={styles.qtyChip}>처리수량 {getRecordQtyText(record)}</span>
+                      <span style={styles.qtyChip}>{formatDateTime(record.작성일시)}</span>
                     </div>
-                    <div style={styles.historyMemo}>{record.鍮꾧퀬 || "-"}</div>
+                    <div style={styles.historyMemo}>{record.비고 || "-"}</div>
 
                     <div style={styles.photoWrap}>
                       <HistoryPhotoPreview
@@ -3598,7 +2496,7 @@ function App() {
 
       {zoomPhotoUrl && (
         <div style={styles.photoOverlay} onClick={() => setZoomPhotoUrl("")}>
-          <img src={zoomPhotoUrl} alt="?뺣? ?ъ쭊" style={styles.photoZoom} />
+          <img src={zoomPhotoUrl} alt="확대 사진" style={styles.photoZoom} />
         </div>
       )}
 
@@ -3607,28 +2505,28 @@ function App() {
           <div style={styles.bottomSheet} onClick={(e) => e.stopPropagation()}>
             <div style={styles.sheetHandle} />
             <div style={styles.sheetHeader}>
-              <h2 style={styles.sheetTitle}>愿由ъ옄 珥덇린??/h2>
+              <h2 style={styles.sheetTitle}>관리자 초기화</h2>
               <button
                 type="button"
                 onClick={() => !adminResetting && setShowAdminReset(false)}
                 style={styles.sheetClose}
               >
-                ?リ린
+                닫기
               </button>
             </div>
 
             <div style={styles.infoBox}>
-              ?꾩옱 ?묒뾽??寃?덉닔?? ?뚯넚/援먰솚 ?댁뿭, ?곌껐???ъ쭊怨??쒕씪?대툕 ?먮낯源뚯? ??젣?⑸땲??
+              현재 작업의 검품수량, 회송/교환 내역, 연결된 사진과 드라이브 원본까지 삭제됩니다.
             </div>
 
             <div style={styles.formGroup}>
-              <label style={styles.label}>愿由ъ옄 鍮꾨?踰덊샇</label>
+              <label style={styles.label}>관리자 비밀번호</label>
               <input
                 type="password"
                 value={adminPassword}
                 onChange={(e) => setAdminPassword(e.target.value)}
                 style={styles.input}
-                placeholder="鍮꾨?踰덊샇 ?낅젰"
+                placeholder="비밀번호 입력"
                 disabled={adminResetting}
               />
             </div>
@@ -3643,75 +2541,8 @@ function App() {
                 marginTop: 4,
               }}
             >
-              {adminResetting ? "珥덇린??以?.." : "?꾩옱 ?묒뾽 ?낅젰 ?곗씠??珥덇린??}
+              {adminResetting ? "초기화 중..." : "현재 작업 입력 데이터 초기화"}
             </button>
-          </div>
-        </div>
-      )}
-
-      {showImageRegister && (
-        <div style={styles.sheetOverlay} onClick={() => !uploadingImageKey && setShowImageRegister(false)}>
-          <div style={styles.bottomSheet} onClick={(e) => e.stopPropagation()}>
-            <div style={styles.sheetHandle} />
-            <div style={styles.sheetHeader}>
-              <h2 style={styles.sheetTitle}>?곹뭹 ?대?吏 ?깅줉</h2>
-              <button
-                type="button"
-                onClick={() => !uploadingImageKey && setShowImageRegister(false)}
-                style={styles.sheetClose}
-              >
-                ?リ린
-              </button>
-            </div>
-
-            <div style={styles.infoBox}>
-              ?꾩옱 CSV 湲곗? ?곹뭹??????대?吏瑜??깅줉?섍굅??援먯껜?????덉뒿?덈떎. ?깅줉???대?吏??媛숈? ?묐젰???곹뭹??怨꾩냽 ?먮룞 ?곸슜?⑸땲??
-            </div>
-
-            <div style={styles.searchRow}>
-              <input
-                value={imageRegisterSearch}
-                onChange={(e) => setImageRegisterSearch(e.target.value)}
-                placeholder="?곹뭹紐?/ ?곹뭹肄붾뱶 / ?묐젰??寃??
-                style={styles.searchInput}
-              />
-            </div>
-
-                {imageRegistryProducts.length === 0 ? (
-              <div style={styles.emptyState}>?쒖떆???곹뭹???놁뒿?덈떎.</div>
-            ) : (
-              <div style={styles.imageRegisterList}>
-                {imageRegistryProducts.map((product) => (
-                  <div key={product.imageKey} style={styles.imageRegisterCard}>
-                    <div style={styles.imageRegisterInfo}>
-                      <div style={styles.imageRegisterName}>{product.productName}</div>
-                      <div style={styles.metaText}>肄붾뱶 {product.productCode || "-"}</div>
-                      <div style={styles.metaText}>?묐젰??{product.partner || "-"}</div>
-                      <div style={styles.metaText}>珥?諛쒖＜ {parseQty(product.totalQty).toLocaleString("ko-KR")}媛?/div>
-                      <div style={styles.metaText}>{product.hasVisibleImage ? "현재 이미지 있음" : "현재 이미지 없음"}</div>
-                    </div>
-                    {product.imageSrc ? (
-                      <div style={{ ...styles.cardThumbFrame, width: 64, height: 64 }}>
-                        <ProductImage product={product} src={product.imageSrc} alt={product.productName} style={styles.cardThumbImage} />
-                      </div>
-                    ) : null}
-                    <button
-                      type="button"
-                      onClick={() => openImageRegisterPicker(product)}
-                      disabled={uploadingImageKey === product.imageKey}
-                      style={{
-                        ...styles.primaryButton,
-                        minHeight: 42,
-                        padding: "0 14px",
-                        opacity: uploadingImageKey === product.imageKey ? 0.7 : 1,
-                      }}
-                    >
-                      {uploadingImageKey === product.imageKey ? "등록 중..." : product.hasVisibleImage ? "이미지 교체" : "이미지 등록"}
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
           </div>
         </div>
       )}
@@ -3723,21 +2554,21 @@ function App() {
               횞
             </button>
 
-            <div style={styles.scannerTopText}>{scannerReady ? scannerStatus : "諛붿퐫???몄떇 以?.."}</div>
+            <div style={styles.scannerTopText}>{scannerReady ? scannerStatus : "바코드 인식 중..."}</div>
 
             <div style={styles.scannerViewport}>
               <video ref={scannerVideoRef} style={styles.scannerVideo} muted playsInline />
               <div style={styles.scannerGuideBox} />
             </div>
 
-            <div style={styles.scannerHelperText}>諛붿퐫?쒕? ?붾㈃ 以묒븰??留욎떠二쇱꽭??</div>
+            <div style={styles.scannerHelperText}>바코드를 화면 중앙에 맞춰주세요.</div>
 
             {scannerError ? <div style={styles.errorBox}>{scannerError}</div> : null}
 
             <div style={styles.scannerActions}>
               {torchSupported ? (
                 <button type="button" onClick={toggleTorch} style={styles.secondaryButton}>
-                  {torchOn ? "?뚮옒???꾧린" : "?뚮옒??耳쒓린"}
+                  {torchOn ? "플래시 끄기" : "플래시 켜기"}
                 </button>
               ) : null}
 
@@ -3749,7 +2580,7 @@ function App() {
                 }}
                 style={styles.primaryButton}
               >
-                吏곸젒 ?낅젰
+                직접 입력
               </button>
             </div>
           </div>
@@ -4058,57 +2889,6 @@ const styles = {
     wordBreak: "break-all",
     lineHeight: 1.5,
   },
-  draftPhotoGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fill, minmax(84px, 1fr))",
-    gap: 8,
-    marginTop: 10,
-  },
-  draftPhotoCard: {
-    position: "relative",
-    borderRadius: 14,
-    overflow: "hidden",
-    border: "1px solid #dbe4f3",
-    background: "#fff",
-    aspectRatio: "1 / 1",
-  },
-  draftPhotoImage: {
-    width: "100%",
-    height: "100%",
-    objectFit: "cover",
-    display: "block",
-  },
-  draftPhotoRemoveButton: {
-    position: "absolute",
-    top: 6,
-    right: 6,
-    width: 24,
-    height: 24,
-    borderRadius: 999,
-    border: "none",
-    background: "rgba(15,23,42,0.82)",
-    color: "#fff",
-    fontSize: 16,
-    lineHeight: "24px",
-    cursor: "pointer",
-    padding: 0,
-  },
-  draftPhotoEmpty: {
-    marginTop: 10,
-    border: "1px dashed #d1d5db",
-    borderRadius: 14,
-    background: "#f9fafb",
-    color: "#6b7280",
-    fontSize: 13,
-    padding: "16px 12px",
-    textAlign: "center",
-  },
-  inputHintText: {
-    marginTop: 6,
-    fontSize: 12,
-    color: "#64748b",
-    lineHeight: 1.45,
-  },
   infoBox: {
     padding: 12,
     borderRadius: 14,
@@ -4167,8 +2947,7 @@ const styles = {
     lineHeight: 1.2,
     fontWeight: 900,
     color: "#24324d",
-    wordBreak: "break-word",
-    overflowWrap: "anywhere",
+    wordBreak: "keep-all",
   },
   heroTopMeta: {
     marginTop: 8,
@@ -4253,8 +3032,7 @@ const styles = {
     lineHeight: 1.24,
     fontWeight: 900,
     color: "#22314b",
-    wordBreak: "break-word",
-    overflowWrap: "anywhere",
+    wordBreak: "keep-all",
   },
   heroMiniMeta: {
     marginTop: 8,
@@ -4405,17 +3183,6 @@ const styles = {
     fontSize: 13,
     color: "#6f7fa4",
     fontWeight: 700,
-  },
-  partnerDownloadRow: {
-    display: "flex",
-    gap: 8,
-    marginBottom: 12,
-    flexWrap: "wrap",
-  },
-  partnerDownloadButtonActive: {
-    background: "#eef4ff",
-    borderColor: "#bcd0ff",
-    color: "#2d4ea1",
   },
   partnerGroup: {
     display: "flex",
@@ -4628,9 +3395,9 @@ const styles = {
     justifyContent: "center",
   },
   bottomSheet: {
-      width: "100%",
-      maxWidth: 760,
-      maxHeight: "78vh",
+    width: "100%",
+    maxWidth: 760,
+    maxHeight: "78vh",
     background: "#fff",
     borderTopLeftRadius: 22,
     borderTopRightRadius: 22,
@@ -4653,37 +3420,10 @@ const styles = {
     marginBottom: 12,
   },
   sheetTitle: {
-      margin: 0,
-      fontSize: 18,
-      fontWeight: 800,
-    },
-  imageRegisterList: {
-      display: "grid",
-      gap: 10,
-      marginTop: 12,
-    },
-  imageRegisterCard: {
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "space-between",
-      gap: 12,
-      padding: 14,
-      borderRadius: 18,
-      border: "1px solid #e5eaf5",
-      background: "#ffffff",
-      boxShadow: "0 8px 18px rgba(101, 130, 184, 0.06)",
-    },
-  imageRegisterInfo: {
-      minWidth: 0,
-      flex: 1,
-    },
-  imageRegisterName: {
-      fontSize: 15,
-      fontWeight: 800,
-      color: "#1f2f53",
-      marginBottom: 4,
-      wordBreak: "keep-all",
-    },
+    margin: 0,
+    fontSize: 18,
+    fontWeight: 800,
+  },
   sheetClose: {
     minHeight: 40,
     padding: "0 12px",
@@ -4889,5 +3629,4 @@ const styles = {
 };
 
 export default App;
-
 

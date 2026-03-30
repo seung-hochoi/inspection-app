@@ -677,6 +677,20 @@ const getProductImageSrc = (product, customImageMap = {}) => {
   return getDefaultProductImageSrc(product);
 };
 
+const buildProductImageMapFromRows = (rows) =>
+  (Array.isArray(rows) ? rows : []).reduce((acc, item) => {
+    const key = String(item?.["이미지매핑키"] || item?.["맵키"] || "").trim();
+    const fileId = String(item?.["드라이브파일ID"] || item?.["파일ID"] || "").trim();
+    const url = fileId
+      ? `https://drive.google.com/thumbnail?id=${fileId}&sz=w1200`
+      : String(item?.["이미지URL"] || "").trim();
+
+    if (key && url) {
+      acc[key] = url;
+    }
+    return acc;
+  }, {});
+
 const getValue = (row, candidates) => {
   for (const key of candidates) {
     if (row[key] !== undefined && row[key] !== null && row[key] !== "") {
@@ -1769,6 +1783,7 @@ function App() {
       setCurrentFileModifiedAt(job?.source_file_modified || "");
       setDashboardSummary(data.summary || {});
       setHappycallAnalytics(data.happycall || {});
+      setProductImageMap(buildProductImageMapFromRows(data.product_images));
       setProductImageMap(
         (Array.isArray(data.product_images) ? data.product_images : []).reduce((acc, item) => {
           const key = String(item?.["이미지매핑키"] || "").trim();
@@ -2073,9 +2088,10 @@ function App() {
           partner: group.partner,
           productCode: product.productCode,
           productName: product.productName,
-          imageSrc: product.imageSrc || "",
+          imageSrc: product.imageSrc || getDefaultProductImageSrc(product),
           customImageSrc,
           hasCustomImage: !!customImageSrc,
+          hasVisibleImage: !!(product.imageSrc || getDefaultProductImageSrc(product)),
           totalQty: product.totalQty || 0,
           imageKey,
         };
@@ -2361,7 +2377,7 @@ function App() {
         if (key && url) acc[key] = url;
         return acc;
       }, {});
-      setProductImageMap(nextMap);
+      setProductImageMap(buildProductImageMapFromRows(result.product_images));
       setToast("이미지 등록 완료");
       setMessage("상품 이미지가 등록되었습니다.");
     } catch (err) {
@@ -3683,11 +3699,11 @@ function App() {
                       <div style={styles.metaText}>코드 {product.productCode || "-"}</div>
                       <div style={styles.metaText}>협력사 {product.partner || "-"}</div>
                       <div style={styles.metaText}>총 발주 {parseQty(product.totalQty).toLocaleString("ko-KR")}개</div>
-                      <div style={styles.metaText}>{product.hasCustomImage ? "등록 이미지 있음" : "등록 이미지 없음"}</div>
+                      <div style={styles.metaText}>{product.hasVisibleImage ? "현재 이미지 있음" : "현재 이미지 없음"}</div>
                     </div>
-                    {product.customImageSrc ? (
+                    {product.imageSrc ? (
                       <div style={{ ...styles.cardThumbFrame, width: 64, height: 64 }}>
-                        <img src={product.customImageSrc} alt={product.productName} style={styles.cardThumbImage} />
+                        <ProductImage product={product} src={product.imageSrc} alt={product.productName} style={styles.cardThumbImage} />
                       </div>
                     ) : null}
                     <button
@@ -3701,7 +3717,7 @@ function App() {
                         opacity: uploadingImageKey === product.imageKey ? 0.7 : 1,
                       }}
                     >
-                      {uploadingImageKey === product.imageKey ? "등록 중..." : product.hasCustomImage ? "이미지 교체" : "이미지 등록"}
+                      {uploadingImageKey === product.imageKey ? "등록 중..." : product.hasVisibleImage ? "이미지 교체" : "이미지 등록"}
                     </button>
                   </div>
                 ))}
@@ -4884,4 +4900,3 @@ const styles = {
 };
 
 export default App;
-
