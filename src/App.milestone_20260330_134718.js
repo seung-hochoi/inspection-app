@@ -660,6 +660,10 @@ const getProductImageSrc = (product, customImageMap = {}) => {
   const productText = normalizeImageToken(product?.productName || "");
   if (!productText) return "";
 
+  if (productText.includes(normalizeImageToken("파인애플"))) {
+    return "";
+  }
+
   const customKey = makeProductImageMapKey({
     productCode: product?.productCode || "",
     partner: product?.partner || "",
@@ -672,20 +676,6 @@ const getProductImageSrc = (product, customImageMap = {}) => {
 
   return getDefaultProductImageSrc(product);
 };
-
-const buildProductImageMapFromRows = (rows) =>
-  (Array.isArray(rows) ? rows : []).reduce((acc, item) => {
-    const key = String(item?.["이미지매핑키"] || item?.["맵키"] || "").trim();
-    const fileId = String(item?.["드라이브파일ID"] || item?.["파일ID"] || "").trim();
-    const url = fileId
-      ? `https://drive.google.com/thumbnail?id=${fileId}&sz=w1200`
-      : String(item?.["이미지URL"] || "").trim();
-
-    if (key && url) {
-      acc[key] = url;
-    }
-    return acc;
-  }, {});
 
 const getValue = (row, candidates) => {
   for (const key of candidates) {
@@ -921,11 +911,6 @@ const delay = (ms) =>
 const createUploadedPhotoItem = (item) => ({
   __uploaded: true,
   fileId: String(item?.fileId || "").trim(),
-  previewUrl:
-    String(item?.previewUrl || "").trim() ||
-    (String(item?.fileId || "").trim()
-      ? `https://drive.google.com/thumbnail?id=${String(item?.fileId || "").trim()}&sz=w1200`
-      : ""),
   viewUrl: String(item?.viewUrl || "").trim(),
   driveUrl: String(item?.driveUrl || "").trim(),
   fileName: String(item?.fileName || "").trim(),
@@ -1129,7 +1114,7 @@ function DraftPhotoPreviewItem({ file, index, onRemove, styles }) {
     }
 
     if (isUploadedPhotoItem(file)) {
-      setPreviewUrl(file.previewUrl || file.viewUrl || "");
+      setPreviewUrl(file.viewUrl || "");
       return undefined;
     }
 
@@ -1238,7 +1223,6 @@ function App() {
   const [reservationRows, setReservationRows] = useState([]);
   const [, setDashboardSummary] = useState({});
   const [happycallAnalytics, setHappycallAnalytics] = useState({});
-  const [selectedHappycallPeriod, setSelectedHappycallPeriod] = useState("1d");
 
   const [showHistory, setShowHistory] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -1255,7 +1239,6 @@ function App() {
   const [imageRegisterSearch, setImageRegisterSearch] = useState("");
   const [selectedImageTargetKey, setSelectedImageTargetKey] = useState("");
   const [uploadingImageKey, setUploadingImageKey] = useState("");
-  const [showSaveStatusPanel, setShowSaveStatusPanel] = useState(false);
 
   const [isScannerOpen, setIsScannerOpen] = useState(false);
   const [scannerError, setScannerError] = useState("");
@@ -1318,33 +1301,6 @@ function App() {
     if (status === "failed") return "확인필요";
     return "";
   };
-
-  const getStatusProgress = (status) => {
-    if (status === "pending") return 15;
-    if (status === "uploading") return 45;
-    if (status === "retrying") return 60;
-    if (status === "saving") return 80;
-    if (status === "saved") return 100;
-    if (status === "failed") return 100;
-    return 0;
-  };
-
-  const buildQueueItemTitle = useCallback((entry) => {
-    if (!entry) return "";
-    const partner = String(entry["협력사명"] || entry.partnerName || "").trim();
-    const productName = String(entry["상품명"] || entry.productName || "").trim();
-    const movementType = String(entry.movementType || "").trim().toUpperCase();
-    const typeLabel =
-      entry.type === "inspection"
-        ? "검품"
-        : movementType === "RETURN"
-        ? "회송"
-        : movementType === "EXCHANGE"
-        ? "교환"
-        : "저장";
-
-    return [partner, productName, typeLabel].filter(Boolean).join(" - ");
-  }, []);
 
   const serializePhotoItems = useCallback(
     (items) =>
@@ -1813,7 +1769,17 @@ function App() {
       setCurrentFileModifiedAt(job?.source_file_modified || "");
       setDashboardSummary(data.summary || {});
       setHappycallAnalytics(data.happycall || {});
-      setProductImageMap(buildProductImageMapFromRows(data.product_images));
+      setProductImageMap(
+        (Array.isArray(data.product_images) ? data.product_images : []).reduce((acc, item) => {
+          const key = String(item?.["이미지매핑키"] || "").trim();
+          const fileId = String(item?.["드라이브파일ID"] || "").trim();
+          const url = fileId
+            ? `https://drive.google.com/thumbnail?id=${fileId}&sz=w1200`
+            : String(item?.["이미지URL"] || "").trim();
+          if (key && url) acc[key] = url;
+          return acc;
+        }, {})
+      );
       setMessage(job ? "최근 작업을 불러왔습니다." : "CSV를 업로드해 주세요.");
     } catch (err) {
       setError(err.message || "초기 데이터를 불러오지 못했습니다.");
@@ -2068,17 +2034,11 @@ function App() {
     return map;
   }, [historyRows]);
 
-  const selectedHappycallPeriodMeta = {
-    "1d": { title: "전일 해피콜 TOP 5", subtitle: "전일 접수 해피콜 기준" },
-    "7d": { title: "주별 해피콜 TOP 5", subtitle: "마지막 데이터 포함 7일 기준" },
-    "30d": { title: "월별 해피콜 TOP 5", subtitle: "마지막 데이터 포함 30일 기준" },
-  }[selectedHappycallPeriod] || { title: "전일 해피콜 TOP 5", subtitle: "전일 접수 해피콜 기준" };
-
-  const selectedHappycallTopList = useMemo(
+  const previousDayHappycallTopList = useMemo(
     () =>
-      (happycallAnalytics?.periods?.[selectedHappycallPeriod]?.topProducts || [])
+      (happycallAnalytics?.periods?.["1d"]?.topProducts || [])
         .filter(isClassifiedHappycallProduct)
-        .slice(0, 5)
+        .slice(0, 10)
         .map((item, index) => ({
           rank: index + 1,
           productName: item?.productName || "-",
@@ -2092,11 +2052,11 @@ function App() {
             productCode: item?.productCode || "",
           }, productImageMap),
         })),
-    [happycallAnalytics, productImageMap, selectedHappycallPeriod]
+    [happycallAnalytics, productImageMap]
   );
 
-  const happycallHeroCard = selectedHappycallTopList[0] || null;
-  const happycallMiniCards = selectedHappycallTopList.slice(1, 5);
+  const happycallHeroCard = previousDayHappycallTopList[0] || null;
+  const happycallMiniCards = previousDayHappycallTopList.slice(1, 5);
   const totalVisibleProducts = groupedPartners.reduce((sum, item) => sum + item.products.length, 0);
   const imageRegistryProducts = useMemo(() => {
     const keyword = normalizeText(imageRegisterSearch);
@@ -2113,10 +2073,9 @@ function App() {
           partner: group.partner,
           productCode: product.productCode,
           productName: product.productName,
-          imageSrc: product.imageSrc || getDefaultProductImageSrc(product),
+          imageSrc: product.imageSrc || "",
           customImageSrc,
           hasCustomImage: !!customImageSrc,
-          hasVisibleImage: !!(product.imageSrc || getDefaultProductImageSrc(product)),
           totalQty: product.totalQty || 0,
           imageKey,
         };
@@ -2139,22 +2098,6 @@ function App() {
       });
   }, [groupedPartners, imageRegisterSearch, productImageMap]);
 
-  const saveQueueItems = useMemo(() => {
-    return Object.values(pendingMap || {})
-      .map((entry) => {
-        const statusKey = entry.draftKey || entry.key;
-        const status = itemStatusMap[statusKey] || itemStatusMap[entry.key] || "pending";
-        return {
-          key: entry.key,
-          title: buildQueueItemTitle(entry),
-          status,
-          progress: getStatusProgress(status),
-        };
-      })
-      .filter((item) => item.title)
-      .sort((a, b) => a.title.localeCompare(b.title, "ko"));
-  }, [buildQueueItemTitle, itemStatusMap, pendingMap]);
-
   const buildInspectionPendingEntry = useCallback((product, nextDraft = {}) => {
     const entityKey = makeEntityKey(currentJob?.job_key, product.productCode, product.partner);
     const draftKey = `inspection||${product.partner}||${product.productCode}`;
@@ -2163,7 +2106,6 @@ function App() {
     return {
       key: entityKey,
       draftKey,
-      uploadQueueKey: entityKey,
       type: "inspection",
       작업기준일또는CSV식별값: currentJob?.job_key || "",
       작성일시: new Date().toISOString(),
@@ -2201,7 +2143,6 @@ function App() {
       entries.push({
         key: makeMovementPendingKey("RETURN", currentJob.job_key, product.productCode, product.partner, centerName),
         draftKey: `return||${product.partner}||${product.productCode}||${centerName}`,
-        uploadQueueKey: `return||${product.partner}||${product.productCode}||${centerName}`,
         type: "movement",
         movementType: "RETURN",
         작업기준일또는CSV식별값: currentJob.job_key,
@@ -2229,7 +2170,6 @@ function App() {
       entries.push({
         key: makeMovementPendingKey("EXCHANGE", currentJob.job_key, product.productCode, product.partner, centerName),
         draftKey: `return||${product.partner}||${product.productCode}||${centerName}`,
-        uploadQueueKey: `return||${product.partner}||${product.productCode}||${centerName}`,
         type: "movement",
         movementType: "EXCHANGE",
         작업기준일또는CSV식별값: currentJob.job_key,
@@ -2412,7 +2352,16 @@ function App() {
         throw new Error(result.message || "이미지 등록 실패");
       }
 
-      setProductImageMap(buildProductImageMapFromRows(result.product_images));
+      const nextMap = (Array.isArray(result.product_images) ? result.product_images : []).reduce((acc, item) => {
+        const key = String(item?.["이미지매핑키"] || "").trim();
+        const fileId = String(item?.["드라이브파일ID"] || "").trim();
+        const url = fileId
+          ? `https://drive.google.com/thumbnail?id=${fileId}&sz=w1200`
+          : String(item?.["이미지URL"] || "").trim();
+        if (key && url) acc[key] = url;
+        return acc;
+      }, {});
+      setProductImageMap(nextMap);
       setToast("이미지 등록 완료");
       setMessage("상품 이미지가 등록되었습니다.");
     } catch (err) {
@@ -2436,13 +2385,12 @@ function App() {
       const tasks = rows.map((row) =>
         runQueuedTask(saveQueueRef, row.key, () =>
           runWithSaveSlot(async () => {
-            const { key, draftKey, uploadQueueKey, photoItems, ...rest } = row;
+            const { key, draftKey, photoItems, ...rest } = row;
             const statusKeys = [key, draftKey].filter(Boolean);
 
             try {
-              const activeUploadKey = uploadQueueKey || draftKey || key;
-              if (activeUploadKey && uploadQueueRef.current[activeUploadKey]) {
-                await uploadQueueRef.current[activeUploadKey];
+              if (draftKey && uploadQueueRef.current[draftKey]) {
+                await uploadQueueRef.current[draftKey];
               }
               const latestDraft = draftKey ? draftsRef.current[draftKey] || {} : {};
               const latestPhotoItems = serializePhotoItems(latestDraft.photoFiles);
@@ -2967,37 +2915,6 @@ function App() {
         </div>
       </div>
 
-      {saveQueueItems.length > 0 && (
-        <div style={styles.panel}>
-          <div style={styles.saveQueueHeader}>
-            <div style={styles.sectionTitle}>저장 현황</div>
-            <button
-              type="button"
-              onClick={() => setShowSaveStatusPanel((prev) => !prev)}
-              style={styles.queueToggleButton}
-            >
-              {showSaveStatusPanel ? "접기" : `열기 (${saveQueueItems.length})`}
-            </button>
-          </div>
-          {showSaveStatusPanel ? (
-            <div style={styles.saveQueueList}>
-              {saveQueueItems.map((item) => (
-                <div key={item.key} style={styles.saveQueueCard}>
-                  <div style={styles.saveQueueTitle}>{item.title}</div>
-                  <div style={styles.saveQueueMeta}>
-                    <span>{getStatusLabel(item.status)}</span>
-                    <span>{item.progress}%</span>
-                  </div>
-                  <div style={styles.saveQueueTrack}>
-                    <div style={{ ...styles.saveQueueFill, width: `${item.progress}%` }} />
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : null}
-        </div>
-      )}
-
       <div style={styles.panel}>
         <div style={styles.csvHeaderRow}>
           <div>
@@ -3083,36 +3000,13 @@ function App() {
       <div style={styles.panel}>
         <div style={styles.happycallHeader}>
           <div>
-            <div style={styles.sectionTitle}>{selectedHappycallPeriodMeta.title} {totalVisibleProducts ? `(${totalVisibleProducts}건)` : ""}</div>
-            <div style={styles.heroSubtext}>{selectedHappycallPeriodMeta.subtitle}</div>
-          </div>
-          <div style={styles.happycallPeriodRow}>
-            <button
-              type="button"
-              onClick={() => setSelectedHappycallPeriod("1d")}
-              style={{ ...styles.happycallPeriodButton, ...(selectedHappycallPeriod === "1d" ? styles.happycallPeriodButtonActive : {}) }}
-            >
-              전일
-            </button>
-            <button
-              type="button"
-              onClick={() => setSelectedHappycallPeriod("7d")}
-              style={{ ...styles.happycallPeriodButton, ...(selectedHappycallPeriod === "7d" ? styles.happycallPeriodButtonActive : {}) }}
-            >
-              주별
-            </button>
-            <button
-              type="button"
-              onClick={() => setSelectedHappycallPeriod("30d")}
-              style={{ ...styles.happycallPeriodButton, ...(selectedHappycallPeriod === "30d" ? styles.happycallPeriodButtonActive : {}) }}
-            >
-              월별
-            </button>
+            <div style={styles.sectionTitle}>전일 해피콜 TOP 5 {totalVisibleProducts ? `(${totalVisibleProducts}건)` : ""}</div>
+            <div style={styles.heroSubtext}>전일 접수 해피콜 기준</div>
           </div>
         </div>
 
-        {selectedHappycallTopList.length === 0 ? (
-          <div style={styles.emptyBox}>해피콜 데이터가 없습니다.</div>
+        {previousDayHappycallTopList.length === 0 ? (
+          <div style={styles.emptyBox}>전일 해피콜 데이터가 없습니다.</div>
         ) : (
           <div style={styles.happycallShowcase}>
             {happycallHeroCard ? (
@@ -3125,7 +3019,6 @@ function App() {
                   <div style={styles.heroTopName}>{happycallHeroCard.productName}</div>
                   <div style={styles.heroTopMeta}>
                     {happycallHeroCard.count.toLocaleString("ko-KR")}건 · {formatPercent(happycallHeroCard.share)}
-                    {happycallHeroCard.partnerName ? ` · ${happycallHeroCard.partnerName}` : ""}
                   </div>
                   <div style={styles.heroProgressRow}>
                     <div style={styles.heroProgressTrack}>
@@ -3171,25 +3064,13 @@ function App() {
                   >
                     <div style={styles.heroMiniLabel}>
                       <span>{getTopMedal(card.rank) || "•"}</span>
-                      <span>{`TOP ${card.rank}`}</span>
+                      <span>{card.rank <= 3 ? `TOP ${card.rank}` : ""}</span>
                     </div>
                     <div style={styles.heroMiniContent}>
                       <div style={styles.heroMiniCopy}>
-                        <div style={styles.heroMiniPartner}>{card.partnerName || "-"}</div>
                         <div style={styles.heroMiniName}>{card.productName}</div>
                         <div style={styles.heroMiniMeta}>
                           {card.count.toLocaleString("ko-KR")}건 · {formatPercent(card.share)}
-                        </div>
-                        <div style={styles.heroMiniProgressRow}>
-                          <div style={styles.heroMiniProgressTrack}>
-                            <div
-                              style={{
-                                ...styles.heroMiniProgressFill,
-                                width: `${Math.max(10, Math.min(100, card.share * 100))}%`,
-                              }}
-                            />
-                          </div>
-                          <div style={styles.heroMiniProgressValue}>{formatPercent(card.share)}</div>
                         </div>
                       </div>
                       {card.imageSrc ? (
@@ -3802,11 +3683,11 @@ function App() {
                       <div style={styles.metaText}>코드 {product.productCode || "-"}</div>
                       <div style={styles.metaText}>협력사 {product.partner || "-"}</div>
                       <div style={styles.metaText}>총 발주 {parseQty(product.totalQty).toLocaleString("ko-KR")}개</div>
-                      <div style={styles.metaText}>{product.hasVisibleImage ? "현재 이미지 있음" : "현재 이미지 없음"}</div>
+                      <div style={styles.metaText}>{product.hasCustomImage ? "등록 이미지 있음" : "등록 이미지 없음"}</div>
                     </div>
-                    {product.imageSrc ? (
+                    {product.customImageSrc ? (
                       <div style={{ ...styles.cardThumbFrame, width: 64, height: 64 }}>
-                        <ProductImage product={product} src={product.imageSrc} alt={product.productName} style={styles.cardThumbImage} />
+                        <img src={product.customImageSrc} alt={product.productName} style={styles.cardThumbImage} />
                       </div>
                     ) : null}
                     <button
@@ -3820,7 +3701,7 @@ function App() {
                         opacity: uploadingImageKey === product.imageKey ? 0.7 : 1,
                       }}
                     >
-                      {uploadingImageKey === product.imageKey ? "등록 중..." : product.hasVisibleImage ? "이미지 교체" : "이미지 등록"}
+                      {uploadingImageKey === product.imageKey ? "등록 중..." : product.hasCustomImage ? "이미지 교체" : "이미지 등록"}
                     </button>
                   </div>
                 ))}
@@ -4024,61 +3905,6 @@ const styles = {
     border: "1px solid #e4eaf5",
     boxShadow: "0 12px 30px rgba(101, 130, 184, 0.08)",
   },
-  saveQueueHeader: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    gap: 12,
-    marginBottom: 10,
-  },
-  queueToggleButton: {
-    minHeight: 36,
-    padding: "0 12px",
-    borderRadius: 999,
-    border: "1px solid #c7d2fe",
-    background: "#eef2ff",
-    color: "#3730a3",
-    fontSize: 13,
-    fontWeight: 800,
-    cursor: "pointer",
-  },
-  saveQueueList: {
-    display: "flex",
-    flexDirection: "column",
-    gap: 8,
-  },
-  saveQueueCard: {
-    border: "1px solid #e4eaf5",
-    borderRadius: 16,
-    padding: 12,
-    background: "#fff",
-  },
-  saveQueueTitle: {
-    fontSize: 14,
-    fontWeight: 800,
-    color: "#1f2f53",
-    marginBottom: 6,
-  },
-  saveQueueMeta: {
-    display: "flex",
-    justifyContent: "space-between",
-    gap: 8,
-    fontSize: 12,
-    color: "#6f7fa4",
-    fontWeight: 700,
-    marginBottom: 8,
-  },
-  saveQueueTrack: {
-    height: 8,
-    borderRadius: 999,
-    background: "#e9eef8",
-    overflow: "hidden",
-  },
-  saveQueueFill: {
-    height: "100%",
-    borderRadius: 999,
-    background: "linear-gradient(90deg, #4b7bec 0%, #2454c3 100%)",
-  },
   happycallHeader: {
     display: "flex",
     justifyContent: "space-between",
@@ -4086,27 +3912,6 @@ const styles = {
     alignItems: "flex-start",
     flexWrap: "wrap",
     marginBottom: 10,
-  },
-  happycallPeriodRow: {
-    display: "flex",
-    gap: 8,
-    flexWrap: "wrap",
-  },
-  happycallPeriodButton: {
-    minHeight: 34,
-    padding: "0 12px",
-    borderRadius: 999,
-    border: "1px solid #dbe4f3",
-    background: "#ffffff",
-    color: "#5b6b8c",
-    fontSize: 12,
-    fontWeight: 800,
-    cursor: "pointer",
-  },
-  happycallPeriodButtonActive: {
-    background: "#2f63da",
-    borderColor: "#2f63da",
-    color: "#fff",
   },
   heroSubtext: {
     marginTop: 4,
@@ -4438,14 +4243,6 @@ const styles = {
     fontWeight: 800,
     marginBottom: 8,
   },
-  heroMiniPartner: {
-    fontSize: 11,
-    fontWeight: 800,
-    color: "#7c8aab",
-    marginBottom: 6,
-    wordBreak: "break-word",
-    overflowWrap: "anywhere",
-  },
   heroMiniName: {
     fontSize: 17,
     lineHeight: 1.24,
@@ -4459,29 +4256,6 @@ const styles = {
     fontSize: 13,
     color: "#687694",
     fontWeight: 700,
-  },
-  heroMiniProgressRow: {
-    display: "grid",
-    gridTemplateColumns: "minmax(0, 1fr) auto",
-    alignItems: "center",
-    gap: 8,
-    marginTop: 10,
-  },
-  heroMiniProgressTrack: {
-    height: 8,
-    borderRadius: 999,
-    background: "rgba(37, 84, 195, 0.12)",
-    overflow: "hidden",
-  },
-  heroMiniProgressFill: {
-    height: "100%",
-    borderRadius: 999,
-    background: "linear-gradient(90deg, #3f73e6 0%, #2454c3 100%)",
-  },
-  heroMiniProgressValue: {
-    fontSize: 12,
-    fontWeight: 800,
-    color: "#6377b9",
   },
   heroMiniThumbFrame: {
     width: 58,
@@ -5110,3 +4884,4 @@ const styles = {
 };
 
 export default App;
+

@@ -921,11 +921,6 @@ const delay = (ms) =>
 const createUploadedPhotoItem = (item) => ({
   __uploaded: true,
   fileId: String(item?.fileId || "").trim(),
-  previewUrl:
-    String(item?.previewUrl || "").trim() ||
-    (String(item?.fileId || "").trim()
-      ? `https://drive.google.com/thumbnail?id=${String(item?.fileId || "").trim()}&sz=w1200`
-      : ""),
   viewUrl: String(item?.viewUrl || "").trim(),
   driveUrl: String(item?.driveUrl || "").trim(),
   fileName: String(item?.fileName || "").trim(),
@@ -1129,7 +1124,7 @@ function DraftPhotoPreviewItem({ file, index, onRemove, styles }) {
     }
 
     if (isUploadedPhotoItem(file)) {
-      setPreviewUrl(file.previewUrl || file.viewUrl || "");
+      setPreviewUrl(file.viewUrl || "");
       return undefined;
     }
 
@@ -1255,7 +1250,6 @@ function App() {
   const [imageRegisterSearch, setImageRegisterSearch] = useState("");
   const [selectedImageTargetKey, setSelectedImageTargetKey] = useState("");
   const [uploadingImageKey, setUploadingImageKey] = useState("");
-  const [showSaveStatusPanel, setShowSaveStatusPanel] = useState(false);
 
   const [isScannerOpen, setIsScannerOpen] = useState(false);
   const [scannerError, setScannerError] = useState("");
@@ -1318,33 +1312,6 @@ function App() {
     if (status === "failed") return "확인필요";
     return "";
   };
-
-  const getStatusProgress = (status) => {
-    if (status === "pending") return 15;
-    if (status === "uploading") return 45;
-    if (status === "retrying") return 60;
-    if (status === "saving") return 80;
-    if (status === "saved") return 100;
-    if (status === "failed") return 100;
-    return 0;
-  };
-
-  const buildQueueItemTitle = useCallback((entry) => {
-    if (!entry) return "";
-    const partner = String(entry["협력사명"] || entry.partnerName || "").trim();
-    const productName = String(entry["상품명"] || entry.productName || "").trim();
-    const movementType = String(entry.movementType || "").trim().toUpperCase();
-    const typeLabel =
-      entry.type === "inspection"
-        ? "검품"
-        : movementType === "RETURN"
-        ? "회송"
-        : movementType === "EXCHANGE"
-        ? "교환"
-        : "저장";
-
-    return [partner, productName, typeLabel].filter(Boolean).join(" - ");
-  }, []);
 
   const serializePhotoItems = useCallback(
     (items) =>
@@ -2139,22 +2106,6 @@ function App() {
       });
   }, [groupedPartners, imageRegisterSearch, productImageMap]);
 
-  const saveQueueItems = useMemo(() => {
-    return Object.values(pendingMap || {})
-      .map((entry) => {
-        const statusKey = entry.draftKey || entry.key;
-        const status = itemStatusMap[statusKey] || itemStatusMap[entry.key] || "pending";
-        return {
-          key: entry.key,
-          title: buildQueueItemTitle(entry),
-          status,
-          progress: getStatusProgress(status),
-        };
-      })
-      .filter((item) => item.title)
-      .sort((a, b) => a.title.localeCompare(b.title, "ko"));
-  }, [buildQueueItemTitle, itemStatusMap, pendingMap]);
-
   const buildInspectionPendingEntry = useCallback((product, nextDraft = {}) => {
     const entityKey = makeEntityKey(currentJob?.job_key, product.productCode, product.partner);
     const draftKey = `inspection||${product.partner}||${product.productCode}`;
@@ -2163,7 +2114,6 @@ function App() {
     return {
       key: entityKey,
       draftKey,
-      uploadQueueKey: entityKey,
       type: "inspection",
       작업기준일또는CSV식별값: currentJob?.job_key || "",
       작성일시: new Date().toISOString(),
@@ -2201,7 +2151,6 @@ function App() {
       entries.push({
         key: makeMovementPendingKey("RETURN", currentJob.job_key, product.productCode, product.partner, centerName),
         draftKey: `return||${product.partner}||${product.productCode}||${centerName}`,
-        uploadQueueKey: `return||${product.partner}||${product.productCode}||${centerName}`,
         type: "movement",
         movementType: "RETURN",
         작업기준일또는CSV식별값: currentJob.job_key,
@@ -2229,7 +2178,6 @@ function App() {
       entries.push({
         key: makeMovementPendingKey("EXCHANGE", currentJob.job_key, product.productCode, product.partner, centerName),
         draftKey: `return||${product.partner}||${product.productCode}||${centerName}`,
-        uploadQueueKey: `return||${product.partner}||${product.productCode}||${centerName}`,
         type: "movement",
         movementType: "EXCHANGE",
         작업기준일또는CSV식별값: currentJob.job_key,
@@ -2436,13 +2384,12 @@ function App() {
       const tasks = rows.map((row) =>
         runQueuedTask(saveQueueRef, row.key, () =>
           runWithSaveSlot(async () => {
-            const { key, draftKey, uploadQueueKey, photoItems, ...rest } = row;
+            const { key, draftKey, photoItems, ...rest } = row;
             const statusKeys = [key, draftKey].filter(Boolean);
 
             try {
-              const activeUploadKey = uploadQueueKey || draftKey || key;
-              if (activeUploadKey && uploadQueueRef.current[activeUploadKey]) {
-                await uploadQueueRef.current[activeUploadKey];
+              if (draftKey && uploadQueueRef.current[draftKey]) {
+                await uploadQueueRef.current[draftKey];
               }
               const latestDraft = draftKey ? draftsRef.current[draftKey] || {} : {};
               const latestPhotoItems = serializePhotoItems(latestDraft.photoFiles);
@@ -2966,37 +2913,6 @@ function App() {
           </button>
         </div>
       </div>
-
-      {saveQueueItems.length > 0 && (
-        <div style={styles.panel}>
-          <div style={styles.saveQueueHeader}>
-            <div style={styles.sectionTitle}>저장 현황</div>
-            <button
-              type="button"
-              onClick={() => setShowSaveStatusPanel((prev) => !prev)}
-              style={styles.queueToggleButton}
-            >
-              {showSaveStatusPanel ? "접기" : `열기 (${saveQueueItems.length})`}
-            </button>
-          </div>
-          {showSaveStatusPanel ? (
-            <div style={styles.saveQueueList}>
-              {saveQueueItems.map((item) => (
-                <div key={item.key} style={styles.saveQueueCard}>
-                  <div style={styles.saveQueueTitle}>{item.title}</div>
-                  <div style={styles.saveQueueMeta}>
-                    <span>{getStatusLabel(item.status)}</span>
-                    <span>{item.progress}%</span>
-                  </div>
-                  <div style={styles.saveQueueTrack}>
-                    <div style={{ ...styles.saveQueueFill, width: `${item.progress}%` }} />
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : null}
-        </div>
-      )}
 
       <div style={styles.panel}>
         <div style={styles.csvHeaderRow}>
@@ -4023,61 +3939,6 @@ const styles = {
     marginBottom: 14,
     border: "1px solid #e4eaf5",
     boxShadow: "0 12px 30px rgba(101, 130, 184, 0.08)",
-  },
-  saveQueueHeader: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    gap: 12,
-    marginBottom: 10,
-  },
-  queueToggleButton: {
-    minHeight: 36,
-    padding: "0 12px",
-    borderRadius: 999,
-    border: "1px solid #c7d2fe",
-    background: "#eef2ff",
-    color: "#3730a3",
-    fontSize: 13,
-    fontWeight: 800,
-    cursor: "pointer",
-  },
-  saveQueueList: {
-    display: "flex",
-    flexDirection: "column",
-    gap: 8,
-  },
-  saveQueueCard: {
-    border: "1px solid #e4eaf5",
-    borderRadius: 16,
-    padding: 12,
-    background: "#fff",
-  },
-  saveQueueTitle: {
-    fontSize: 14,
-    fontWeight: 800,
-    color: "#1f2f53",
-    marginBottom: 6,
-  },
-  saveQueueMeta: {
-    display: "flex",
-    justifyContent: "space-between",
-    gap: 8,
-    fontSize: 12,
-    color: "#6f7fa4",
-    fontWeight: 700,
-    marginBottom: 8,
-  },
-  saveQueueTrack: {
-    height: 8,
-    borderRadius: 999,
-    background: "#e9eef8",
-    overflow: "hidden",
-  },
-  saveQueueFill: {
-    height: "100%",
-    borderRadius: 999,
-    background: "linear-gradient(90deg, #4b7bec 0%, #2454c3 100%)",
   },
   happycallHeader: {
     display: "flex",

@@ -845,13 +845,9 @@ function saveBatch_(rows) {
     }
   });
 
-  if (inspectionRows.length > 0 || movementRows.length > 0) {
-    syncInspectionMovementTotals_(inspectionSheet, recordsSheet);
-    updateInspectionDashboard_(ss);
-  }
-  if (movementRows.length > 0) {
-    syncReturnSheets_(ss);
-  }
+  syncInspectionMovementTotals_(inspectionSheet, recordsSheet);
+  updateInspectionDashboard_(ss);
+  syncReturnSheets_(ss);
   autoResizeOperationalSheets_(ss);
 
   return {
@@ -1117,22 +1113,10 @@ function buildInspectionPayload_(payload, existingRecord) {
       )
     : [];
   const existingPhotoFileIds = splitPhotoSourceText_((existingRecord && existingRecord["사진파일ID목록"]) || "");
-  const payloadPhotoFileIds = splitPhotoSourceText_(
-    payload["사진파일ID목록"] || payload["photoFileIds"] || ""
-  );
   const uploadedPhotoFileIds = uploaded.map(function (item) {
     return item.fileId;
   });
-  const mergedExistingAndPayload = mergePhotoLinks_(
-    existingPhotoFileIds.join("\n"),
-    payloadPhotoFileIds.join("\n"),
-    ""
-  );
-  const photoFileIds = mergePhotoLinks_(
-    mergedExistingAndPayload,
-    uploadedPhotoFileIds.join("\n"),
-    ""
-  ).split(/\n+/).filter(Boolean);
+  const photoFileIds = mergePhotoLinks_(existingPhotoFileIds.join("\n"), uploadedPhotoFileIds.join("\n"), "").split(/\n+/).filter(Boolean);
 
   return {
     "작성일시": payload["작성일시"] || new Date().toISOString(),
@@ -1161,22 +1145,10 @@ function buildRecordPayload_(payload, existingRecord) {
       )
     : [];
   const existingPhotoFileIds = splitPhotoSourceText_((existingRecord && existingRecord["사진파일ID목록"]) || "");
-  const payloadPhotoFileIds = splitPhotoSourceText_(
-    payload["사진파일ID목록"] || payload["photoFileIds"] || ""
-  );
   const uploadedPhotoFileIds = uploaded.map(function (item) {
     return item.fileId;
   });
-  const mergedExistingAndPayload = mergePhotoLinks_(
-    existingPhotoFileIds.join("\n"),
-    payloadPhotoFileIds.join("\n"),
-    ""
-  );
-  const photoFileIds = mergePhotoLinks_(
-    mergedExistingAndPayload,
-    uploadedPhotoFileIds.join("\n"),
-    ""
-  ).split(/\n+/).filter(Boolean);
+  const photoFileIds = mergePhotoLinks_(existingPhotoFileIds.join("\n"), uploadedPhotoFileIds.join("\n"), "").split(/\n+/).filter(Boolean);
 
   const record = {
     "작성일시": payload["작성일시"] || new Date().toISOString(),
@@ -2636,12 +2608,10 @@ function savePhotoToDrive_(photo, baseName, index, preferredFileName) {
 
   const fileId = file.getId();
   const viewUrl = "https://drive.google.com/uc?export=view&id=" + fileId;
-  const previewUrl = "https://drive.google.com/thumbnail?id=" + fileId + "&sz=w1200";
 
   return {
     fileId: fileId,
     viewUrl: viewUrl,
-    previewUrl: previewUrl,
     driveUrl: file.getUrl(),
     fileName: file.getName(),
   };
@@ -3626,7 +3596,7 @@ function syncReturnSheets_(ss) {
       var exchangeQty = parseNumber_(movementTotals.exchangeQty);
       var returnQty = parseNumber_(movementTotals.returnQty);
 
-      if (exchangeQty <= 0 && returnQty <= 0) {
+      if (inspectionQty <= 0 && exchangeQty <= 0 && returnQty <= 0) {
         return null;
       }
 
