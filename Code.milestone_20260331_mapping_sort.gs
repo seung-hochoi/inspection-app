@@ -19,39 +19,11 @@ const JOB_CACHE_MAX_DATA_ROWS = 30000;
 var operationalReferenceCache_ = null;
 
 function getOperationalMappingSheet_(ss) {
-  var direct =
+  return (
     ss.getSheetByName(SHEET_NAMES.mapping) ||
     ss.getSheetByName("매핑기준표") ||
-    ss.getSheetByName("기준표");
-
-  if (direct) {
-    return direct;
-  }
-
-  var sheets = ss.getSheets();
-  for (var i = 0; i < sheets.length; i += 1) {
-    var sheet = sheets[i];
-    if (sheet.getLastRow() < 1 || sheet.getLastColumn() < 8) continue;
-    var header = sheet.getRange(1, 1, 1, 8).getValues()[0];
-    if (
-      String(header[0] || "").trim() === "소분류명" &&
-      String(header[1] || "").trim() === "대분류" &&
-      String(header[6] || "").trim() === "협력사" &&
-      String(header[7] || "").trim() === "값"
-    ) {
-      return sheet;
-    }
-  }
-
-  return null;
-}
-
-function normalizeOperationalLookupText_(value) {
-  return String(value || "")
-    .replace(/\uFEFF/g, "")
-    .normalize("NFKC")
-    .replace(/\s+/g, " ")
-    .trim();
+    ss.getSheetByName("기준표")
+  );
 }
 
 function normalizeOperationalMajorCategory_(value) {
@@ -81,7 +53,6 @@ function readOperationalReferenceMaps_(ss) {
   var maps = {
     subCategoryToMajor: {},
     partnerToStandard: {},
-    subCategoryEntries: [],
   };
 
   if (!sheet || sheet.getLastRow() < 2) {
@@ -92,24 +63,13 @@ function readOperationalReferenceMaps_(ss) {
   var values = sheet.getRange(1, 1, sheet.getLastRow(), Math.max(sheet.getLastColumn(), 8)).getValues();
   for (var r = 1; r < values.length; r += 1) {
     var row = values[r];
-    var subCategory = normalizeOperationalLookupText_(row[0]);
+    var subCategory = String(row[0] || "").trim();
     var majorCategory = normalizeOperationalMajorCategory_(row[1]);
-    var partnerOriginal = normalizeOperationalLookupText_(row[6]);
+    var partnerOriginal = String(row[6] || "").trim();
     var partnerStandard = String(row[7] || "").trim();
 
     if (subCategory && majorCategory) {
       maps.subCategoryToMajor[subCategory] = majorCategory;
-      maps.subCategoryEntries.push({
-        raw: subCategory,
-        normalized: normalizeOperationalLookupText_(subCategory).toLowerCase(),
-        tokens: subCategory
-          .split("/")
-          .map(function (item) {
-            return normalizeOperationalLookupText_(item).toLowerCase();
-          })
-          .filter(Boolean),
-        majorCategory: majorCategory,
-      });
     }
     if (partnerOriginal && partnerStandard) {
       maps.partnerToStandard[partnerOriginal] = partnerStandard;
@@ -120,49 +80,10 @@ function readOperationalReferenceMaps_(ss) {
   return maps;
 }
 
-function inferOperationalMetaFromProductName_(productName, maps) {
-  var normalizedName = normalizeOperationalLookupText_(productName).toLowerCase();
-  if (!normalizedName || !maps || !Array.isArray(maps.subCategoryEntries)) {
-    return { subCategory: "", majorCategory: "미분류" };
-  }
-
-  var bestMatch = null;
-  maps.subCategoryEntries.forEach(function (entry) {
-    var matched = false;
-    if (entry.normalized && normalizedName.indexOf(entry.normalized) >= 0) {
-      matched = true;
-    } else {
-      for (var i = 0; i < entry.tokens.length; i += 1) {
-        var token = entry.tokens[i];
-        if (token && normalizedName.indexOf(token) >= 0) {
-          matched = true;
-          break;
-        }
-      }
-    }
-
-    if (!matched) return;
-
-    if (!bestMatch || entry.normalized.length > bestMatch.normalized.length) {
-      bestMatch = entry;
-    }
-  });
-
-  if (!bestMatch) {
-    return { subCategory: "", majorCategory: "미분류" };
-  }
-
-  return {
-    subCategory: bestMatch.raw,
-    majorCategory: bestMatch.majorCategory || "미분류",
-  };
-}
-
 function standardizeOperationalPartnerName_(value, maps) {
-  var rawText = String(value || "").trim();
-  var normalizedText = normalizeOperationalLookupText_(value);
-  if (!normalizedText) return "";
-  return (maps && maps.partnerToStandard && maps.partnerToStandard[normalizedText]) || rawText;
+  var text = String(value || "").trim();
+  if (!text) return "";
+  return (maps && maps.partnerToStandard && maps.partnerToStandard[text]) || text;
 }
 
 function buildOperationalProductMetaMap_(rows, maps) {
@@ -175,19 +96,14 @@ function buildOperationalProductMetaMap_(rows, maps) {
     var productCode = normalizeCode_(getRowFieldValue_(row, ["상품코드", "상품 코드", "코드", "바코드"]));
     var productName = String(getRowFieldValue_(row, ["상품명", "상품 명", "품목명", "품명"]) || "").trim();
     var nameKey = normalizeText_(productName);
-    var subCategory = normalizeOperationalLookupText_(
+    var subCategory = String(
       getRowFieldValue_(row, ["소분류명", "소분류", "카테고리소", "소카테고리", "중분류명", "중분류"])
-    );
-    var inferredMeta = inferOperationalMetaFromProductName_(productName, maps);
-    if (!subCategory && inferredMeta.subCategory) {
-      subCategory = inferredMeta.subCategory;
-    }
+    ).trim();
     var majorCategory =
       normalizeOperationalMajorCategory_(
         getRowFieldValue_(row, ["대분류", "카테고리대", "대카테고리", "과채"])
       ) ||
-      ((maps && maps.subCategoryToMajor && maps.subCategoryToMajor[subCategory]) || "") ||
-      inferredMeta.majorCategory;
+      ((maps && maps.subCategoryToMajor && maps.subCategoryToMajor[subCategory]) || "");
 
     if (!productCode && !nameKey) return;
 
@@ -261,53 +177,12 @@ function compareOperationalSortContext_(a, b) {
   return Number(a.originalOrder || 0) - Number(b.originalOrder || 0);
 }
 
-function applyOperationalTableBorders_(sheet, width) {
-  if (!sheet || sheet.getLastRow() < 1) return;
-  var rowCount = Math.max(sheet.getLastRow(), 1);
-  sheet
-    .getRange(1, 1, rowCount, width)
-    .setBorder(true, true, true, true, true, true, "#d1d5db", SpreadsheetApp.BorderStyle.SOLID);
-}
-
-function mergeOperationalCategoryColumn_(sheet, rowCount) {
-  if (!sheet || rowCount <= 0) return;
-
-  sheet.getRange(2, 1, rowCount, 1).breakApart();
-  var values = sheet.getRange(2, 1, rowCount, 1).getValues();
-  var startRow = 2;
-  var currentValue = String(values[0][0] || "").trim();
-  var span = 1;
-
-  for (var i = 1; i < values.length; i += 1) {
-    var nextValue = String(values[i][0] || "").trim();
-    if (nextValue === currentValue) {
-      span += 1;
-      continue;
-    }
-
-    if (currentValue && span > 1) {
-      sheet.getRange(startRow, 1, span, 1).merge();
-    }
-
-    startRow = i + 2;
-    currentValue = nextValue;
-    span = 1;
-  }
-
-  if (currentValue && span > 1) {
-    sheet.getRange(startRow, 1, span, 1).merge();
-  }
-
-  sheet.getRange(2, 1, rowCount, 1).setVerticalAlignment("middle").setHorizontalAlignment("center");
-}
-
 function doGet(e) {
   try {
     const action = (e && e.parameter && e.parameter.action) || "bootstrap";
 
     if (action === "bootstrap") {
       updateInspectionDashboard_(SpreadsheetApp.getActiveSpreadsheet());
-      var latestJobResult = tryLoadLatestJobWithError_();
       return jsonOutput_({
         ok: true,
         data: {
@@ -316,8 +191,7 @@ function doGet(e) {
             event_rows: readObjectsSheet_(SHEET_NAMES.event),
             reservation_rows: readReservationRows_(),
           },
-          current_job: latestJobResult.job,
-          current_job_load_error: latestJobResult.error,
+          current_job: loadLatestJob_(),
           worksheet_url: SpreadsheetApp.getActiveSpreadsheet().getUrl(),
           summary: getDashboardSummary_(),
           happycall: getHappycallAnalytics_(),
@@ -661,16 +535,6 @@ function cacheCsvJob_(payload) {
     throw new Error("job_key가 없습니다.");
   }
 
-  if (isNonOperationalJob_(jobKey, sourceFileName)) {
-    return {
-      job_key: jobKey,
-      source_file_name: sourceFileName,
-      source_file_modified: sourceFileModified,
-      created_at: new Date().toISOString(),
-      rows: parsedRows,
-    };
-  }
-
   const existingJob = findJobByKey_(jobsSheet, jobKey);
   if (existingJob) {
     var existingLoadedJob = loadJobRowsByKey_(ss, jobKey);
@@ -681,7 +545,6 @@ function cacheCsvJob_(payload) {
   const now = new Date().toISOString();
 
   jobsSheet.appendRow([now, jobKey, sourceFileName, sourceFileModified, parsedRows.length]);
-  verifyCachedJobMeta_(jobsSheet, jobKey, sourceFileName, parsedRows.length);
 
   if (parsedRows.length > 0) {
     const values = parsedRows.map(function (row, idx) {
@@ -692,31 +555,10 @@ function cacheCsvJob_(payload) {
     pruneJobCacheRows_(cacheSheet);
   }
 
-  verifyCachedJobRows_(cacheSheet, jobKey, parsedRows.length);
-
   var job = loadJobRowsByKey_(ss, jobKey);
   updateInspectionDashboard_(ss);
   autoResizeOperationalSheets_(ss);
   return job;
-}
-
-function isNonOperationalJob_(jobKey, sourceFileName) {
-  var normalizedJobKey = String(jobKey || "").trim().toLowerCase();
-  var normalizedSourceName = String(sourceFileName || "").trim().toLowerCase();
-
-  if (!normalizedJobKey && !normalizedSourceName) {
-    return false;
-  }
-
-  if (/^(test|debug)[_-]/.test(normalizedJobKey)) {
-    return true;
-  }
-
-  if (normalizedSourceName === "t.csv" || normalizedSourceName === "test.csv" || normalizedSourceName === "debug.csv") {
-    return true;
-  }
-
-  return false;
 }
 
 function loadLatestJob_() {
@@ -728,30 +570,14 @@ function loadLatestJob_() {
   }
 
   const values = jobsSheet.getRange(2, 1, jobsSheet.getLastRow() - 1, jobsSheet.getLastColumn()).getValues();
+  const last = values[values.length - 1];
+  const jobKey = String(last[1] || "").trim();
 
-  for (var i = values.length - 1; i >= 0; i -= 1) {
-    var jobKey = String(values[i][1] || "").trim();
-    var sourceFileName = String(values[i][2] || "").trim();
-    if (!jobKey) continue;
-    if (isNonOperationalJob_(jobKey, sourceFileName)) continue;
-    return loadJobRowsByKey_(ss, jobKey);
+  if (!jobKey) {
+    return null;
   }
 
-  return null;
-}
-
-function tryLoadLatestJobWithError_() {
-  try {
-    return {
-      job: loadLatestJob_(),
-      error: "",
-    };
-  } catch (err) {
-    return {
-      job: null,
-      error: err && err.message ? String(err.message) : "current_job 로드 실패",
-    };
-  }
+  return loadJobRowsByKey_(ss, jobKey);
 }
 
 function loadJobRowsByKey_(ss, jobKey) {
@@ -793,7 +619,6 @@ function loadJobRowsByKey_(ss, jobKey) {
   }
 
   const cacheValues = cacheSheet.getRange(2, 1, cacheSheet.getLastRow() - 1, 4).getValues();
-  const parseErrors = [];
   const rows = cacheValues
     .filter(function (row) {
       return String(row[1] || "").trim() === jobKey;
@@ -802,28 +627,8 @@ function loadJobRowsByKey_(ss, jobKey) {
       return Number(a[2] || 0) - Number(b[2] || 0);
     })
     .map(function (row) {
-      try {
-        return JSON.parse(String(row[3] || "{}"));
-      } catch (err) {
-        parseErrors.push({
-          row_index: Number(row[2] || 0),
-          message: err && err.message ? String(err.message) : "row_json parse 실패",
-        });
-        return null;
-      }
-    })
-    .filter(function (row) {
-      return !!row;
+      return JSON.parse(String(row[3] || "{}"));
     });
-
-  if (parseErrors.length > 0) {
-    throw new Error(
-      "job_cache 복원 실패: job_key=" +
-        jobKey +
-        ", parse_error_rows=" +
-        parseErrors.map(function (item) { return item.row_index; }).join(",")
-    );
-  }
 
   return {
     job_key: jobMeta.job_key,
@@ -841,13 +646,13 @@ function findJobByKey_(jobsSheet, jobKey) {
 
   for (var i = values.length - 1; i >= 0; i -= 1) {
     if (String(values[i][1] || "").trim() === jobKey) {
-  return {
-    created_at: values[i][0],
-    job_key: values[i][1],
-    source_file_name: values[i][2],
-    source_file_modified: values[i][3],
-    row_count: values[i][4],
-  };
+      return {
+        created_at: values[i][0],
+        job_key: values[i][1],
+        source_file_name: values[i][2],
+        source_file_modified: values[i][3],
+        row_count: values[i][4],
+      };
     }
   }
 
@@ -3307,45 +3112,6 @@ function getPhotoAssetFromSource_(source) {
   return null;
 }
 
-function verifyCachedJobMeta_(jobsSheet, jobKey, sourceFileName, expectedRowCount) {
-  const job = findJobByKey_(jobsSheet, jobKey);
-  if (!job) {
-    throw new Error("jobs 저장 검증 실패: job row를 찾지 못했습니다.");
-  }
-
-  if (String(job.source_file_name || "").trim() !== String(sourceFileName || "").trim()) {
-    throw new Error("jobs 저장 검증 실패: source_file_name 불일치");
-  }
-
-  if (Number(job.row_count || 0) !== Number(expectedRowCount || 0)) {
-    throw new Error("jobs 저장 검증 실패: row_count 불일치");
-  }
-}
-
-function verifyCachedJobRows_(cacheSheet, jobKey, expectedRowCount) {
-  if (Number(expectedRowCount || 0) === 0) {
-    return;
-  }
-
-  if (cacheSheet.getLastRow() < 2) {
-    throw new Error("job_cache 저장 검증 실패: cache sheet에 데이터가 없습니다.");
-  }
-
-  const values = cacheSheet.getRange(2, 1, cacheSheet.getLastRow() - 1, 4).getValues();
-  const matchedRows = values.filter(function (row) {
-    return String(row[1] || "").trim() === String(jobKey || "").trim();
-  });
-
-  if (matchedRows.length !== Number(expectedRowCount || 0)) {
-    throw new Error(
-      "job_cache 저장 검증 실패: expected=" +
-        expectedRowCount +
-        ", actual=" +
-        matchedRows.length
-    );
-  }
-}
-
 function getFileNameFromUrl_(value) {
   var text = String(value || "").trim();
   var match = text.match(/\/([^\/?#]+)(?:[?#].*)?$/);
@@ -3968,7 +3734,6 @@ function syncReturnSheets_(ss) {
   var summarySheet = getOrCreateSheet_(ss, SHEET_NAMES.returnSummary);
   var latestJob = loadLatestJob_();
   var currentJobKey = latestJob && latestJob.job_key ? String(latestJob.job_key).trim() : "";
-  operationalReferenceCache_ = null;
   var referenceMaps = readOperationalReferenceMaps_(ss);
   var records = loadRecords_().filter(function (row) {
     return String(row["작업기준일또는CSV식별값"] || "").trim() === currentJobKey;
@@ -4080,7 +3845,6 @@ function syncReturnSheets_(ss) {
   if (centerValues.length > 0) {
     centerSheet.getRange(2, 1, centerValues.length, 9).setValues(centerValues);
   }
-  applyOperationalTableBorders_(centerSheet, 9);
 
   var summaryRows = Object.keys(skuRowMap)
     .map(function (key) {
@@ -4155,10 +3919,7 @@ function syncReturnSheets_(ss) {
     summarySheet.getRange(2, 1, summaryValues.length, 14).setValues(summaryValues);
     summarySheet.getRange(2, 8, summaryValues.length, 1).setNumberFormat("0.0%");
     summarySheet.getRange(2, 10, summaryValues.length, 1).setNumberFormat("0.0%");
-    mergeOperationalCategoryColumn_(summarySheet, summaryValues.length);
   }
-  applyOperationalTableBorders_(summarySheet, 14);
-  applyOperationalTableBorders_(getRecordSheet_(ss), recordHeaders_().length);
 
   return;
 }

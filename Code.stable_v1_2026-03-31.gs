@@ -307,7 +307,6 @@ function doGet(e) {
 
     if (action === "bootstrap") {
       updateInspectionDashboard_(SpreadsheetApp.getActiveSpreadsheet());
-      var latestJobResult = tryLoadLatestJobWithError_();
       return jsonOutput_({
         ok: true,
         data: {
@@ -316,8 +315,7 @@ function doGet(e) {
             event_rows: readObjectsSheet_(SHEET_NAMES.event),
             reservation_rows: readReservationRows_(),
           },
-          current_job: latestJobResult.job,
-          current_job_load_error: latestJobResult.error,
+          current_job: loadLatestJob_(),
           worksheet_url: SpreadsheetApp.getActiveSpreadsheet().getUrl(),
           summary: getDashboardSummary_(),
           happycall: getHappycallAnalytics_(),
@@ -661,16 +659,6 @@ function cacheCsvJob_(payload) {
     throw new Error("job_key가 없습니다.");
   }
 
-  if (isNonOperationalJob_(jobKey, sourceFileName)) {
-    return {
-      job_key: jobKey,
-      source_file_name: sourceFileName,
-      source_file_modified: sourceFileModified,
-      created_at: new Date().toISOString(),
-      rows: parsedRows,
-    };
-  }
-
   const existingJob = findJobByKey_(jobsSheet, jobKey);
   if (existingJob) {
     var existingLoadedJob = loadJobRowsByKey_(ss, jobKey);
@@ -681,7 +669,6 @@ function cacheCsvJob_(payload) {
   const now = new Date().toISOString();
 
   jobsSheet.appendRow([now, jobKey, sourceFileName, sourceFileModified, parsedRows.length]);
-  verifyCachedJobMeta_(jobsSheet, jobKey, sourceFileName, parsedRows.length);
 
   if (parsedRows.length > 0) {
     const values = parsedRows.map(function (row, idx) {
@@ -692,31 +679,10 @@ function cacheCsvJob_(payload) {
     pruneJobCacheRows_(cacheSheet);
   }
 
-  verifyCachedJobRows_(cacheSheet, jobKey, parsedRows.length);
-
   var job = loadJobRowsByKey_(ss, jobKey);
   updateInspectionDashboard_(ss);
   autoResizeOperationalSheets_(ss);
   return job;
-}
-
-function isNonOperationalJob_(jobKey, sourceFileName) {
-  var normalizedJobKey = String(jobKey || "").trim().toLowerCase();
-  var normalizedSourceName = String(sourceFileName || "").trim().toLowerCase();
-
-  if (!normalizedJobKey && !normalizedSourceName) {
-    return false;
-  }
-
-  if (/^(test|debug)[_-]/.test(normalizedJobKey)) {
-    return true;
-  }
-
-  if (normalizedSourceName === "t.csv" || normalizedSourceName === "test.csv" || normalizedSourceName === "debug.csv") {
-    return true;
-  }
-
-  return false;
 }
 
 function loadLatestJob_() {
@@ -728,30 +694,14 @@ function loadLatestJob_() {
   }
 
   const values = jobsSheet.getRange(2, 1, jobsSheet.getLastRow() - 1, jobsSheet.getLastColumn()).getValues();
+  const last = values[values.length - 1];
+  const jobKey = String(last[1] || "").trim();
 
-  for (var i = values.length - 1; i >= 0; i -= 1) {
-    var jobKey = String(values[i][1] || "").trim();
-    var sourceFileName = String(values[i][2] || "").trim();
-    if (!jobKey) continue;
-    if (isNonOperationalJob_(jobKey, sourceFileName)) continue;
-    return loadJobRowsByKey_(ss, jobKey);
+  if (!jobKey) {
+    return null;
   }
 
-  return null;
-}
-
-function tryLoadLatestJobWithError_() {
-  try {
-    return {
-      job: loadLatestJob_(),
-      error: "",
-    };
-  } catch (err) {
-    return {
-      job: null,
-      error: err && err.message ? String(err.message) : "current_job 로드 실패",
-    };
-  }
+  return loadJobRowsByKey_(ss, jobKey);
 }
 
 function loadJobRowsByKey_(ss, jobKey) {
@@ -793,7 +743,6 @@ function loadJobRowsByKey_(ss, jobKey) {
   }
 
   const cacheValues = cacheSheet.getRange(2, 1, cacheSheet.getLastRow() - 1, 4).getValues();
-  const parseErrors = [];
   const rows = cacheValues
     .filter(function (row) {
       return String(row[1] || "").trim() === jobKey;
@@ -802,28 +751,8 @@ function loadJobRowsByKey_(ss, jobKey) {
       return Number(a[2] || 0) - Number(b[2] || 0);
     })
     .map(function (row) {
-      try {
-        return JSON.parse(String(row[3] || "{}"));
-      } catch (err) {
-        parseErrors.push({
-          row_index: Number(row[2] || 0),
-          message: err && err.message ? String(err.message) : "row_json parse 실패",
-        });
-        return null;
-      }
-    })
-    .filter(function (row) {
-      return !!row;
+      return JSON.parse(String(row[3] || "{}"));
     });
-
-  if (parseErrors.length > 0) {
-    throw new Error(
-      "job_cache 복원 실패: job_key=" +
-        jobKey +
-        ", parse_error_rows=" +
-        parseErrors.map(function (item) { return item.row_index; }).join(",")
-    );
-  }
 
   return {
     job_key: jobMeta.job_key,
@@ -841,13 +770,13 @@ function findJobByKey_(jobsSheet, jobKey) {
 
   for (var i = values.length - 1; i >= 0; i -= 1) {
     if (String(values[i][1] || "").trim() === jobKey) {
-  return {
-    created_at: values[i][0],
-    job_key: values[i][1],
-    source_file_name: values[i][2],
-    source_file_modified: values[i][3],
-    row_count: values[i][4],
-  };
+      return {
+        created_at: values[i][0],
+        job_key: values[i][1],
+        source_file_name: values[i][2],
+        source_file_modified: values[i][3],
+        row_count: values[i][4],
+      };
     }
   }
 
@@ -3305,45 +3234,6 @@ function getPhotoAssetFromSource_(source) {
   }
 
   return null;
-}
-
-function verifyCachedJobMeta_(jobsSheet, jobKey, sourceFileName, expectedRowCount) {
-  const job = findJobByKey_(jobsSheet, jobKey);
-  if (!job) {
-    throw new Error("jobs 저장 검증 실패: job row를 찾지 못했습니다.");
-  }
-
-  if (String(job.source_file_name || "").trim() !== String(sourceFileName || "").trim()) {
-    throw new Error("jobs 저장 검증 실패: source_file_name 불일치");
-  }
-
-  if (Number(job.row_count || 0) !== Number(expectedRowCount || 0)) {
-    throw new Error("jobs 저장 검증 실패: row_count 불일치");
-  }
-}
-
-function verifyCachedJobRows_(cacheSheet, jobKey, expectedRowCount) {
-  if (Number(expectedRowCount || 0) === 0) {
-    return;
-  }
-
-  if (cacheSheet.getLastRow() < 2) {
-    throw new Error("job_cache 저장 검증 실패: cache sheet에 데이터가 없습니다.");
-  }
-
-  const values = cacheSheet.getRange(2, 1, cacheSheet.getLastRow() - 1, 4).getValues();
-  const matchedRows = values.filter(function (row) {
-    return String(row[1] || "").trim() === String(jobKey || "").trim();
-  });
-
-  if (matchedRows.length !== Number(expectedRowCount || 0)) {
-    throw new Error(
-      "job_cache 저장 검증 실패: expected=" +
-        expectedRowCount +
-        ", actual=" +
-        matchedRows.length
-    );
-  }
 }
 
 function getFileNameFromUrl_(value) {
