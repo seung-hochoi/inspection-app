@@ -1252,7 +1252,7 @@ function postSaveSync_(payload) {
     updateInspectionDashboard_(ss);
   }
 
-  if (hasMovement) {
+  if (hasInspection || hasMovement) {
     syncReturnSheets_(ss);
   }
 
@@ -3005,8 +3005,17 @@ function savePhotosToDrive_(photos, baseName, existingFileIdsText) {
 function uploadPhotos_(payload) {
   var itemKey = String(payload.itemKey || "").trim();
   var productName = String(payload.productName || payload.baseName || "상품").trim();
+  var partnerName = String(payload.partnerName || "").trim();
+  var photoKind = String(payload.photoKind || "").trim().toLowerCase();
   var photos = Array.isArray(payload.photos) ? payload.photos : [];
-  var uploaded = savePhotosToDrive_(photos, productName, "");
+  var namePrefix =
+    photoKind === "inspection"
+      ? "검품"
+      : photoKind === "defect"
+      ? "불량"
+      : "사진";
+  var uploadBaseName = [namePrefix, productName, partnerName].filter(Boolean).join("_");
+  var uploaded = savePhotosToDrive_(photos, uploadBaseName, "");
 
   return {
     itemKey: itemKey,
@@ -3050,18 +3059,13 @@ function savePhotoToDrive_(photo, baseName, index, preferredFileName) {
 }
 
 function buildPreferredPhotoFileName_(photo, baseName, index) {
-  var rawName = sanitizeFileName_(String((photo && photo.fileName) || "").trim());
-  if (rawName) {
-    return rawName;
-  }
-
   var safeBaseName = sanitizeFileName_(baseName || "상품");
   var extension =
     getExtensionFromMimeType_((photo && photo.mimeType) || "") ||
     getExtensionFromFileName_((photo && photo.fileName) || "") ||
     "jpg";
 
-  return safeBaseName + (index > 0 ? "_" + (index + 1) : "") + "." + extension;
+  return safeBaseName + "_" + (index + 1) + "." + extension;
 }
 
 function getExistingPhotoNameMap_(fileIdsText) {
@@ -3129,6 +3133,7 @@ function createPhotoZip_(payload) {
   var records = mode === "inspection" ? loadInspectionRows_() : loadRecords_();
   var blobs = [];
   var usedNames = {};
+  var usedPhotoSources = {};
   var skippedCount = 0;
 
   records.forEach(function (record) {
@@ -3149,6 +3154,11 @@ function createPhotoZip_(payload) {
 
     photos.forEach(function (source, index) {
       try {
+        var sourceKey = buildPhotoSourceDedupKey_(source);
+        if (sourceKey && usedPhotoSources[sourceKey]) {
+          return;
+        }
+
         var asset = getPhotoAssetFromSource_(source);
         if (!asset || !asset.blob) {
           skippedCount += 1;
@@ -3164,6 +3174,9 @@ function createPhotoZip_(payload) {
           duplicateSuffix += 1;
         }
         usedNames[dedupeKey] = true;
+        if (sourceKey) {
+          usedPhotoSources[sourceKey] = true;
+        }
 
         blobs.push(asset.blob.setName(finalName));
       } catch (err) {
@@ -3202,6 +3215,17 @@ function createPhotoZip_(payload) {
     addedCount: blobs.length,
     skippedCount: skippedCount,
   };
+}
+
+function buildPhotoSourceDedupKey_(source) {
+  var text = extractImageFormulaUrl_(source);
+  var driveId = extractGoogleDriveId_(text);
+  if (driveId) {
+    return "drive::" + driveId;
+  }
+
+  var normalized = String(text || "").trim();
+  return normalized ? "url::" + normalized : "";
 }
 
 function buildPhotoZipFileName_(record, sequence, blob, source) {

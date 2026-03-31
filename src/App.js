@@ -2386,9 +2386,18 @@ function App() {
     }));
   }, [drafts]);
 
-  const uploadDraftPhotos = useCallback(async ({ draftKey, itemKey, baseName, files }) => {
+  const uploadDraftPhotos = useCallback(async ({ draftKey, itemKey, baseName, files, photoKind = "", partnerName = "" }) => {
     const list = Array.isArray(files) ? files : [];
     if (!list.length) return;
+    const draftKeyParts = String(draftKey || "").split("||");
+    const inferredPartnerName = partnerName || draftKeyParts[1] || "";
+    const inferredPhotoKind =
+      photoKind ||
+      (String(draftKey || "").startsWith("inspection||")
+        ? "inspection"
+        : String(draftKey || "").startsWith("return||")
+        ? "defect"
+        : "");
 
     await runQueuedTask(uploadQueueRef, itemKey, async () => {
       setItemStatuses([itemKey], "uploading");
@@ -2405,6 +2414,8 @@ function App() {
                 payload: {
                   itemKey,
                   productName: baseName,
+                  partnerName: inferredPartnerName,
+                  photoKind: inferredPhotoKind,
                   photos: encodedPhotos,
                 },
               }),
