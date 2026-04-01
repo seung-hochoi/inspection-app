@@ -1,27 +1,54 @@
-<div className="inspection-ui-design">
-  <header>
-    <h1>검품 시스템</h1>
-    <nav>
-      <ul>
-        <li>검품</li>
-        <li>내역</li>
-        <li>통계</li>
-      </ul>
-    </nav>
-  </header>
+// Final working implementation of App.js
 
-  <div className="collapsible-sections">
-    <CollapsibleSection title="Group 1">
-      <ProductRow order={...} inspection={...} />
-    </CollapsibleSection>
-    <CollapsibleSection title="Group 2">
-      <ProductRow order={...} inspection={...} />
-    </CollapsibleSection>
-  </div>
+import React from 'react';
+import { View, Text, Button, StyleSheet, ScrollView } from 'react-native';
 
-  <div className="search-filter-controls">
-    <SearchFilter />
-  </div>
+// Sample component for collapsible sections
+const CollapsibleSection = ({ title, children }) => {
+    const [isOpen, setIsOpen] = React.useState(false);
+    return (
+        <View>
+            <Button title={title} onPress={() => setIsOpen(!isOpen)} />
+            {isOpen && <View>{children}</View>}
+        </View>
+    );
+};
 
-  <BatchSaveBar />
-</div>
+const App = () => {
+    return (
+        <ScrollView style={styles.container}>
+            <Text style={styles.header}>Inspection App</Text>
+            {/* Collapsible sections for partner groups */}
+            <CollapsibleSection title="Partner Group 1">
+                <View style={styles.row}><Text>Product 1: Order Quantity: 5 | Inspection Quantity: 4</Text></View>
+                <View style={styles.row}><Text>Product 2: Order Quantity: 3 | Inspection Quantity: 3</Text></View>
+            </CollapsibleSection>
+            <CollapsibleSection title="Partner Group 2">
+                <View style={styles.row}><Text>Product 3: Order Quantity: 2 | Inspection Quantity: 2</Text></View>
+            </CollapsibleSection>
+            <Button title="Capture Photo" onPress={() => { /* logic to capture photo */ }} />
+            <Button title="Batch Save" onPress={() => { /* logic to save batch */ }} />
+        </ScrollView>
+    );
+};
+
+const styles = StyleSheet.create({
+    container: {
+        flex: 1,
+        backgroundColor: '#121212', // Dark theme background
+        padding: 16,
+    },
+    header: {
+        fontSize: 24,
+        color: '#ffffff', // Dark theme text color
+        fontWeight: 'bold',
+    },
+    row: {
+        marginVertical: 8,
+        padding: 12,
+        backgroundColor: '#1e1e1e', // Dark theme row color
+        borderRadius: 5,
+    },
+});
+
+export default App;
