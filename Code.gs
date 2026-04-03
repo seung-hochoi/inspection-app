@@ -16,6 +16,7 @@
 };
 const ADMIN_RESET_PASSWORD = "0000";
 const JOB_CACHE_MAX_DATA_ROWS = 30000;
+const JOB_CACHE_MAX_DAYS = 2;
 var operationalReferenceCache_ = null;
 
 function getOperationalMappingSheet_(ss) {
@@ -690,6 +691,7 @@ function cacheCsvJob_(payload) {
 
     cacheSheet.getRange(cacheSheet.getLastRow() + 1, 1, values.length, 4).setValues(values);
     pruneJobCacheRows_(cacheSheet);
+    pruneJobCacheByDate_(ss);
   }
 
   verifyCachedJobRows_(cacheSheet, jobKey, parsedRows.length);
@@ -729,11 +731,23 @@ function loadLatestJob_() {
 
   const values = jobsSheet.getRange(2, 1, jobsSheet.getLastRow() - 1, jobsSheet.getLastColumn()).getValues();
 
+  // Compute the cutoff date for 2-day retention
+  var now = new Date();
+  var cutoff = new Date(now);
+  cutoff.setDate(cutoff.getDate() - JOB_CACHE_MAX_DAYS);
+  cutoff.setHours(0, 0, 0, 0);
+
   for (var i = values.length - 1; i >= 0; i -= 1) {
     var jobKey = String(values[i][1] || "").trim();
     var sourceFileName = String(values[i][2] || "").trim();
     if (!jobKey) continue;
     if (isNonOperationalJob_(jobKey, sourceFileName)) continue;
+    // Skip entries older than the retention window
+    var jobCreatedAt = values[i][0];
+    if (jobCreatedAt) {
+      var jd = (jobCreatedAt instanceof Date) ? jobCreatedAt : new Date(String(jobCreatedAt));
+      if (!isNaN(jd.getTime()) && jd < cutoff) continue;
+    }
     return loadJobRowsByKey_(ss, jobKey);
   }
 
@@ -1015,6 +1029,63 @@ function pruneJobCacheRows_(cacheSheet) {
 
   var deleteCount = dataRowCount - JOB_CACHE_MAX_DATA_ROWS;
   cacheSheet.deleteRows(2, deleteCount);
+}
+
+// Remove job_cache rows and jobs entries older than JOB_CACHE_MAX_DAYS days.
+// "today" is the calendar date of the most recent cache entry (or actual now).
+// Keep only entries whose created_at date >= cutoff date.
+function pruneJobCacheByDate_(ss) {
+  try {
+    var cacheSheet = ss.getSheetByName(SHEET_NAMES.jobCache);
+    var jobsSheet = ss.getSheetByName(SHEET_NAMES.jobs);
+    if (!cacheSheet && !jobsSheet) return;
+
+    var now = new Date();
+    // cutoff = start of (today - JOB_CACHE_MAX_DAYS) using proper date arithmetic
+    var cutoff = new Date(now);
+    cutoff.setDate(cutoff.getDate() - JOB_CACHE_MAX_DAYS);
+    cutoff.setHours(0, 0, 0, 0);
+
+    // Prune cache sheet (col 1 = created_at)
+    if (cacheSheet && cacheSheet.getLastRow() > 1) {
+      var cacheLastRow = cacheSheet.getLastRow();
+      var cacheCreatedDates = cacheSheet.getRange(2, 1, cacheLastRow - 1, 1).getValues();
+      var cacheDeleteRows = [];
+      for (var i = 0; i < cacheCreatedDates.length; i++) {
+        var dateVal = cacheCreatedDates[i][0];
+        if (!dateVal) continue;
+        var d = (dateVal instanceof Date) ? dateVal : new Date(String(dateVal));
+        if (!isNaN(d.getTime()) && d < cutoff) {
+          cacheDeleteRows.push(i + 2); // +2 = skip header, 1-indexed
+        }
+      }
+      // Delete in reverse order to keep indices stable
+      for (var j = cacheDeleteRows.length - 1; j >= 0; j--) {
+        cacheSheet.deleteRow(cacheDeleteRows[j]);
+      }
+    }
+
+    // Prune jobs sheet (col 1 = created_at)
+    if (jobsSheet && jobsSheet.getLastRow() > 1) {
+      var jobsLastRow = jobsSheet.getLastRow();
+      var jobsCreatedDates = jobsSheet.getRange(2, 1, jobsLastRow - 1, 1).getValues();
+      var jobsDeleteRows = [];
+      for (var k = 0; k < jobsCreatedDates.length; k++) {
+        var jobDateVal = jobsCreatedDates[k][0];
+        if (!jobDateVal) continue;
+        var jd = (jobDateVal instanceof Date) ? jobDateVal : new Date(String(jobDateVal));
+        if (!isNaN(jd.getTime()) && jd < cutoff) {
+          jobsDeleteRows.push(k + 2);
+        }
+      }
+      for (var m = jobsDeleteRows.length - 1; m >= 0; m--) {
+        jobsSheet.deleteRow(jobsDeleteRows[m]);
+      }
+    }
+  } catch (err) {
+    // Non-fatal: log but do not rethrow
+    console.warn("pruneJobCacheByDate_ error: " + (err && err.message ? err.message : String(err)));
+  }
 }
 
 function autoResizeOperationalSheets_(ss) {
