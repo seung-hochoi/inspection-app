@@ -2806,13 +2806,11 @@ function getHappycallAnalytics_() {
   });
 
   // Find the latest data date from the actual dataset (anchor date)
-  var anchorDate = null;
-  allRows.forEach(function (row) {
+  var anchorDate = allRows.reduce(function (latest, row) {
     var d = new Date(row["접수일시"] || row["생성일시"] || "");
-    if (!Number.isNaN(d.getTime()) && (!anchorDate || d > anchorDate)) {
-      anchorDate = d;
-    }
-  });
+    if (Number.isNaN(d.getTime())) return latest;
+    return (!latest || d > latest) ? d : latest;
+  }, null);
   // Fall back to current time if no data
   if (!anchorDate) anchorDate = new Date();
 
