@@ -484,6 +484,10 @@ function doPost(e) {
       });
     }
 
+    if (action === "updateDefectReason") {
+      return jsonOutput_(updateDefectReason_(body.payload || {}));
+    }
+
     return jsonOutput_({
       ok: false,
       message: "지원하지 않는 action입니다.",
@@ -496,6 +500,37 @@ function doPost(e) {
   } finally {
     lock.releaseLock();
   }
+}
+
+function updateDefectReason_(payload) {
+  var rowNumber = parseInt(payload.rowNumber || 0, 10);
+  var defectReason = String(payload.defectReason || "").trim();
+  if (!rowNumber || rowNumber < 2) {
+    return { ok: false, message: "유효하지 않은 행 번호입니다." };
+  }
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = getRecordSheet_(ss);
+  var lastRow = sheet.getLastRow();
+  if (rowNumber > lastRow) {
+    return { ok: false, message: "해당 행을 찾을 수 없습니다." };
+  }
+  // Find 비고 column index (1-based)
+  var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  var memoColIndex = -1;
+  for (var c = 0; c < headers.length; c++) {
+    if (String(headers[c] || "").trim() === "비고") {
+      memoColIndex = c + 1;
+      break;
+    }
+  }
+  if (memoColIndex < 0) {
+    return { ok: false, message: "비고 컬럼을 찾을 수 없습니다." };
+  }
+  sheet.getRange(rowNumber, memoColIndex).setValue(defectReason);
+  return {
+    ok: true,
+    records: loadRecords_(),
+  };
 }
 
 function normalizeCode_(value) {
@@ -1344,7 +1379,7 @@ function upsertMovementRow_(sheet, payload) {
     row["교환수량"] = parseNumber_(existing["교환수량"]) + parseNumber_(row["교환수량"]);
     row["발주수량"] = parseNumber_(existing["발주수량"] || row["발주수량"]);
     row["총 발주 수량"] = parseNumber_(existing["총 발주 수량"] || row["총 발주 수량"]);
-    row["비고"] = mergeTextValue_(existing["비고"], row["비고"]);
+    row["비고"] = String(row["비고"] || "").trim() || String(existing["비고"] || "").trim();
     console.log("[upsertMovementRow_] merged row(before write)=" + JSON.stringify({
       rowNumber: targetRow,
       typeName: row["처리유형"],
