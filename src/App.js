@@ -1520,6 +1520,14 @@ function App() {
 
   const analyticsHeroCard = analyticsTopList[0] || null;
   const analyticsMiniCards = analyticsTopList.slice(1, 5);
+
+  const inspectionRowsSet = useMemo(() => {
+    const set = new Set();
+    for (const r of inspectionRows) {
+      if (r.상품코드 && r.협력사명) set.add(`${r.상품코드}||${r.협력사명}`);
+    }
+    return set;
+  }, [inspectionRows]);
   const totalVisibleProducts = groupedPartners.reduce((sum, item) => sum + item.products.length, 0);
   const imageRegistryProducts = useMemo(() => {
     const keyword = normalizeText(imageRegisterSearch);
@@ -2351,7 +2359,7 @@ function App() {
                             .filter(Boolean);
 
                           const isCompleted = itemStatusMap[entityKey] === "saved" ||
-                            inspectionRows.some(r => r.상품코드 === product.productCode && r.협력사명 === product.partner);
+                            inspectionRowsSet.has(`${product.productCode}||${product.partner}`);
 
                           return (
                             <div
