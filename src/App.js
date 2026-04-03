@@ -1321,7 +1321,7 @@ function App() {
     ].join("||");
 
   const getStatusLabel = (status) => {
-    if (status === "pending") return "저장대기";
+    if (status === "pending") return "저장중";
     if (status === "uploading") return "업로드중";
     if (status === "saving") return "저장확인중";
     if (status === "retrying") return "재전송중";
@@ -1329,33 +1329,6 @@ function App() {
     if (status === "failed") return "확인필요";
     return "";
   };
-
-  const getStatusProgress = (status) => {
-    if (status === "pending") return 15;
-    if (status === "uploading") return 45;
-    if (status === "retrying") return 60;
-    if (status === "saving") return 80;
-    if (status === "saved") return 100;
-    if (status === "failed") return 100;
-    return 0;
-  };
-
-  const buildQueueItemTitle = useCallback((entry) => {
-    if (!entry) return "";
-    const partner = String(entry["협력사명"] || entry.partnerName || "").trim();
-    const productName = String(entry["상품명"] || entry.productName || "").trim();
-    const movementType = String(entry.movementType || "").trim().toUpperCase();
-    const typeLabel =
-      entry.type === "inspection"
-        ? "검품"
-        : movementType === "RETURN"
-        ? "회송"
-        : movementType === "EXCHANGE"
-        ? "교환"
-        : "저장";
-
-    return [partner, productName, typeLabel].filter(Boolean).join(" - ");
-  }, []);
 
   const serializePhotoItems = useCallback(
     (items) =>
@@ -1742,6 +1715,7 @@ function App() {
       }
     }
   };
+  // stopScanner is intentionally excluded from deps to avoid stale closure issues with scanner controls
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!isScannerOpen) {
@@ -2149,25 +2123,6 @@ function App() {
         return String(a.productName || "").localeCompare(String(b.productName || ""), "ko");
       });
   }, [groupedPartners, imageRegisterSearch, productImageMap]);
-
-  // saveQueueItems kept for pending state tracking but not displayed
-  const saveQueueItems = useMemo(() => {
-    return Object.values(pendingMap || {})
-      .map((entry) => {
-        const statusKey = entry.draftKey || entry.key;
-        const status = itemStatusMap[statusKey] || itemStatusMap[entry.key] || "pending";
-        return {
-          key: entry.key,
-          title: buildQueueItemTitle(entry),
-          status,
-          progress: getStatusProgress(status),
-        };
-      })
-      .filter((item) => item.title)
-      .sort((a, b) => a.title.localeCompare(b.title, "ko"));
-  }, [buildQueueItemTitle, itemStatusMap, pendingMap]);
-  // eslint-disable-next-line no-unused-vars
-  const _saveQueueItemsCount = saveQueueItems.length;
 
   const buildInspectionPendingEntry = useCallback((product, nextDraft = {}) => {
     const entityKey = makeEntityKey(currentJob?.job_key, product.productCode, product.partner);
