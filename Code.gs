@@ -2795,8 +2795,7 @@ function purgeOldHappycallRows_(sheet, days) {
 
 function getHappycallAnalytics_() {
   var categoryIndex = buildHappycallCategoryIndex_();
-  var rows = loadHappycallRows_().filter(function (row) {
-    if (!isHappycallWithinDays_(row["접수일시"] || row["생성일시"], 30)) return false;
+  var allRows = loadHappycallRows_().filter(function (row) {
     return !!findHappycallCategoryMatch_(categoryIndex, {
       productCode: row["상품코드"] || "",
       productName: row["상품명"] || row["소분류"] || "",
@@ -2805,21 +2804,59 @@ function getHappycallAnalytics_() {
       body: row["본문"] || "",
     });
   });
-  var now = new Date();
+
+  // Find the latest data date from the actual dataset (anchor date)
+  var anchorDate = null;
+  allRows.forEach(function (row) {
+    var d = new Date(row["접수일시"] || row["생성일시"] || "");
+    if (!Number.isNaN(d.getTime()) && (!anchorDate || d > anchorDate)) {
+      anchorDate = d;
+    }
+  });
+  // Fall back to current time if no data
+  if (!anchorDate) anchorDate = new Date();
+
+  // 일별: the full previous calendar day relative to anchor date
+  var prevDayStart = new Date(anchorDate);
+  prevDayStart.setHours(0, 0, 0, 0);
+  prevDayStart.setDate(prevDayStart.getDate() - 1);
+  var prevDayEnd = new Date(prevDayStart);
+  prevDayEnd.setHours(23, 59, 59, 999);
+
+  // 주별: 7 days ending at anchor date (inclusive)
+  var weekStart = new Date(anchorDate);
+  weekStart.setHours(0, 0, 0, 0);
+  weekStart.setDate(weekStart.getDate() - 6);
+
+  // 월별: 1 calendar month ending at anchor date (inclusive)
+  var monthStart = new Date(anchorDate);
+  monthStart.setHours(0, 0, 0, 0);
+  monthStart.setMonth(monthStart.getMonth() - 1);
+
+  var anchorEnd = new Date(anchorDate);
+  anchorEnd.setHours(23, 59, 59, 999);
+
   var periods = [
-    { key: "1d", label: "최근 1일", days: 1 },
-    { key: "7d", label: "최근 7일", days: 7 },
-    { key: "30d", label: "최근 1달", days: 30 },
+    { key: "1d", label: "전일", startAt: prevDayStart, endAt: prevDayEnd },
+    { key: "7d", label: "주별 (7일)", startAt: weekStart, endAt: anchorEnd },
+    { key: "30d", label: "월별 (1개월)", startAt: monthStart, endAt: anchorEnd },
   ];
+
+  // Filter rows to the widest window needed (1 month from anchor)
+  var rows = allRows.filter(function (row) {
+    var d = new Date(row["접수일시"] || row["생성일시"] || "");
+    if (Number.isNaN(d.getTime())) return false;
+    return d >= monthStart && d <= anchorEnd;
+  });
+
   var periodMap = {};
   var productRanks = {};
 
   periods.forEach(function (period) {
-    var startAt = new Date(now.getTime() - period.days * 24 * 60 * 60 * 1000);
     var filtered = rows.filter(function (row) {
       var receivedAt = new Date(row["접수일시"] || row["생성일시"] || "");
       if (Number.isNaN(receivedAt.getTime())) return false;
-      return receivedAt >= startAt && receivedAt <= now;
+      return receivedAt >= period.startAt && receivedAt <= period.endAt;
     });
     var aggregates = buildHappycallAggregates_(filtered);
     var productMetrics = {};
@@ -2861,7 +2898,8 @@ function getHappycallAnalytics_() {
 
   return {
     totalCount: rows.length,
-    lastUpdated: new Date().toISOString(),
+    lastUpdated: anchorDate.toISOString(),
+    anchorDate: anchorDate.toISOString(),
     periods: periodMap,
     productRanks: productRanks,
   };
