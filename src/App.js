@@ -331,23 +331,7 @@ const formatDateTime = (value) => {
   return date.toLocaleString("ko-KR");
 };
 
-const formatDashboardValue = (label, value) => {
-  if (value == null || value === "") return "-";
-  if (String(label).includes("율") || String(label).includes("률") || String(label).includes("커버리지")) {
-    const numeric = Number(value);
-    return Number.isFinite(numeric) ? `${(numeric * 100).toFixed(1)}%` : String(value);
-  }
-  if (typeof value === "number") {
-    return value.toLocaleString("ko-KR");
-  }
-  const numeric = Number(value);
-  if (Number.isFinite(numeric) && String(value).trim() !== "") {
-    return numeric.toLocaleString("ko-KR");
-  }
-  return String(value);
-};
 
-void formatDashboardValue;
 
 const getRecordType = (record) => {
   const type = String(record.처리유형 || "").trim();
@@ -550,7 +534,6 @@ function App() {
   const [happycallFileName, setHappycallFileName] = useState("");
   const [happycallUploadedAt, setHappycallUploadedAt] = useState("");
   const [selectedPeriod, setSelectedPeriod] = useState("1d");
-  const [inspectionRows, setInspectionRows] = useState([]);
   const [recordEditId, setRecordEditId] = useState(null);
   const [recordEditDraft, setRecordEditDraft] = useState({});
   const [recordSaving, setRecordSaving] = useState(false);
@@ -990,18 +973,6 @@ function App() {
     }
   }, [fetchHistoryRowsData]);
 
-  const loadInspectionRows = useCallback(async () => {
-    try {
-      const response = await fetch(`${SCRIPT_URL}?action=getInspectionRecords`);
-      const result = await response.json();
-      if (!response.ok || result.ok === false) return;
-      setInspectionRows(Array.isArray(result.records) ? result.records : []);
-    } catch (_) {}
-  }, []);
-
-  void inspectionRows;
-  void loadInspectionRows;
-
   useEffect(() => {
     loadBootstrap();
   }, [loadBootstrap]);
@@ -1141,20 +1112,6 @@ function App() {
     return map;
   }, [historyRows]);
 
-  const previousDayHappycallTopList = useMemo(
-    () =>
-      (happycallAnalytics?.periods?.["1d"]?.topProducts || [])
-        .slice(0, 10)
-        .map((item, index) => ({
-          rank: index + 1,
-          productName: item?.productName || "-",
-          count: parseQty(item?.count || 0),
-          share: Number(item?.share || 0),
-        })),
-    [happycallAnalytics]
-  );
-
-  void previousDayHappycallTopList;
 
   const updateDraft = (key, field, value) => {
     setDrafts((prev) => ({
@@ -1277,45 +1234,6 @@ function App() {
 
     return () => clearFlushTimer();
   }, [pendingMap, saving, clearFlushTimer, flushPending]);
-
-  const saveInspectionQtySimple = async (product) => {
-    const draftKey = `inspection||${product.partner}||${product.productCode}`;
-    const qty = parseQty(drafts[draftKey]?.inspectionQty);
-    const photoFiles = Array.isArray(drafts[draftKey]?.photoFiles) ? drafts[draftKey].photoFiles : [];
-    const entityKey = makeEntityKey(currentJob?.job_key, product.productCode, product.partner);
-
-    if (qty <= 0) {
-      setError("검품수량을 입력해 주세요.");
-      return;
-    }
-
-    setError("");
-    setMessage("");
-    upsertPendingEntries([
-      {
-        key: entityKey,
-        type: "inspection",
-        작업기준일또는CSV식별값: currentJob?.job_key || "",
-        작성일시: new Date().toISOString(),
-        상품코드: product.productCode,
-        상품명: product.productName,
-        협력사명: product.partner,
-        전체발주수량: product.totalQty || 0,
-        발주수량: product.totalQty || 0,
-        검품수량: qty,
-        회송수량: pendingMap[entityKey]?.회송수량 || 0,
-        교환수량: pendingMap[entityKey]?.교환수량 || 0,
-        센터명: pendingMap[entityKey]?.센터명 || "",
-        비고: pendingMap[entityKey]?.비고 || "",
-        행사여부: product.eventInfo?.행사여부 || "",
-        행사명: product.eventInfo?.행사명 || "",
-        photoFiles: photoFiles.length ? photoFiles : pendingMap[entityKey]?.photoFiles || [],
-      },
-    ]);
-    setToast("저장되었습니다.");
-  };
-
-  void saveInspectionQtySimple;
 
   const saveReturnExchange = async (product, centerName) => {
     const centerInfo = product.centers.find((item) => item.center === centerName);
