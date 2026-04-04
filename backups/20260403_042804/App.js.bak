@@ -9,7 +9,7 @@ const SHEET_URL =
 const SCRIPT_URL =
   process.env.REACT_APP_TEST_SCRIPT_URL ||
   process.env.REACT_APP_GOOGLE_SCRIPT_URL ||
-  "https://script.google.com/macros/s/AKfycbyEr-lJEFQ1YMcPX1ZVO7wAUQRfCG4DnkVnBqrTd-e5JQf35KuPAzIV11JXckyOsq76gg/exec";
+  "https://script.google.com/macros/s/AKfycbzIR8srYEDBgHOUKGfs0J3nk2BY4fsDPiw0J5cHfXUU7t77cEPWYw15mdUcW0T7oCw7Xg/exec";
 const GS25_LOGO_SRC =
   'data:image/svg+xml;utf8,%3Csvg%20width%3D%22132%22%20height%3D%2242%22%20viewBox%3D%220%200%20132%2042%22%20fill%3D%22none%22%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%3E%3Cg%20clip-path%3D%22url(%23clip0)%22%3E%3Cpath%20fill-rule%3D%22evenodd%22%20clip-rule%3D%22evenodd%22%20d%3D%22M34.3313%2037.7147V18.0093H17.564L18.7396%2025.4541H25.6881V32.6606C24.0683%2033.552%2022.4966%2033.9598%2020.2934%2033.9598C13.3896%2033.9598%209.91804%2028.6135%209.91804%2020.9991C9.91804%2013.3847%2013.2718%208.26576%2020.1828%208.26576C24.3073%208.26576%2027.8395%209.79044%2030.849%2011.7247L32.187%202.98801C28.9919%201.16742%2024.8746%200%2019.9438%200C7.58821%200%20-0.0078125%208.49491%20-0.0078125%2021.055C-0.0078125%2033.6152%207.012%2042%2019.7137%2042C25.2243%2042%2030.1551%2040.4771%2034.3331%2037.7165L34.3313%2037.7147Z%22%20fill%3D%22%23007AFF%22/%3E%3Cpath%20fill-rule%3D%22evenodd%22%20clip-rule%3D%22evenodd%22%20d%3D%22M66.9404%2029.0303C66.9404%2022.5815%2063.4689%2019.5303%2054.7704%2016.3005C49.7771%2014.3699%2048.6693%2013.372%2048.6693%2011.3061C48.6693%209.43133%2050.1214%208.15926%2053.147%208.15926C56.1726%208.15926%2059.9848%209.32127%2063.5777%2011.4306L65.0869%202.98978C61.5993%201.29008%2058.2437%200.290466%2053.0221%200.290466C45.3708%200.290466%2039.3411%204.4459%2039.3411%2012.2552C39.3411%2018.9403%2042.8162%2021.5855%2050.8207%2024.689C56.4509%2026.8668%2057.6068%2027.9278%2057.6068%2030.2085C57.6068%2032.6119%2055.6356%2033.8461%2052.7884%2033.8461C48.7906%2033.8461%2044.2148%2032.3178%2040.0921%2030.0966L38.6436%2038.6565C42.7074%2040.5312%2047.2279%2041.6968%2052.6136%2041.6968C60.5664%2041.6968%2066.9422%2037.8337%2066.9422%2029.0321L66.9404%2029.0303Z%22%20fill%3D%22%23007AFF%22/%3E%3Cpath%20d%3D%22M87.1773%2027.1322C91.7941%2024.0612%2098.0665%2020.0663%2098.0665%2012.4628C98.0665%204.1122%2091.0716%200.310425%2084.5727%200.310425C74.877%200.310425%2070.9684%208.10524%2070.4189%209.32138L77.899%2012.8615C78.3646%2012.0171%2080.4465%208.65016%2083.9252%208.65016C86.1729%208.65016%2088.3672%2010.5177%2088.3672%2013.4209C88.3672%2015.7593%2085.7626%2017.524%2082.5212%2019.7578C77.3817%2023.2997%2070.9862%2027.7078%2070.9862%2036.7674C70.9862%2037.9547%2071.1183%2039.2755%2071.4019%2040.9102H98.0736V32.796H81.6221C81.6221%2031.0188%2084.1731%2029.1278%2087.1773%2027.1322Z%22%20fill%3D%22%232FCCEF%22/%3E%3Cpath%20d%3D%22M121.229%2012.6414C120.715%2012.4718%20119.807%2012.2209%20118.888%2012.2209C116.339%2012.2209%20114.275%2014.3104%20114.275%2016.887C114.275%2018.639%20115.194%2020.1367%20116.642%2020.9631C117.281%2021.3275%20118.903%2021.8201%20119.359%2022.0673C121.299%2023.1156%20122.617%2025.1834%20122.617%2027.5634C122.617%2031.0043%20119.859%2033.7956%20116.455%2033.7956C113.228%2033.7956%20110.581%2031.284%20110.317%2028.0867L102.061%2029.9018C103.406%2036.7963%20109.414%2041.9964%20116.626%2041.9964C124.827%2041.9964%20131.476%2035.2734%20131.476%2026.977C131.476%2020.3045%20127.178%2014.5937%20121.227%2012.6378L121.229%2012.6414ZM118.888%2019.9923C117.196%2019.9923%20115.82%2018.5993%20115.82%2016.887C115.82%2015.1747%20117.197%2013.7835%20118.888%2013.7835C120.58%2013.7835%20121.957%2015.1765%20121.957%2016.887C121.957%2018.5975%20120.58%2019.9923%20118.888%2019.9923Z%22%20fill%3D%22%232FCCEF%22/%3E%3Cpath%20d%3D%22M104.634%200.865845L103.007%2019.6131H111.311L112.371%208.96019H121.909C127.552%208.96019%20129.604%204.33382%20129.604%200.865845H104.634Z%22%20fill%3D%22%232FCCEF%22/%3E%3C/g%3E%3Cdefs%3E%3CclipPath%20id%3D%22clip0%22%3E%3Crect%20width%3D%22131.478%22%20height%3D%2242%22%20fill%3D%22white%22/%3E%3C/clipPath%3E%3C/defs%3E%3C/svg%3E';
 const SAVE_DEBOUNCE_MS = 700;
@@ -72,7 +72,7 @@ const encodeBase64Utf8 = (value) => {
 const postAction = async (action, payload) => {
   const response = await fetch(SCRIPT_URL, {
     method: "POST",
-    headers: { "Content-Type": "text/plain;charset=utf-8" },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action, ...payload }),
   });
   const result = await response.json();
@@ -174,88 +174,15 @@ const buildNormalizedRows = (rows) => {
   return normalized;
 };
 
-/**
- * Mirrors Code.gs buildExclusionIndex_ + isExclusionRowActive_.
- * Returns three sets: excludedCodes (code-only), excludedPairs (code||partner), excludedPartners (partner-only).
- */
-const buildExclusionIndex = (excludeRows) => {
-  const excludedCodes = new Set();
-  const excludedPairs = new Set();
-  const excludedPartners = new Set();
-  (excludeRows || []).forEach((ex) => {
-    const val = String(ex["사용여부"] || "").trim().toLowerCase();
-    // Mirrors isExclusionRowActive_: blank = active; "y/yes/사용/활성/1/true" = active
-    const isActive =
-      !val || val === "y" || val === "yes" || val === "사용" || val === "활성" || val === "1" || val === "true";
-    if (!isActive) return;
-    const code = String(ex["상품코드"] || ex["상품 코드"] || ex["코드"] || ex["바코드"] || "")
-      .replace(/\uFEFF/g, "")
-      .replace(/^"+|"+$/g, "")
-      .replace(/\.0+$/, "")
-      .trim()
-      .toUpperCase();
-    const partner = String(ex["협력사"] || ex["협력사명"] || "")
-      .replace(/\uFEFF/g, "")
-      .trim();
-    if (!code && !partner) return;
-    if (partner) {
-      if (code) excludedPairs.add(`${code}||${partner}`);
-      else excludedPartners.add(partner);
-    } else {
-      excludedCodes.add(code);
-    }
-  });
-  return { excludedCodes, excludedPairs, excludedPartners };
-};
-
-/** Mirrors Code.gs isExcludedByRules_. Row must have .productCode and .partner fields. */
-const isRowExcluded = (row, { excludedCodes, excludedPairs, excludedPartners }) => {
-  const code = String(row.productCode || "")
-    .replace(/\uFEFF/g, "")
-    .replace(/^"+|"+$/g, "")
-    .replace(/\.0+$/, "")
-    .trim()
-    .toUpperCase();
-  const partner = String(row.partner || "").replace(/\uFEFF/g, "").trim();
-  return excludedCodes.has(code) || excludedPairs.has(`${code}||${partner}`) || excludedPartners.has(partner);
-};
-
-const buildGroupedPartners = (rows, search, exclusionIndex, eventRows) => {
+const buildGroupedPartners = (rows, search) => {
   const keyword = String(search || "").trim().toLowerCase();
   const partnerMap = new Map();
-  const { excludedCodes, excludedPairs, excludedPartners } = exclusionIndex || { excludedCodes: new Set(), excludedPairs: new Set(), excludedPartners: new Set() };
-
-  // Build event index: key = uppercased productCode
-  const eventIndex = new Set();
-  (eventRows || []).forEach((ev) => {
-    const code = String(ev["상품코드"] || "").trim().toUpperCase();
-    if (code) eventIndex.add(code);
-  });
 
   rows.forEach((row) => {
     if (keyword) {
       const haystack = `${row.productName} ${row.productCode} ${row.partner} ${row.center}`.toLowerCase();
       if (!haystack.includes(keyword)) return;
     }
-
-    const code = String(row.productCode || "")
-      .replace(/\uFEFF/g, "")
-      .replace(/^"+|"+$/g, "")
-      .replace(/\.0+$/, "")
-      .trim()
-      .toUpperCase();
-    const partner = String(row.partner || "").replace(/\uFEFF/g, "").trim();
-
-    // Match Code.gs isExcludedByRules_ exactly: code-only, pair (code||partner), or partner-only
-    const isExcluded =
-      excludedCodes.has(code) ||
-      excludedPairs.has(`${code}||${partner}`) ||
-      excludedPartners.has(partner);
-
-    // Excluded products are filtered out at the UI layer — not shown in inspection list
-    if (isExcluded) return;
-
-    const isEvent = eventIndex.has(code);
 
     if (!partnerMap.has(row.partner)) partnerMap.set(row.partner, new Map());
     const productMap = partnerMap.get(row.partner);
@@ -269,8 +196,6 @@ const buildGroupedPartners = (rows, search, exclusionIndex, eventRows) => {
       returnQty: 0,
       exchangeQty: 0,
       centers: [],
-      isExcluded: false,
-      isEvent,
     };
     existing.totalQty += row.orderQty;
     existing.inspectionQty = Math.max(existing.inspectionQty, parseQty(row.inspectionQty));
@@ -290,9 +215,7 @@ const buildGroupedPartners = (rows, search, exclusionIndex, eventRows) => {
   return Array.from(partnerMap.entries())
     .map(([partner, productMap]) => ({
       partner,
-      products: Array.from(productMap.values()).sort((a, b) =>
-        a.productName.localeCompare(b.productName, "ko")
-      ),
+      products: Array.from(productMap.values()).sort((a, b) => a.productName.localeCompare(b.productName, "ko")),
     }))
     .sort((a, b) => a.partner.localeCompare(b.partner, "ko"));
 };
@@ -300,29 +223,16 @@ const buildGroupedPartners = (rows, search, exclusionIndex, eventRows) => {
 const buildAnalyticsKpis = (rows) => {
   const totalInboundQty = rows.reduce((sum, row) => sum + parseQty(row.orderQty), 0);
   const totalInboundAmount = rows.reduce((sum, row) => sum + parseQty(row.orderQty) * parseQty(row.unitPrice), 0);
-  const totalInspectionQty = rows.reduce((sum, row) => sum + parseQty(row.inspectionQty), 0);
-  const totalDefectQty =
-    rows.reduce((sum, row) => sum + parseQty(row.returnQty), 0) +
-    rows.reduce((sum, row) => sum + parseQty(row.exchangeQty), 0);
-
-  const allSkuKeys = new Set(rows.map((row) => `${row.partner}||${row.productCode}`));
-  const inspectedSkuKeys = new Set(
-    rows.filter((row) => parseQty(row.inspectionQty) > 0).map((row) => `${row.partner}||${row.productCode}`)
-  );
-  const totalSku = allSkuKeys.size;
-  const inspectedSku = inspectedSkuKeys.size;
-
-  const fmtPct = (num, den) => (den > 0 ? ((num / den) * 100).toFixed(1) + "%" : "0.0%");
-
+  const skuCount = new Set(rows.map((row) => `${row.partner}||${row.productCode}`)).size;
   return [
     { label: "총입고금액", value: totalInboundAmount.toLocaleString("ko-KR") },
     { label: "총입고수량", value: totalInboundQty.toLocaleString("ko-KR") },
-    { label: "검품수량", value: totalInspectionQty.toLocaleString("ko-KR") },
-    { label: "검품SKU", value: String(totalSku), subLabel: "검품 대상 품목 SKU 수" },
-    { label: "불량률", value: fmtPct(totalDefectQty, totalInspectionQty) },
-    { label: "검품률", value: fmtPct(totalInspectionQty, totalInboundQty) },
-    { label: "실검품률", value: fmtPct(inspectedSku, totalSku) },
-    { label: "SKU 커버리지", value: fmtPct(inspectedSku, totalSku) },
+    { label: "검품수량", value: String(rows.reduce((sum, row) => sum + parseQty(row.inspectionQty), 0)) },
+    { label: "검품SKU", value: String(skuCount), subLabel: "검품 대상 품목 SKU 수" },
+    { label: "불량률", value: "0.0%" },
+    { label: "검품률", value: "0.0%" },
+    { label: "실검품률", value: "0.0%" },
+    { label: "SKU 커버리지", value: "0.0%" },
   ];
 };
 
@@ -353,12 +263,10 @@ function ProductPlaceholder({ src, alt }) {
       <img
         src={src || GS25_LOGO_SRC}
         alt={alt || "GS25"}
-        style={{ width: "100%", height: "100%", objectFit: src ? "cover" : "contain", padding: src ? 0 : 4 }}
+        style={{ width: "100%", height: "100%", objectFit: "cover" }}
         onError={(event) => {
           event.currentTarget.onerror = null;
           event.currentTarget.src = GS25_LOGO_SRC;
-          event.currentTarget.style.objectFit = "contain";
-          event.currentTarget.style.padding = "4px";
         }}
       />
     </div>
@@ -417,7 +325,6 @@ export default function App() {
   const photoInputRef = useRef(null);
   const scannerVideoRef = useRef(null);
   const scannerStreamRef = useRef(null);
-  const hasRestoredRef = useRef(false);
   const scannerIntervalRef = useRef(null);
   const scannerControlsRef = useRef(null);
   const saveQueueRef = useRef(new Map());
@@ -445,6 +352,7 @@ export default function App() {
   const [saveQueueItems, setSaveQueueItems] = useState([]);
   const [photoMap, setPhotoMap] = useState({});
   const [photoTargetProduct, setPhotoTargetProduct] = useState(null);
+  const [statusPanelOpen, setStatusPanelOpen] = useState(false);
   const [historyRows, setHistoryRows] = useState([]);
   const [inspectionRows, setInspectionRows] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -457,110 +365,15 @@ export default function App() {
   });
   const [scannerOpen, setScannerOpen] = useState(false);
   const [scannerError, setScannerError] = useState("");
-  const [zipDownloading, setZipDownloading] = useState("");
   const [scannerStatus, setScannerStatus] = useState("바코드를 화면 중앙에 맞춰주세요.");
   const [scannerManualCode, setScannerManualCode] = useState("");
-  const [productImageMap, setProductImageMap] = useState({});
-  const [excludeRows, setExcludeRows] = useState([]);
-  const [eventRows, setEventRows] = useState([]);
-  const [serverSummary, setServerSummary] = useState({});
-  const [serverHappycall, setServerHappycall] = useState({});
-  const [statusPanelOpen, setStatusPanelOpen] = useState(false);
-  const [zipFiles, setZipFiles] = useState([]);
+  const [productImageMap] = useState({});
 
-  // Build a lookup map from saved inspection rows for qty display after page reload
-  const inspectionRowMap = useMemo(() => {
-    const map = {};
-    inspectionRows.forEach((row) => {
-      const code = String(row["상품코드"] || row.productCode || "").trim().toUpperCase();
-      const partner = String(row["협력사명"] || row.partnerName || "").trim();
-      if (code || partner) map[`${partner}||${code}`] = row;
-    });
-    return map;
-  }, [inspectionRows]);
-
-  // Build a lookup map from movement records (historyRows) aggregating return/exchange totals per product.
-  // inspection sheet rows (inspectionRows) do NOT contain movement quantities — those live in the records sheet.
-  const movementSumMap = useMemo(() => {
-    const map = {};
-    historyRows.forEach((row) => {
-      const code = String(row["상품코드"] || row.productCode || "").trim().toUpperCase();
-      const partner = String(row["협력사명"] || row.partnerName || "").trim();
-      if (!code && !partner) return;
-      const key = `${partner}||${code}`;
-      if (!map[key]) map[key] = { returnQty: 0, exchangeQty: 0 };
-      const type = String(row["처리유형"] || "").trim();
-      if (type === "회송") map[key].returnQty += parseQty(row["회송수량"] || row.returnQty || 0);
-      if (type === "교환") map[key].exchangeQty += parseQty(row["교환수량"] || row.exchangeQty || 0);
-    });
-    return map;
-  }, [historyRows]);
-
-  // Merge saved inspection qty (from inspectionRowMap) and movement qtys (from movementSumMap) into CSV rows.
-  const enrichedRows = useMemo(() => {
-    const hasInsp = Object.keys(inspectionRowMap).length > 0;
-    const hasMov = Object.keys(movementSumMap).length > 0;
-    if (!hasInsp && !hasMov) return rows;
-    return rows.map((row) => {
-      const mapKey = `${String(row.partner || "").trim()}||${String(row.productCode || "").trim().toUpperCase()}`;
-      const savedInsp = inspectionRowMap[mapKey];
-      const savedMov = movementSumMap[mapKey];
-      if (!savedInsp && !savedMov) return row;
-      return {
-        ...row,
-        inspectionQty: savedInsp
-          ? parseQty(savedInsp["검품수량"] ?? savedInsp.inspectionQty ?? row.inspectionQty)
-          : row.inspectionQty,
-        returnQty: savedMov ? savedMov.returnQty : row.returnQty,
-        exchangeQty: savedMov ? savedMov.exchangeQty : row.exchangeQty,
-      };
-    });
-  }, [rows, inspectionRowMap, movementSumMap]);
-
-  // Pre-built exclusion index shared by groupedPartners and kpiRows to avoid rebuilding on each call.
-  const exclusionIndex = useMemo(() => buildExclusionIndex(excludeRows), [excludeRows]);
-
-  // Rows visible in the inspection list (exclusion applied, search-independent) — used for KPIs and cumulative totals.
-  const kpiRows = useMemo(
-    () => enrichedRows.filter((row) => !isRowExcluded(row, exclusionIndex)),
-    [enrichedRows, exclusionIndex]
-  );
-
-  const groupedPartners = useMemo(
-    () => buildGroupedPartners(enrichedRows, search, exclusionIndex, eventRows),
-    [enrichedRows, search, exclusionIndex, eventRows]
-  );
-  // KPIs use exclusion-filtered rows (not search-filtered) so excluded products don't skew totals.
-  const analyticsKpis = useMemo(() => buildAnalyticsKpis(kpiRows), [kpiRows]);
+  const groupedPartners = useMemo(() => buildGroupedPartners(rows, search), [rows, search]);
+  const analyticsKpis = useMemo(() => buildAnalyticsKpis(rows), [rows]);
   const totalVisibleProducts = useMemo(
     () => groupedPartners.reduce((sum, group) => sum + group.products.length, 0),
     [groupedPartners]
-  );
-
-  // Compute happycall hero/mini cards from backend period data
-  const happycallPeriodData = useMemo(() => {
-    const period = serverHappycall?.periods?.[selectedHappycallPeriod];
-    if (!period || !Array.isArray(period.topProducts) || period.topProducts.length === 0) {
-      return { heroCard: null, miniCards: [] };
-    }
-    const withRanks = period.topProducts.map((item, i) => ({ ...item, rank: i + 1 }));
-    return { heroCard: withRanks[0] || null, miniCards: withRanks.slice(1, 6) };
-  }, [serverHappycall, selectedHappycallPeriod]);
-
-  // Derive cumulative defect quantities across visible (non-excluded) rows for header display
-  const cumulativeReturnQty = useMemo(
-    () => kpiRows.reduce((sum, row) => sum + parseQty(row.returnQty), 0),
-    [kpiRows]
-  );
-  const cumulativeExchangeQty = useMemo(
-    () => kpiRows.reduce((sum, row) => sum + parseQty(row.exchangeQty), 0),
-    [kpiRows]
-  );
-
-  // isSavingAny: true while any item is actively saving
-  const isSavingAny = useMemo(
-    () => saveQueueItems.length > 0 || Object.values(itemStatusMap).some((s) => s === "saving" || s === "pending"),
-    [saveQueueItems, itemStatusMap]
   );
 
   useEffect(() => {
@@ -581,20 +394,6 @@ export default function App() {
     return map;
   }, [groupedPartners]);
 
-  // Lightweight refresh: only updates records and inspection rows after a save (avoids full bootstrap cost)
-  const refreshRecordsOnly = useCallback(async () => {
-    try {
-      const response = await fetch(`${SCRIPT_URL}?action=bootstrap`);
-      const result = await response.json();
-      if (!response.ok || result.ok === false) return;
-      const data = result.data || {};
-      if (Array.isArray(data.records)) setHistoryRows(data.records);
-      if (Array.isArray(data.rows)) setInspectionRows(data.rows);
-    } catch (err) {
-      console.error("[refreshRecordsOnly] failed", err);
-    }
-  }, []);
-
   const loadServerSnapshot = useCallback(async () => {
     setHistoryLoading(true);
     try {
@@ -606,49 +405,6 @@ export default function App() {
       const data = result.data || {};
       setHistoryRows(Array.isArray(data.records) ? data.records : []);
       setInspectionRows(Array.isArray(data.rows) ? data.rows : []);
-
-      // Populate product image map from backend (상품코드 → 이미지URL)
-      if (Array.isArray(data.product_images)) {
-        const imgMap = {};
-        data.product_images.forEach((item) => {
-          const code = String(item["상품코드"] || "").trim().toUpperCase();
-          const url = String(item["이미지URL"] || "").trim();
-          if (code && url) imgMap[code] = url;
-        });
-        setProductImageMap(imgMap);
-      }
-
-      // Store exclusion rows and analytics data from config
-      const config = data.config || {};
-      if (Array.isArray(config.exclude_rows)) {
-        setExcludeRows(config.exclude_rows);
-      }
-      if (Array.isArray(config.event_rows)) {
-        setEventRows(config.event_rows);
-      }
-      if (data.summary && typeof data.summary === "object") {
-        setServerSummary(data.summary);
-      }
-      if (data.happycall && typeof data.happycall === "object") {
-        setServerHappycall(data.happycall);
-      }
-
-      // Auto-restore latest CSV job on first load (page refresh / initial mount)
-      if (!hasRestoredRef.current) {
-        hasRestoredRef.current = true;
-        const job = data.current_job;
-        if (job && job.job_key && Array.isArray(job.rows) && job.rows.length > 0) {
-          const normalized = buildNormalizedRows(job.rows);
-          if (normalized.length > 0) {
-            setRows(normalized);
-            setCurrentJob({ job_key: job.job_key, source_file_name: job.source_file_name, source_file_modified: job.source_file_modified });
-            setCurrentFileName(job.source_file_name || "");
-            setExpandedPartner(normalized[0]?.partner || "");
-            setStatusMeta({ lastActionAt: job.created_at || new Date().toISOString(), restored: true });
-            setMessage(`자동 복원 완료 (${normalized.length.toLocaleString("ko-KR")}건)`);
-          }
-        }
-      }
     } catch (err) {
       setError(err.message || "서버 데이터를 불러오지 못했습니다.");
     } finally {
@@ -694,7 +450,7 @@ export default function App() {
 
   const getPhotoItems = (product) => photoMap[makeProductKey(product)] || [];
   const getProductImageSrc = (product) => {
-    const productCode = normalizeCode(product?.productCode || "").toUpperCase();
+    const productCode = normalizeCode(product?.productCode || "");
     return productImageMap[productCode] || GS25_LOGO_SRC;
   };
 
@@ -776,43 +532,18 @@ export default function App() {
     }
   };
 
-  const handleHappycallUpload = async (event) => {
+  const handleHappycallUpload = (event) => {
     const file = event.target.files?.[0];
     event.target.value = "";
     if (!file) return;
     setHappycallFileName(file.name);
+    setMessage("해피콜 CSV 업로드는 준비 중입니다.");
     setUploadingHappycallCsv(true);
-    setError("");
-    setMessage("해피콜 CSV를 불러오는 중...");
-    setStatusMeta((prev) => ({ ...prev, lastActionAt: new Date().toISOString() }));
-    try {
-      const decodedText = await decodeCsvText(file);
-      Papa.parse(decodedText, {
-        header: true,
-        skipEmptyLines: true,
-        complete: async (result) => {
-          try {
-            const parsedRows = Array.isArray(result.data) ? result.data : [];
-            const importResult = await postAction("importHappycallCsv", { rows: parsedRows });
-            const data = importResult.data || {};
-            setMessage(
-              `해피콜 CSV 업로드 완료 — ${data.inserted || 0}건 등록, ${data.updated || 0}건 업데이트`
-            );
-          } catch (err) {
-            setError(err.message || "해피콜 CSV 업로드 실패");
-          } finally {
-            setUploadingHappycallCsv(false);
-          }
-        },
-        error: (err) => {
-          setError(err.message || "해피콜 CSV 파싱 실패");
-          setUploadingHappycallCsv(false);
-        },
-      });
-    } catch (err) {
-      setError(err.message || "해피콜 CSV 읽기 실패");
-      setUploadingHappycallCsv(false);
-    }
+    setStatusMeta((prev) => ({
+      ...prev,
+      lastActionAt: new Date().toISOString(),
+    }));
+    setTimeout(() => setUploadingHappycallCsv(false), 600);
   };
 
   const stopScanner = useCallback(() => {
@@ -1054,10 +785,9 @@ export default function App() {
       returnQty: String(parseQty(returnRow?.["회송수량"] || returnRow?.returnQty || 0)),
       exchangeQty: String(parseQty(exchangeRow?.["교환수량"] || exchangeRow?.exchangeQty || 0)),
       memo: String(
-        inspectionRow?.["불량사유"] ||
-          inspectionRow?.["비고"] ||
-          returnRow?.["비고"] ||
+        returnRow?.["비고"] ||
           exchangeRow?.["비고"] ||
+          inspectionRow?.["비고"] ||
           inspectionRow?.memo ||
           ""
       ),
@@ -1297,14 +1027,6 @@ export default function App() {
     const rowsToSave = [];
 
     if (draft.inspectionTouched || parseQty(draft.inspectionQty) > 0) {
-      // Preserve existing BRIX and memo to avoid overwriting them on qty-only auto-saves.
-      // Code.gs does not fall back to existing record values for these fields.
-      const mapKey = `${String(product.partner || "").trim()}||${String(product.productCode || "").trim().toUpperCase()}`;
-      const existingInspRow = inspectionRowMap[mapKey];
-      const preservedMemo = existingInspRow?.["불량사유"] || existingInspRow?.["비고"] || existingInspRow?.memo || "";
-      const preservedBrixMin = existingInspRow?.["BRIX최저"] ?? existingInspRow?.brixMin ?? "";
-      const preservedBrixMax = existingInspRow?.["BRIX최고"] ?? existingInspRow?.brixMax ?? "";
-      const preservedBrixAvg = existingInspRow?.["BRIX평균"] ?? existingInspRow?.brixAvg ?? "";
       rowsToSave.push({
         type: "inspection",
         operationId: createOperationId(),
@@ -1327,15 +1049,6 @@ export default function App() {
         회송수량: 0,
         exchangeQty: 0,
         교환수량: 0,
-        memo: preservedMemo,
-        비고: preservedMemo,
-        불량사유: preservedMemo,
-        brixMin: preservedBrixMin,
-        "BRIX최저": preservedBrixMin,
-        brixMax: preservedBrixMax,
-        "BRIX최고": preservedBrixMax,
-        brixAvg: preservedBrixAvg,
-        "BRIX평균": preservedBrixAvg,
       });
     }
 
@@ -1467,66 +1180,6 @@ export default function App() {
                 exchangeTouched: false,
               },
             }));
-            // Patch inspectionRows locally so enrichedRows reflects the inspection save without a full reload.
-            // Only update 검품수량 — do NOT touch 회송수량/교환수량 (those live in historyRows via movementSumMap).
-            const savedInspRows = item.rows.filter((r) => r.type === "inspection");
-            if (savedInspRows.length > 0) {
-              setInspectionRows((prev) => {
-                const next = [...prev];
-                savedInspRows.forEach((savedRow) => {
-                  const code = String(savedRow.productCode || savedRow["상품코드"] || "").trim().toUpperCase();
-                  const partner = String(savedRow.partnerName || savedRow["협력사명"] || "").trim();
-                  const idx = next.findIndex((r) => {
-                    const rc = String(r["상품코드"] || r.productCode || "").trim().toUpperCase();
-                    const rp = String(r["협력사명"] || r.partnerName || "").trim();
-                    return rc === code && rp === partner;
-                  });
-                  const merged = {
-                    ...(idx >= 0 ? next[idx] : {}),
-                    "상품코드": savedRow.productCode,
-                    "협력사명": savedRow.partnerName,
-                    "상품명": savedRow.productName,
-                    "검품수량": savedRow.inspectionQty,
-                  };
-                  if (idx >= 0) next[idx] = merged;
-                  else next.push(merged);
-                });
-                return next;
-              });
-            }
-            // Patch historyRows for movement saves so movementSumMap updates immediately.
-            const savedMovRows = item.rows.filter((r) => r.type === "movement");
-            if (savedMovRows.length > 0) {
-              setHistoryRows((prev) => {
-                const next = [...prev];
-                savedMovRows.forEach((savedRow) => {
-                  const code = String(savedRow.productCode || savedRow["상품코드"] || "").trim().toUpperCase();
-                  const partner = String(savedRow.partnerName || savedRow["협력사명"] || "").trim();
-                  const center = String(savedRow.centerName || savedRow["센터명"] || "").trim();
-                  const type = savedRow.movementType === "RETURN" ? "회송" : "교환";
-                  const idx = next.findIndex((r) => {
-                    const rc = String(r["상품코드"] || r.productCode || "").trim().toUpperCase();
-                    const rp = String(r["협력사명"] || r.partnerName || "").trim();
-                    const rc2 = String(r["센터명"] || r.centerName || "").trim();
-                    const rt = String(r["처리유형"] || "").trim();
-                    return rc === code && rp === partner && rc2 === center && rt === type;
-                  });
-                  const merged = {
-                    ...(idx >= 0 ? next[idx] : {}),
-                    "상품코드": savedRow.productCode,
-                    "협력사명": savedRow.partnerName,
-                    "상품명": savedRow.productName,
-                    "센터명": center,
-                    "처리유형": type,
-                    "회송수량": type === "회송" ? parseQty(savedRow.returnQty) : 0,
-                    "교환수량": type === "교환" ? parseQty(savedRow.exchangeQty) : 0,
-                  };
-                  if (idx >= 0) next[idx] = merged;
-                  else next.push(merged);
-                });
-                return next;
-              });
-            }
             if (data.hasInspection || data.hasMovement) {
               schedulePostSaveSync({
                 hasInspection: data.hasInspection,
@@ -1545,41 +1198,6 @@ export default function App() {
       flushInFlightRef.current = false;
     }
   };
-
-  const handleDownloadZip = useCallback(async (mode) => {
-    setZipDownloading(mode);
-    setError("");
-    try {
-      const result = await postAction("downloadPhotoZip", { payload: { mode } });
-      const data = result.data || result;
-      const files = Array.isArray(data.zipFiles) && data.zipFiles.length ? data.zipFiles : [data];
-      const hasUrl = files.some((file) => file.downloadUrl || file.driveUrl);
-      if (!hasUrl) {
-        setMessage("다운로드할 사진이 없습니다.");
-        return;
-      }
-      setZipFiles(files.filter((f) => f.downloadUrl || f.driveUrl));
-      files.forEach((file) => {
-        const url = file.downloadUrl || file.driveUrl || "";
-        if (url) window.open(url, "_blank", "noopener,noreferrer");
-      });
-      setMessage(`ZIP 다운로드 준비 완료 (${data.addedCount || 0}장)`);
-    } catch (err) {
-      setError(err.message || "ZIP 다운로드 실패");
-    } finally {
-      setZipDownloading("");
-    }
-  }, []);
-
-  const handleManualRecalc = useCallback(async () => {
-    setMessage("대시보드 재계산 중...");
-    try {
-      await postAction("manualRecalc", {});
-      setMessage("대시보드 재계산 완료");
-    } catch (err) {
-      setError(err.message || "재계산 실패");
-    }
-  }, []);
 
   const handleFlushPending = () => {
     let prepared = false;
@@ -1704,12 +1322,7 @@ export default function App() {
                 : item
             ),
           }));
-          // Only set "saved" if no higher-priority quantity-save state is active
-          setItemStatusMap((prev) => {
-            const cur = prev[itemKey];
-            if (cur === "saving" || cur === "conflict" || cur === "failed" || cur === "pending") return prev;
-            return { ...prev, [itemKey]: "saved" };
-          });
+          setItemStatusMap((prev) => ({ ...prev, [itemKey]: "saved" }));
         } catch (err) {
           console.error("[photoUpload] failed", err);
           setPhotoMap((prev) => ({
@@ -1771,12 +1384,7 @@ export default function App() {
       ...prev,
       [itemKey]: [...(prev[itemKey] || []), ...nextItems],
     }));
-    // Only mark "uploading" if no active quantity-save state would be overwritten
-    setItemStatusMap((prev) => {
-      const cur = prev[itemKey];
-      if (cur === "saving" || cur === "conflict" || cur === "failed" || cur === "pending") return prev;
-      return { ...prev, [itemKey]: "uploading" };
-    });
+    setItemStatusMap((prev) => ({ ...prev, [itemKey]: "uploading" }));
     nextItems.forEach((item) => enqueuePhotoUpload(product, item));
   };
 
@@ -1934,7 +1542,7 @@ export default function App() {
         처리유형: "교환",
         replaceQtyMode: true,
         operationId: createOperationId(),
-        key: `${recordDetailDraft.partnerName}||${recordDetailDraft.productCode}||EXCHANGE||`,
+        key: `${recordDetailDraft.partnerName}||${recordDetailDraft.productCode}||EXCHANGE||${recordDetailDraft.selectedCenter}`,
         jobKey: currentJob.job_key,
         작업기준일또는CSV식별값: currentJob.job_key,
         productCode: recordDetailDraft.productCode,
@@ -1943,8 +1551,8 @@ export default function App() {
         상품명: recordDetailDraft.productName,
         partnerName: recordDetailDraft.partnerName,
         협력사명: recordDetailDraft.partnerName,
-        centerName: "",
-        센터명: "",
+        centerName: recordDetailDraft.selectedCenter,
+        센터명: recordDetailDraft.selectedCenter,
         totalQty: recordDetailDraft.product?.totalQty || 0,
         전체발주수량: recordDetailDraft.product?.totalQty || 0,
         orderQty: selectedCenterQty,
@@ -1959,19 +1567,25 @@ export default function App() {
         expectedVersion: recordDetailDraft.existingRows.movements.find(
           (row) =>
             String(row["처리유형"] || "").trim() === "교환" &&
-            String(row["센터명"] || "").trim() === ""
+            String(row["센터명"] || "").trim() === String(recordDetailDraft.selectedCenter || "").trim()
         )?.["버전"] || 0,
         expectedUpdatedAt: recordDetailDraft.existingRows.movements.find(
           (row) =>
             String(row["처리유형"] || "").trim() === "교환" &&
-            String(row["센터명"] || "").trim() === ""
+            String(row["센터명"] || "").trim() === String(recordDetailDraft.selectedCenter || "").trim()
         )?.["수정일시"] || "",
         photoTypeFileIdsMap: { exchange: movementPhotoTypeFileIdsMap.exchange || [] },
       });
 
       await postAction("saveBatch", { rows: rowsToSave });
+      await postAction("postSaveSync", {
+        payload: {
+          hasInspection: true,
+          hasMovement: true,
+        },
+      });
 
-      await refreshRecordsOnly();
+      await loadServerSnapshot();
       setRecordDetailDraft((prev) =>
         prev
           ? {
@@ -1995,7 +1609,7 @@ export default function App() {
     buildPhotoTypeFileIdsMap,
     closeRecordDetail,
     currentJob?.job_key,
-    refreshRecordsOnly,
+    loadServerSnapshot,
     recordDetailDraft,
     uploadDetailPhotos,
     validateRecordDetail,
@@ -2007,10 +1621,7 @@ export default function App() {
       return (
         <div key={photoType} style={{ border: "1px solid #d8e2ef", borderRadius: 14, padding: 12, background: "#fff" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 10 }}>
-            <div style={{ fontSize: 14, fontWeight: 800, color: "#15253e" }}>
-              {PHOTO_TYPE_LABEL_MAP[photoType]}
-              {items.length > 0 ? <span style={{ fontSize: 12, fontWeight: 600, color: "#708095", marginLeft: 4 }}>({items.length})</span> : null}
-            </div>
+            <div style={{ fontSize: 14, fontWeight: 800, color: "#15253e" }}>{PHOTO_TYPE_LABEL_MAP[photoType]}</div>
             <label
               style={{
                 display: "inline-flex",
@@ -2260,9 +1871,33 @@ export default function App() {
               </div>
             </div>
 
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+              <div>
+                <div style={{ fontSize: 12, color: "#708095", marginBottom: 6 }}>최저 BRIX</div>
+                <input
+                  value={recordDetailDraft.brixMin}
+                  onChange={(event) => updateRecordDetailDraft({ brixMin: event.target.value.replace(/[^\d.]/g, "") })}
+                  style={{ width: "100%", height: 40, borderRadius: 12, border: "1px solid #d8e2ef", padding: "0 12px" }}
+                />
+              </div>
+              <div>
+                <div style={{ fontSize: 12, color: "#708095", marginBottom: 6 }}>최고 BRIX</div>
+                <input
+                  value={recordDetailDraft.brixMax}
+                  onChange={(event) => updateRecordDetailDraft({ brixMax: event.target.value.replace(/[^\d.]/g, "") })}
+                  style={{ width: "100%", height: 40, borderRadius: 12, border: "1px solid #d8e2ef", padding: "0 12px" }}
+                />
+              </div>
+              <div>
+                <div style={{ fontSize: 12, color: "#708095", marginBottom: 6 }}>평균 BRIX</div>
+                <div style={{ height: 40, borderRadius: 12, border: "1px solid #d8e2ef", padding: "0 12px", display: "flex", alignItems: "center", background: "#f8fbff", fontWeight: 700 }}>
+                  {recordDetailDraft.brixAvg || "-"}
+                </div>
+              </div>
+            </div>
 
             <div>
-              <div style={{ fontSize: 12, color: "#708095", marginBottom: 6 }}>불량사유</div>
+              <div style={{ fontSize: 12, color: "#708095", marginBottom: 6 }}>메모</div>
               <textarea
                 value={recordDetailDraft.memo}
                 onChange={(event) => updateRecordDetailDraft({ memo: event.target.value })}
@@ -2272,93 +1907,17 @@ export default function App() {
             </div>
 
             <div>
-              <div style={{ fontSize: 13, fontWeight: 800, color: "#15253e", marginBottom: 8 }}>사진 관리</div>
-              <div style={{ display: "grid", gap: 10 }}>
-                {renderRecordPhotoSection("inspection")}
+              <div style={{ fontSize: 12, color: "#708095", marginBottom: 6 }}>중량 메모</div>
+              <textarea
+                value={recordDetailDraft.weightNote}
+                onChange={(event) => updateRecordDetailDraft({ weightNote: event.target.value })}
+                rows={2}
+                style={{ width: "100%", borderRadius: 12, border: "1px solid #d8e2ef", padding: 12, boxSizing: "border-box", resize: "vertical" }}
+              />
+            </div>
 
-                {/* 불량사진 — return + exchange merged */}
-                {(() => {
-                  const returnItems = recordDetailDraft?.photoGroups?.return || [];
-                  const exchangeItems = recordDetailDraft?.photoGroups?.exchange || [];
-                  const total = returnItems.length + exchangeItems.length;
-                  return (
-                    <div style={{ border: "1px solid #d8e2ef", borderRadius: 14, padding: 12, background: "#fff" }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 10 }}>
-                        <div style={{ fontSize: 14, fontWeight: 800, color: "#15253e" }}>
-                          불량사진{total > 0 ? <span style={{ fontSize: 12, fontWeight: 600, color: "#708095", marginLeft: 4 }}>({total})</span> : null}
-                        </div>
-                        <label style={{ display: "inline-flex", alignItems: "center", height: 34, padding: "0 12px", borderRadius: 10, border: "1px solid #9ec4ff", background: "#fff", color: "#1473ff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
-                          사진 추가
-                          <input type="file" accept="image/*" multiple hidden onChange={(e) => { handleRecordPhotoSelect("return", e.target.files); e.target.value = ""; }} />
-                        </label>
-                      </div>
-                      {total === 0 ? (
-                        <div style={{ fontSize: 12, color: "#708095" }}>등록된 사진이 없습니다.</div>
-                      ) : (
-                        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(86px, 1fr))", gap: 8 }}>
-                          {returnItems.map((item) => (
-                            <div key={item.id} style={{ position: "relative" }}>
-                              <img src={item.previewUrl || item.driveUrl} alt={item.fileName || "불량사진"} style={{ width: "100%", aspectRatio: "1 / 1", objectFit: "cover", borderRadius: 10, border: "1px solid #d8e2ef" }} />
-                              <button type="button" onClick={() => removeRecordPhoto("return", item.id)} style={{ position: "absolute", top: 4, right: 4, width: 22, height: 22, borderRadius: 999, border: "1px solid #ffd6d6", background: "#fff", color: "#e44747", fontSize: 12, fontWeight: 700, cursor: "pointer", padding: 0 }}>×</button>
-                            </div>
-                          ))}
-                          {exchangeItems.map((item) => (
-                            <div key={item.id} style={{ position: "relative" }}>
-                              <img src={item.previewUrl || item.driveUrl} alt={item.fileName || "불량사진(교환)"} style={{ width: "100%", aspectRatio: "1 / 1", objectFit: "cover", borderRadius: 10, border: "1px solid #ffd4a8" }} />
-                              <span style={{ position: "absolute", bottom: 4, left: 4, fontSize: 9, fontWeight: 700, background: "#f59e0b", color: "#fff", borderRadius: 4, padding: "1px 4px" }}>교환</span>
-                              <button type="button" onClick={() => removeRecordPhoto("exchange", item.id)} style={{ position: "absolute", top: 4, right: 4, width: 22, height: 22, borderRadius: 999, border: "1px solid #ffd6d6", background: "#fff", color: "#e44747", fontSize: 12, fontWeight: 700, cursor: "pointer", padding: 0 }}>×</button>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })()}
-
-                {renderRecordPhotoSection("weight")}
-
-                {/* 당도사진 + BRIX inputs */}
-                {(() => {
-                  const items = recordDetailDraft?.photoGroups?.sugar || [];
-                  return (
-                    <div style={{ border: "1px solid #d8e2ef", borderRadius: 14, padding: 12, background: "#fff" }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 10 }}>
-                        <div style={{ fontSize: 14, fontWeight: 800, color: "#15253e" }}>
-                          당도사진{items.length > 0 ? <span style={{ fontSize: 12, fontWeight: 600, color: "#708095", marginLeft: 4 }}>({items.length})</span> : null}
-                        </div>
-                        <label style={{ display: "inline-flex", alignItems: "center", height: 34, padding: "0 12px", borderRadius: 10, border: "1px solid #9ec4ff", background: "#fff", color: "#1473ff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
-                          사진 추가
-                          <input type="file" accept="image/*" multiple hidden onChange={(e) => { handleRecordPhotoSelect("sugar", e.target.files); e.target.value = ""; }} />
-                        </label>
-                      </div>
-                      {items.length > 0 ? (
-                        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(86px, 1fr))", gap: 8, marginBottom: 10 }}>
-                          {items.map((item) => (
-                            <div key={item.id} style={{ position: "relative" }}>
-                              <img src={item.previewUrl || item.driveUrl} alt={item.fileName || "당도사진"} style={{ width: "100%", aspectRatio: "1 / 1", objectFit: "cover", borderRadius: 10, border: "1px solid #d8e2ef" }} />
-                              <button type="button" onClick={() => removeRecordPhoto("sugar", item.id)} style={{ position: "absolute", top: 4, right: 4, width: 22, height: 22, borderRadius: 999, border: "1px solid #ffd6d6", background: "#fff", color: "#e44747", fontSize: 12, fontWeight: 700, cursor: "pointer", padding: 0 }}>×</button>
-                            </div>
-                          ))}
-                        </div>
-                      ) : null}
-                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
-                        <div>
-                          <div style={{ fontSize: 11, color: "#708095", marginBottom: 4 }}>최저 BRIX</div>
-                          <input value={recordDetailDraft.brixMin} onChange={(e) => updateRecordDetailDraft({ brixMin: e.target.value.replace(/[^\d.]/g, "") })} style={{ width: "100%", height: 36, borderRadius: 10, border: "1px solid #d8e2ef", padding: "0 10px", boxSizing: "border-box" }} />
-                        </div>
-                        <div>
-                          <div style={{ fontSize: 11, color: "#708095", marginBottom: 4 }}>최고 BRIX</div>
-                          <input value={recordDetailDraft.brixMax} onChange={(e) => updateRecordDetailDraft({ brixMax: e.target.value.replace(/[^\d.]/g, "") })} style={{ width: "100%", height: 36, borderRadius: 10, border: "1px solid #d8e2ef", padding: "0 10px", boxSizing: "border-box" }} />
-                        </div>
-                        <div>
-                          <div style={{ fontSize: 11, color: "#708095", marginBottom: 4 }}>평균 BRIX</div>
-                          <div style={{ height: 36, borderRadius: 10, border: "1px solid #d8e2ef", padding: "0 10px", display: "flex", alignItems: "center", background: "#f8fbff", fontWeight: 700, fontSize: 14 }}>{recordDetailDraft.brixAvg || "-"}</div>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })()}
-              </div>
+            <div style={{ display: "grid", gap: 10 }}>
+              {PHOTO_TYPE_OPTIONS.map((item) => renderRecordPhotoSection(item.key))}
             </div>
 
             <button
@@ -2401,7 +1960,7 @@ export default function App() {
   const renderProductRow = (_group, product) => {
     const itemKey = makeProductKey(product);
     const draft = getDraftForProduct(product);
-    const eventBadge = product.isEvent ? "이벤트" : (product.eventInfo?.eventName || product.eventLabel || "");
+    const eventBadge = product.eventInfo?.eventName || product.eventLabel || "";
     const topBadge = product.topLabel || (product.topRank ? `해피콜 TOP${product.topRank}` : "");
     const sortedCenters = [...(product.centers || [])].sort((a, b) => parseQty(b.totalQty) - parseQty(a.totalQty));
     const inspectionQty = parseQty(draft.inspectionQty);
@@ -2710,11 +2269,142 @@ export default function App() {
         ref={photoInputRef}
         type="file"
         accept="image/*"
+        capture="environment"
         multiple
         hidden
         onChange={handlePhotoSelect}
       />
       <div style={{ position: "relative" }}>
+        {(currentFileName || happycallFileName) ? (
+          <div
+            style={{
+              position: "absolute",
+              top: 18,
+              right: 24,
+              zIndex: 5,
+              display: "flex",
+              gap: 10,
+              flexWrap: "wrap",
+              justifyContent: "flex-end",
+              maxWidth: 460,
+              pointerEvents: "none",
+            }}
+          >
+            {currentFileName ? (
+              <div
+                style={{
+                  minWidth: 160,
+                  maxWidth: 220,
+                  padding: "8px 12px",
+                  borderRadius: 12,
+                  background: "rgba(255,255,255,0.95)",
+                  border: "1px solid #d8e2ef",
+                  boxShadow: "0 10px 24px rgba(41, 73, 129, 0.08)",
+                }}
+              >
+                <div style={{ fontSize: 11, fontWeight: 800, color: "#1473ff", marginBottom: 2 }}>CSV</div>
+                <div style={{ fontSize: 12, color: "#516274", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                  {currentFileName}
+                </div>
+              </div>
+            ) : null}
+            {happycallFileName ? (
+              <div
+                style={{
+                  minWidth: 160,
+                  maxWidth: 220,
+                  padding: "8px 12px",
+                  borderRadius: 12,
+                  background: "rgba(255,255,255,0.95)",
+                  border: "1px solid #d8e2ef",
+                  boxShadow: "0 10px 24px rgba(41, 73, 129, 0.08)",
+                }}
+              >
+                <div style={{ fontSize: 11, fontWeight: 800, color: "#1473ff", marginBottom: 2 }}>해피콜</div>
+                <div style={{ fontSize: 12, color: "#516274", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                  {happycallFileName}
+                </div>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+
+        <div
+          style={{
+            marginBottom: 12,
+            background: "#fff",
+            border: `1px solid ${error ? "#f2b8b8" : "#d8e2ef"}`,
+            borderRadius: 18,
+            boxShadow: "0 14px 30px rgba(41, 73, 129, 0.08)",
+            overflow: "hidden",
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => setStatusPanelOpen((prev) => !prev)}
+            style={{
+              width: "100%",
+              height: 46,
+              border: "none",
+              background: "#fff",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              padding: "0 16px",
+              cursor: "pointer",
+              fontSize: 14,
+              fontWeight: 800,
+              color: error ? "#d44343" : "#1d2a3d",
+            }}
+          >
+            <span>작업 상태</span>
+            <span style={{ fontSize: 12, color: "#708095" }}>{statusPanelOpen ? "접기" : "펼치기"}</span>
+          </button>
+          {statusPanelOpen ? (
+            <div
+              style={{
+                borderTop: "1px solid #e6edf5",
+                padding: 16,
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+                gap: 12,
+                background: "#fafbfd",
+              }}
+            >
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 800, color: "#708095", marginBottom: 4 }}>CSV 파일</div>
+                <div style={{ fontSize: 13, color: "#1d2a3d" }}>{currentFileName || "-"}</div>
+              </div>
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 800, color: "#708095", marginBottom: 4 }}>해피콜 파일</div>
+                <div style={{ fontSize: 13, color: "#1d2a3d" }}>{happycallFileName || "-"}</div>
+              </div>
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 800, color: "#708095", marginBottom: 4 }}>rows 수</div>
+                <div style={{ fontSize: 13, color: "#1d2a3d" }}>{rows.length.toLocaleString("ko-KR")}</div>
+              </div>
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 800, color: "#708095", marginBottom: 4 }}>jobKey</div>
+                <div style={{ fontSize: 13, color: "#1d2a3d", wordBreak: "break-all" }}>{currentJob?.job_key || "-"}</div>
+              </div>
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 800, color: "#708095", marginBottom: 4 }}>최근 작업 시각</div>
+                <div style={{ fontSize: 13, color: "#1d2a3d" }}>
+                  {statusMeta.lastActionAt ? new Date(statusMeta.lastActionAt).toLocaleString("ko-KR") : "-"}
+                </div>
+              </div>
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 800, color: "#708095", marginBottom: 4 }}>자동복원</div>
+                <div style={{ fontSize: 13, color: "#1d2a3d" }}>{statusMeta.restored ? "예" : "아니오"}</div>
+              </div>
+              <div style={{ gridColumn: "1 / -1" }}>
+                <div style={{ fontSize: 11, fontWeight: 800, color: "#708095", marginBottom: 4 }}>상태 메시지</div>
+                <div style={{ fontSize: 13, color: error ? "#d44343" : "#516274" }}>{error || message || "-"}</div>
+              </div>
+            </div>
+          ) : null}
+        </div>
+
         <ReferenceFunctionalApp
           activeTab={activeTab}
           onTabChange={setActiveTab}
@@ -2726,12 +2416,11 @@ export default function App() {
           uploadingCsv={uploadingCsv}
           uploadingHappycallCsv={uploadingHappycallCsv}
           currentFileName={currentFileName}
-          happycallFileName={happycallFileName}
           message={message}
           error={error}
           search={search}
           onScannerOpen={() => setScannerOpen(true)}
-          onRefreshRecords={loadServerSnapshot}
+          onRefreshRecords={() => setMessage("내역 새로고침은 준비 중입니다.")}
           onFlushPending={handleFlushPending}
           onSearchChange={setSearch}
           groupedPartners={groupedPartners}
@@ -2746,24 +2435,11 @@ export default function App() {
           analyticsKpis={analyticsKpis}
           selectedHappycallPeriod={selectedHappycallPeriod}
           onSelectPeriod={setSelectedHappycallPeriod}
-          onDownloadInspectionZip={() => handleDownloadZip("inspection")}
-          onDownloadReturnZip={() => handleDownloadZip("movement")}
-          onDownloadSugarZip={() => handleDownloadZip("sugar")}
-          onDownloadWeightZip={() => handleDownloadZip("weight")}
-          happycallHeroCard={happycallPeriodData.heroCard}
-          happycallMiniCards={happycallPeriodData.miniCards}
-          serverSummary={serverSummary}
-          excludeRows={excludeRows}
-          zipDownloading={zipDownloading}
-          zipFiles={zipFiles}
-          isSavingAny={isSavingAny}
-          cumulativeReturnQty={cumulativeReturnQty}
-          cumulativeExchangeQty={cumulativeExchangeQty}
-          onManualRecalc={handleManualRecalc}
-          statusPanelOpen={statusPanelOpen}
-          onToggleStatusPanel={() => setStatusPanelOpen((p) => !p)}
-          statusMeta={statusMeta}
-          currentJob={currentJob}
+          onDownloadInspectionZip={() => setMessage("ZIP 다운로드 기능은 준비 중입니다.")}
+          onDownloadMovementZip={() => setMessage("ZIP 다운로드 기능은 준비 중입니다.")}
+          happycallHeroCard={null}
+          happycallMiniCards={[]}
+          zipDownloading=""
         />
       </div>
       {scannerOpen ? (
@@ -2858,11 +2534,10 @@ export default function App() {
 
 const PHOTO_TYPE_OPTIONS = [
   { key: "inspection", label: "검품사진", target: "inspection" },
-  { key: "return", label: "불량사진", target: "movement" },
-  { key: "weight", label: "중량사진", target: "inspection" },
+  { key: "return", label: "회송사진", target: "movement" },
+  { key: "exchange", label: "교환사진", target: "movement" },
   { key: "sugar", label: "당도사진", target: "inspection" },
-  // "exchange" is intentionally merged under "return"/"불량사진" visually but kept as a separate key internally
-  { key: "exchange", label: "불량사진(교환)", target: "movement" },
+  { key: "weight", label: "중량사진", target: "inspection" },
 ];
 
 const PHOTO_TYPE_LABEL_MAP = PHOTO_TYPE_OPTIONS.reduce((acc, item) => {

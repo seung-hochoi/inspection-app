@@ -5,7 +5,7 @@ import ReferenceFunctionalApp from "./components/ReferenceFunctionalApp";
 
 const SHEET_URL =
   process.env.REACT_APP_TEST_SHEET_URL ||
-  "https://docs.google.com/spreadsheets/d/1ZB9Y-3_03NZ0Gyydfi4xzDbZQz6O62kabQpI7dkLGBc/edit?pli=1&gid=634559028#gid=634559028";
+  "https://docs.google.com/spreadsheets/d/1_U2ruKLFTtlyg4bTMF7TAemTPkb0nY9XLiQ2VlOl14g/edit?gid=218388868#gid=218388868";
 const SCRIPT_URL =
   process.env.REACT_APP_TEST_SCRIPT_URL ||
   process.env.REACT_APP_GOOGLE_SCRIPT_URL ||
@@ -174,88 +174,15 @@ const buildNormalizedRows = (rows) => {
   return normalized;
 };
 
-/**
- * Mirrors Code.gs buildExclusionIndex_ + isExclusionRowActive_.
- * Returns three sets: excludedCodes (code-only), excludedPairs (code||partner), excludedPartners (partner-only).
- */
-const buildExclusionIndex = (excludeRows) => {
-  const excludedCodes = new Set();
-  const excludedPairs = new Set();
-  const excludedPartners = new Set();
-  (excludeRows || []).forEach((ex) => {
-    const val = String(ex["사용여부"] || "").trim().toLowerCase();
-    // Mirrors isExclusionRowActive_: blank = active; "y/yes/사용/활성/1/true" = active
-    const isActive =
-      !val || val === "y" || val === "yes" || val === "사용" || val === "활성" || val === "1" || val === "true";
-    if (!isActive) return;
-    const code = String(ex["상품코드"] || ex["상품 코드"] || ex["코드"] || ex["바코드"] || "")
-      .replace(/\uFEFF/g, "")
-      .replace(/^"+|"+$/g, "")
-      .replace(/\.0+$/, "")
-      .trim()
-      .toUpperCase();
-    const partner = String(ex["협력사"] || ex["협력사명"] || "")
-      .replace(/\uFEFF/g, "")
-      .trim();
-    if (!code && !partner) return;
-    if (partner) {
-      if (code) excludedPairs.add(`${code}||${partner}`);
-      else excludedPartners.add(partner);
-    } else {
-      excludedCodes.add(code);
-    }
-  });
-  return { excludedCodes, excludedPairs, excludedPartners };
-};
-
-/** Mirrors Code.gs isExcludedByRules_. Row must have .productCode and .partner fields. */
-const isRowExcluded = (row, { excludedCodes, excludedPairs, excludedPartners }) => {
-  const code = String(row.productCode || "")
-    .replace(/\uFEFF/g, "")
-    .replace(/^"+|"+$/g, "")
-    .replace(/\.0+$/, "")
-    .trim()
-    .toUpperCase();
-  const partner = String(row.partner || "").replace(/\uFEFF/g, "").trim();
-  return excludedCodes.has(code) || excludedPairs.has(`${code}||${partner}`) || excludedPartners.has(partner);
-};
-
-const buildGroupedPartners = (rows, search, exclusionIndex, eventRows) => {
+const buildGroupedPartners = (rows, search) => {
   const keyword = String(search || "").trim().toLowerCase();
   const partnerMap = new Map();
-  const { excludedCodes, excludedPairs, excludedPartners } = exclusionIndex || { excludedCodes: new Set(), excludedPairs: new Set(), excludedPartners: new Set() };
-
-  // Build event index: key = uppercased productCode
-  const eventIndex = new Set();
-  (eventRows || []).forEach((ev) => {
-    const code = String(ev["상품코드"] || "").trim().toUpperCase();
-    if (code) eventIndex.add(code);
-  });
 
   rows.forEach((row) => {
     if (keyword) {
       const haystack = `${row.productName} ${row.productCode} ${row.partner} ${row.center}`.toLowerCase();
       if (!haystack.includes(keyword)) return;
     }
-
-    const code = String(row.productCode || "")
-      .replace(/\uFEFF/g, "")
-      .replace(/^"+|"+$/g, "")
-      .replace(/\.0+$/, "")
-      .trim()
-      .toUpperCase();
-    const partner = String(row.partner || "").replace(/\uFEFF/g, "").trim();
-
-    // Match Code.gs isExcludedByRules_ exactly: code-only, pair (code||partner), or partner-only
-    const isExcluded =
-      excludedCodes.has(code) ||
-      excludedPairs.has(`${code}||${partner}`) ||
-      excludedPartners.has(partner);
-
-    // Excluded products are filtered out at the UI layer — not shown in inspection list
-    if (isExcluded) return;
-
-    const isEvent = eventIndex.has(code);
 
     if (!partnerMap.has(row.partner)) partnerMap.set(row.partner, new Map());
     const productMap = partnerMap.get(row.partner);
@@ -269,8 +196,6 @@ const buildGroupedPartners = (rows, search, exclusionIndex, eventRows) => {
       returnQty: 0,
       exchangeQty: 0,
       centers: [],
-      isExcluded: false,
-      isEvent,
     };
     existing.totalQty += row.orderQty;
     existing.inspectionQty = Math.max(existing.inspectionQty, parseQty(row.inspectionQty));
@@ -290,9 +215,7 @@ const buildGroupedPartners = (rows, search, exclusionIndex, eventRows) => {
   return Array.from(partnerMap.entries())
     .map(([partner, productMap]) => ({
       partner,
-      products: Array.from(productMap.values()).sort((a, b) =>
-        a.productName.localeCompare(b.productName, "ko")
-      ),
+      products: Array.from(productMap.values()).sort((a, b) => a.productName.localeCompare(b.productName, "ko")),
     }))
     .sort((a, b) => a.partner.localeCompare(b.partner, "ko"));
 };
@@ -353,12 +276,10 @@ function ProductPlaceholder({ src, alt }) {
       <img
         src={src || GS25_LOGO_SRC}
         alt={alt || "GS25"}
-        style={{ width: "100%", height: "100%", objectFit: src ? "cover" : "contain", padding: src ? 0 : 4 }}
+        style={{ width: "100%", height: "100%", objectFit: "cover" }}
         onError={(event) => {
           event.currentTarget.onerror = null;
           event.currentTarget.src = GS25_LOGO_SRC;
-          event.currentTarget.style.objectFit = "contain";
-          event.currentTarget.style.padding = "4px";
         }}
       />
     </div>
@@ -445,6 +366,7 @@ export default function App() {
   const [saveQueueItems, setSaveQueueItems] = useState([]);
   const [photoMap, setPhotoMap] = useState({});
   const [photoTargetProduct, setPhotoTargetProduct] = useState(null);
+  const [statusPanelOpen, setStatusPanelOpen] = useState(false);
   const [historyRows, setHistoryRows] = useState([]);
   const [inspectionRows, setInspectionRows] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -460,107 +382,13 @@ export default function App() {
   const [zipDownloading, setZipDownloading] = useState("");
   const [scannerStatus, setScannerStatus] = useState("바코드를 화면 중앙에 맞춰주세요.");
   const [scannerManualCode, setScannerManualCode] = useState("");
-  const [productImageMap, setProductImageMap] = useState({});
-  const [excludeRows, setExcludeRows] = useState([]);
-  const [eventRows, setEventRows] = useState([]);
-  const [serverSummary, setServerSummary] = useState({});
-  const [serverHappycall, setServerHappycall] = useState({});
-  const [statusPanelOpen, setStatusPanelOpen] = useState(false);
-  const [zipFiles, setZipFiles] = useState([]);
+  const [productImageMap] = useState({});
 
-  // Build a lookup map from saved inspection rows for qty display after page reload
-  const inspectionRowMap = useMemo(() => {
-    const map = {};
-    inspectionRows.forEach((row) => {
-      const code = String(row["상품코드"] || row.productCode || "").trim().toUpperCase();
-      const partner = String(row["협력사명"] || row.partnerName || "").trim();
-      if (code || partner) map[`${partner}||${code}`] = row;
-    });
-    return map;
-  }, [inspectionRows]);
-
-  // Build a lookup map from movement records (historyRows) aggregating return/exchange totals per product.
-  // inspection sheet rows (inspectionRows) do NOT contain movement quantities — those live in the records sheet.
-  const movementSumMap = useMemo(() => {
-    const map = {};
-    historyRows.forEach((row) => {
-      const code = String(row["상품코드"] || row.productCode || "").trim().toUpperCase();
-      const partner = String(row["협력사명"] || row.partnerName || "").trim();
-      if (!code && !partner) return;
-      const key = `${partner}||${code}`;
-      if (!map[key]) map[key] = { returnQty: 0, exchangeQty: 0 };
-      const type = String(row["처리유형"] || "").trim();
-      if (type === "회송") map[key].returnQty += parseQty(row["회송수량"] || row.returnQty || 0);
-      if (type === "교환") map[key].exchangeQty += parseQty(row["교환수량"] || row.exchangeQty || 0);
-    });
-    return map;
-  }, [historyRows]);
-
-  // Merge saved inspection qty (from inspectionRowMap) and movement qtys (from movementSumMap) into CSV rows.
-  const enrichedRows = useMemo(() => {
-    const hasInsp = Object.keys(inspectionRowMap).length > 0;
-    const hasMov = Object.keys(movementSumMap).length > 0;
-    if (!hasInsp && !hasMov) return rows;
-    return rows.map((row) => {
-      const mapKey = `${String(row.partner || "").trim()}||${String(row.productCode || "").trim().toUpperCase()}`;
-      const savedInsp = inspectionRowMap[mapKey];
-      const savedMov = movementSumMap[mapKey];
-      if (!savedInsp && !savedMov) return row;
-      return {
-        ...row,
-        inspectionQty: savedInsp
-          ? parseQty(savedInsp["검품수량"] ?? savedInsp.inspectionQty ?? row.inspectionQty)
-          : row.inspectionQty,
-        returnQty: savedMov ? savedMov.returnQty : row.returnQty,
-        exchangeQty: savedMov ? savedMov.exchangeQty : row.exchangeQty,
-      };
-    });
-  }, [rows, inspectionRowMap, movementSumMap]);
-
-  // Pre-built exclusion index shared by groupedPartners and kpiRows to avoid rebuilding on each call.
-  const exclusionIndex = useMemo(() => buildExclusionIndex(excludeRows), [excludeRows]);
-
-  // Rows visible in the inspection list (exclusion applied, search-independent) — used for KPIs and cumulative totals.
-  const kpiRows = useMemo(
-    () => enrichedRows.filter((row) => !isRowExcluded(row, exclusionIndex)),
-    [enrichedRows, exclusionIndex]
-  );
-
-  const groupedPartners = useMemo(
-    () => buildGroupedPartners(enrichedRows, search, exclusionIndex, eventRows),
-    [enrichedRows, search, exclusionIndex, eventRows]
-  );
-  // KPIs use exclusion-filtered rows (not search-filtered) so excluded products don't skew totals.
-  const analyticsKpis = useMemo(() => buildAnalyticsKpis(kpiRows), [kpiRows]);
+  const groupedPartners = useMemo(() => buildGroupedPartners(rows, search), [rows, search]);
+  const analyticsKpis = useMemo(() => buildAnalyticsKpis(rows), [rows]);
   const totalVisibleProducts = useMemo(
     () => groupedPartners.reduce((sum, group) => sum + group.products.length, 0),
     [groupedPartners]
-  );
-
-  // Compute happycall hero/mini cards from backend period data
-  const happycallPeriodData = useMemo(() => {
-    const period = serverHappycall?.periods?.[selectedHappycallPeriod];
-    if (!period || !Array.isArray(period.topProducts) || period.topProducts.length === 0) {
-      return { heroCard: null, miniCards: [] };
-    }
-    const withRanks = period.topProducts.map((item, i) => ({ ...item, rank: i + 1 }));
-    return { heroCard: withRanks[0] || null, miniCards: withRanks.slice(1, 6) };
-  }, [serverHappycall, selectedHappycallPeriod]);
-
-  // Derive cumulative defect quantities across visible (non-excluded) rows for header display
-  const cumulativeReturnQty = useMemo(
-    () => kpiRows.reduce((sum, row) => sum + parseQty(row.returnQty), 0),
-    [kpiRows]
-  );
-  const cumulativeExchangeQty = useMemo(
-    () => kpiRows.reduce((sum, row) => sum + parseQty(row.exchangeQty), 0),
-    [kpiRows]
-  );
-
-  // isSavingAny: true while any item is actively saving
-  const isSavingAny = useMemo(
-    () => saveQueueItems.length > 0 || Object.values(itemStatusMap).some((s) => s === "saving" || s === "pending"),
-    [saveQueueItems, itemStatusMap]
   );
 
   useEffect(() => {
@@ -581,20 +409,6 @@ export default function App() {
     return map;
   }, [groupedPartners]);
 
-  // Lightweight refresh: only updates records and inspection rows after a save (avoids full bootstrap cost)
-  const refreshRecordsOnly = useCallback(async () => {
-    try {
-      const response = await fetch(`${SCRIPT_URL}?action=bootstrap`);
-      const result = await response.json();
-      if (!response.ok || result.ok === false) return;
-      const data = result.data || {};
-      if (Array.isArray(data.records)) setHistoryRows(data.records);
-      if (Array.isArray(data.rows)) setInspectionRows(data.rows);
-    } catch (err) {
-      console.error("[refreshRecordsOnly] failed", err);
-    }
-  }, []);
-
   const loadServerSnapshot = useCallback(async () => {
     setHistoryLoading(true);
     try {
@@ -606,32 +420,6 @@ export default function App() {
       const data = result.data || {};
       setHistoryRows(Array.isArray(data.records) ? data.records : []);
       setInspectionRows(Array.isArray(data.rows) ? data.rows : []);
-
-      // Populate product image map from backend (상품코드 → 이미지URL)
-      if (Array.isArray(data.product_images)) {
-        const imgMap = {};
-        data.product_images.forEach((item) => {
-          const code = String(item["상품코드"] || "").trim().toUpperCase();
-          const url = String(item["이미지URL"] || "").trim();
-          if (code && url) imgMap[code] = url;
-        });
-        setProductImageMap(imgMap);
-      }
-
-      // Store exclusion rows and analytics data from config
-      const config = data.config || {};
-      if (Array.isArray(config.exclude_rows)) {
-        setExcludeRows(config.exclude_rows);
-      }
-      if (Array.isArray(config.event_rows)) {
-        setEventRows(config.event_rows);
-      }
-      if (data.summary && typeof data.summary === "object") {
-        setServerSummary(data.summary);
-      }
-      if (data.happycall && typeof data.happycall === "object") {
-        setServerHappycall(data.happycall);
-      }
 
       // Auto-restore latest CSV job on first load (page refresh / initial mount)
       if (!hasRestoredRef.current) {
@@ -694,7 +482,7 @@ export default function App() {
 
   const getPhotoItems = (product) => photoMap[makeProductKey(product)] || [];
   const getProductImageSrc = (product) => {
-    const productCode = normalizeCode(product?.productCode || "").toUpperCase();
+    const productCode = normalizeCode(product?.productCode || "");
     return productImageMap[productCode] || GS25_LOGO_SRC;
   };
 
@@ -1297,14 +1085,6 @@ export default function App() {
     const rowsToSave = [];
 
     if (draft.inspectionTouched || parseQty(draft.inspectionQty) > 0) {
-      // Preserve existing BRIX and memo to avoid overwriting them on qty-only auto-saves.
-      // Code.gs does not fall back to existing record values for these fields.
-      const mapKey = `${String(product.partner || "").trim()}||${String(product.productCode || "").trim().toUpperCase()}`;
-      const existingInspRow = inspectionRowMap[mapKey];
-      const preservedMemo = existingInspRow?.["불량사유"] || existingInspRow?.["비고"] || existingInspRow?.memo || "";
-      const preservedBrixMin = existingInspRow?.["BRIX최저"] ?? existingInspRow?.brixMin ?? "";
-      const preservedBrixMax = existingInspRow?.["BRIX최고"] ?? existingInspRow?.brixMax ?? "";
-      const preservedBrixAvg = existingInspRow?.["BRIX평균"] ?? existingInspRow?.brixAvg ?? "";
       rowsToSave.push({
         type: "inspection",
         operationId: createOperationId(),
@@ -1327,15 +1107,6 @@ export default function App() {
         회송수량: 0,
         exchangeQty: 0,
         교환수량: 0,
-        memo: preservedMemo,
-        비고: preservedMemo,
-        불량사유: preservedMemo,
-        brixMin: preservedBrixMin,
-        "BRIX최저": preservedBrixMin,
-        brixMax: preservedBrixMax,
-        "BRIX최고": preservedBrixMax,
-        brixAvg: preservedBrixAvg,
-        "BRIX평균": preservedBrixAvg,
       });
     }
 
@@ -1467,66 +1238,6 @@ export default function App() {
                 exchangeTouched: false,
               },
             }));
-            // Patch inspectionRows locally so enrichedRows reflects the inspection save without a full reload.
-            // Only update 검품수량 — do NOT touch 회송수량/교환수량 (those live in historyRows via movementSumMap).
-            const savedInspRows = item.rows.filter((r) => r.type === "inspection");
-            if (savedInspRows.length > 0) {
-              setInspectionRows((prev) => {
-                const next = [...prev];
-                savedInspRows.forEach((savedRow) => {
-                  const code = String(savedRow.productCode || savedRow["상품코드"] || "").trim().toUpperCase();
-                  const partner = String(savedRow.partnerName || savedRow["협력사명"] || "").trim();
-                  const idx = next.findIndex((r) => {
-                    const rc = String(r["상품코드"] || r.productCode || "").trim().toUpperCase();
-                    const rp = String(r["협력사명"] || r.partnerName || "").trim();
-                    return rc === code && rp === partner;
-                  });
-                  const merged = {
-                    ...(idx >= 0 ? next[idx] : {}),
-                    "상품코드": savedRow.productCode,
-                    "협력사명": savedRow.partnerName,
-                    "상품명": savedRow.productName,
-                    "검품수량": savedRow.inspectionQty,
-                  };
-                  if (idx >= 0) next[idx] = merged;
-                  else next.push(merged);
-                });
-                return next;
-              });
-            }
-            // Patch historyRows for movement saves so movementSumMap updates immediately.
-            const savedMovRows = item.rows.filter((r) => r.type === "movement");
-            if (savedMovRows.length > 0) {
-              setHistoryRows((prev) => {
-                const next = [...prev];
-                savedMovRows.forEach((savedRow) => {
-                  const code = String(savedRow.productCode || savedRow["상품코드"] || "").trim().toUpperCase();
-                  const partner = String(savedRow.partnerName || savedRow["협력사명"] || "").trim();
-                  const center = String(savedRow.centerName || savedRow["센터명"] || "").trim();
-                  const type = savedRow.movementType === "RETURN" ? "회송" : "교환";
-                  const idx = next.findIndex((r) => {
-                    const rc = String(r["상품코드"] || r.productCode || "").trim().toUpperCase();
-                    const rp = String(r["협력사명"] || r.partnerName || "").trim();
-                    const rc2 = String(r["센터명"] || r.centerName || "").trim();
-                    const rt = String(r["처리유형"] || "").trim();
-                    return rc === code && rp === partner && rc2 === center && rt === type;
-                  });
-                  const merged = {
-                    ...(idx >= 0 ? next[idx] : {}),
-                    "상품코드": savedRow.productCode,
-                    "협력사명": savedRow.partnerName,
-                    "상품명": savedRow.productName,
-                    "센터명": center,
-                    "처리유형": type,
-                    "회송수량": type === "회송" ? parseQty(savedRow.returnQty) : 0,
-                    "교환수량": type === "교환" ? parseQty(savedRow.exchangeQty) : 0,
-                  };
-                  if (idx >= 0) next[idx] = merged;
-                  else next.push(merged);
-                });
-                return next;
-              });
-            }
             if (data.hasInspection || data.hasMovement) {
               schedulePostSaveSync({
                 hasInspection: data.hasInspection,
@@ -1558,7 +1269,6 @@ export default function App() {
         setMessage("다운로드할 사진이 없습니다.");
         return;
       }
-      setZipFiles(files.filter((f) => f.downloadUrl || f.driveUrl));
       files.forEach((file) => {
         const url = file.downloadUrl || file.driveUrl || "";
         if (url) window.open(url, "_blank", "noopener,noreferrer");
@@ -1568,16 +1278,6 @@ export default function App() {
       setError(err.message || "ZIP 다운로드 실패");
     } finally {
       setZipDownloading("");
-    }
-  }, []);
-
-  const handleManualRecalc = useCallback(async () => {
-    setMessage("대시보드 재계산 중...");
-    try {
-      await postAction("manualRecalc", {});
-      setMessage("대시보드 재계산 완료");
-    } catch (err) {
-      setError(err.message || "재계산 실패");
     }
   }, []);
 
@@ -1704,12 +1404,7 @@ export default function App() {
                 : item
             ),
           }));
-          // Only set "saved" if no higher-priority quantity-save state is active
-          setItemStatusMap((prev) => {
-            const cur = prev[itemKey];
-            if (cur === "saving" || cur === "conflict" || cur === "failed" || cur === "pending") return prev;
-            return { ...prev, [itemKey]: "saved" };
-          });
+          setItemStatusMap((prev) => ({ ...prev, [itemKey]: "saved" }));
         } catch (err) {
           console.error("[photoUpload] failed", err);
           setPhotoMap((prev) => ({
@@ -1771,12 +1466,7 @@ export default function App() {
       ...prev,
       [itemKey]: [...(prev[itemKey] || []), ...nextItems],
     }));
-    // Only mark "uploading" if no active quantity-save state would be overwritten
-    setItemStatusMap((prev) => {
-      const cur = prev[itemKey];
-      if (cur === "saving" || cur === "conflict" || cur === "failed" || cur === "pending") return prev;
-      return { ...prev, [itemKey]: "uploading" };
-    });
+    setItemStatusMap((prev) => ({ ...prev, [itemKey]: "uploading" }));
     nextItems.forEach((item) => enqueuePhotoUpload(product, item));
   };
 
@@ -1934,7 +1624,7 @@ export default function App() {
         처리유형: "교환",
         replaceQtyMode: true,
         operationId: createOperationId(),
-        key: `${recordDetailDraft.partnerName}||${recordDetailDraft.productCode}||EXCHANGE||`,
+        key: `${recordDetailDraft.partnerName}||${recordDetailDraft.productCode}||EXCHANGE||${recordDetailDraft.selectedCenter}`,
         jobKey: currentJob.job_key,
         작업기준일또는CSV식별값: currentJob.job_key,
         productCode: recordDetailDraft.productCode,
@@ -1943,8 +1633,8 @@ export default function App() {
         상품명: recordDetailDraft.productName,
         partnerName: recordDetailDraft.partnerName,
         협력사명: recordDetailDraft.partnerName,
-        centerName: "",
-        센터명: "",
+        centerName: recordDetailDraft.selectedCenter,
+        센터명: recordDetailDraft.selectedCenter,
         totalQty: recordDetailDraft.product?.totalQty || 0,
         전체발주수량: recordDetailDraft.product?.totalQty || 0,
         orderQty: selectedCenterQty,
@@ -1959,19 +1649,25 @@ export default function App() {
         expectedVersion: recordDetailDraft.existingRows.movements.find(
           (row) =>
             String(row["처리유형"] || "").trim() === "교환" &&
-            String(row["센터명"] || "").trim() === ""
+            String(row["센터명"] || "").trim() === String(recordDetailDraft.selectedCenter || "").trim()
         )?.["버전"] || 0,
         expectedUpdatedAt: recordDetailDraft.existingRows.movements.find(
           (row) =>
             String(row["처리유형"] || "").trim() === "교환" &&
-            String(row["센터명"] || "").trim() === ""
+            String(row["센터명"] || "").trim() === String(recordDetailDraft.selectedCenter || "").trim()
         )?.["수정일시"] || "",
         photoTypeFileIdsMap: { exchange: movementPhotoTypeFileIdsMap.exchange || [] },
       });
 
       await postAction("saveBatch", { rows: rowsToSave });
+      await postAction("postSaveSync", {
+        payload: {
+          hasInspection: true,
+          hasMovement: true,
+        },
+      });
 
-      await refreshRecordsOnly();
+      await loadServerSnapshot();
       setRecordDetailDraft((prev) =>
         prev
           ? {
@@ -1995,7 +1691,7 @@ export default function App() {
     buildPhotoTypeFileIdsMap,
     closeRecordDetail,
     currentJob?.job_key,
-    refreshRecordsOnly,
+    loadServerSnapshot,
     recordDetailDraft,
     uploadDetailPhotos,
     validateRecordDetail,
@@ -2401,7 +2097,7 @@ export default function App() {
   const renderProductRow = (_group, product) => {
     const itemKey = makeProductKey(product);
     const draft = getDraftForProduct(product);
-    const eventBadge = product.isEvent ? "이벤트" : (product.eventInfo?.eventName || product.eventLabel || "");
+    const eventBadge = product.eventInfo?.eventName || product.eventLabel || "";
     const topBadge = product.topLabel || (product.topRank ? `해피콜 TOP${product.topRank}` : "");
     const sortedCenters = [...(product.centers || [])].sort((a, b) => parseQty(b.totalQty) - parseQty(a.totalQty));
     const inspectionQty = parseQty(draft.inspectionQty);
@@ -2747,23 +2443,10 @@ export default function App() {
           selectedHappycallPeriod={selectedHappycallPeriod}
           onSelectPeriod={setSelectedHappycallPeriod}
           onDownloadInspectionZip={() => handleDownloadZip("inspection")}
-          onDownloadReturnZip={() => handleDownloadZip("movement")}
-          onDownloadSugarZip={() => handleDownloadZip("sugar")}
-          onDownloadWeightZip={() => handleDownloadZip("weight")}
-          happycallHeroCard={happycallPeriodData.heroCard}
-          happycallMiniCards={happycallPeriodData.miniCards}
-          serverSummary={serverSummary}
-          excludeRows={excludeRows}
+          onDownloadMovementZip={() => handleDownloadZip("movement")}
+          happycallHeroCard={null}
+          happycallMiniCards={[]}
           zipDownloading={zipDownloading}
-          zipFiles={zipFiles}
-          isSavingAny={isSavingAny}
-          cumulativeReturnQty={cumulativeReturnQty}
-          cumulativeExchangeQty={cumulativeExchangeQty}
-          onManualRecalc={handleManualRecalc}
-          statusPanelOpen={statusPanelOpen}
-          onToggleStatusPanel={() => setStatusPanelOpen((p) => !p)}
-          statusMeta={statusMeta}
-          currentJob={currentJob}
         />
       </div>
       {scannerOpen ? (
