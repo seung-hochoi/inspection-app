@@ -1,0 +1,56 @@
+/* Global reset & base styles */
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: 'Pretendard', 'Apple SD Gothic Neo', 'Noto Sans KR', system-ui, sans-serif;
+  font-weight: 400;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: #f1f5f9;
+}
+
+code {
+  font-family: 'JetBrains Mono', source-code-pro, Menlo, Monaco, Consolas, 'Courier New', monospace;
+}
+
+/* Remove number input arrows */
+input[type='number']::-webkit-inner-spin-button,
+input[type='number']::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type='number'] { -moz-appearance: textfield; }
+
+/* Focus ring */
+:focus-visible {
+  outline: 2px solid rgba(37, 99, 235, 0.55);
+  outline-offset: 2px;
+}
+
+/* Smooth scrollbar */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 99px; }
+::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+input,
+.qty,
+.number {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Spin animation */
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+/* Action button hover */
+.action-btn { transition: filter 0.1s, transform 0.1s; }
+.action-btn:hover { filter: brightness(0.96); }
+.action-btn:active { transform: scale(0.97); }
+
+/* Stepper hover */
+.stepper-btn:hover { background: #e8eef4 !important; color: #1e3a8a !important; }
+.stepper-btn-plus:hover { background: #dbeafe !important; }
+
+/* Partner header hover */
+.partner-header-btn:hover { filter: brightness(0.975); }
