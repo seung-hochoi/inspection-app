@@ -5,6 +5,39 @@ import { C, radius, font } from './styles';
  * BarcodeScanner — full-screen camera overlay for barcode scanning.
  * Props: onScan(code:string), onClose()
  */
+
+// Module-level cache — survives component unmount/remount so the second
+// (and all subsequent) opens always use the same rear-camera deviceId.
+let cachedRearDeviceId = null;
+
+/**
+ * Find the rear-camera deviceId, caching the result for reuse.
+ * Requests permission first so enumerateDevices() returns populated labels.
+ */
+async function getRearDeviceId() {
+  if (cachedRearDeviceId) return cachedRearDeviceId;
+
+  // Brief getUserMedia call grants permission + causes the browser to populate
+  // device labels.  We stop the tracks immediately — we don't need the stream.
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+    stream.getTracks().forEach((t) => t.stop());
+  } catch (_) { /* permission may already be granted; proceed anyway */ }
+
+  const all = await navigator.mediaDevices.enumerateDevices();
+  const videos = all.filter((d) => d.kind === 'videoinput');
+
+  const rear =
+    videos.find((d) => /back|rear|environment/i.test(d.label || '')) ||
+    videos[videos.length - 1] || // last device is typically rear on most phones
+    videos[0];
+
+  if (rear?.deviceId) {
+    cachedRearDeviceId = rear.deviceId;
+  }
+  return cachedRearDeviceId || null;
+}
+
 export default function BarcodeScanner({ onScan, onClose }) {
   const videoRef = useRef(null);
   const controlsRef = useRef(null);
@@ -28,11 +61,18 @@ export default function BarcodeScanner({ onScan, onClose }) {
       try {
         // Dynamically import so the 5 MB @zxing/browser library is only loaded
         // when the scanner is actually opened — not on initial page load.
-        const { BrowserMultiFormatReader, BrowserCodeReader } = await import('@zxing/browser');
+        const { BrowserMultiFormatReader } = await import('@zxing/browser');
         const reader = new BrowserMultiFormatReader();
-        const devices = await BrowserCodeReader.listVideoInputDevices();
-        const backCam =
-          devices.find((d) => /back|rear|environment/i.test(d.label || '')) || devices[0];
+
+        // Always resolve to a specific deviceId so the browser cannot switch
+        // cameras between opens.
+        const rearDeviceId = await getRearDeviceId();
+
+        // Build constraints: prefer exact deviceId; fall back to environment
+        // facingMode only when no deviceId is available (e.g. desktop browser).
+        const videoConstraints = rearDeviceId
+          ? { deviceId: { exact: rearDeviceId }, width: { ideal: 1280 }, height: { ideal: 720 } }
+          : { facingMode: { exact: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } };
 
         const onResult = (result, err, controls) => {
           if (!active) return;
@@ -56,15 +96,11 @@ export default function BarcodeScanner({ onScan, onClose }) {
           }
         };
 
-        if (backCam?.deviceId) {
-          await reader.decodeFromVideoDevice(backCam.deviceId, videoRef.current, onResult);
-        } else {
-          await reader.decodeFromConstraints(
-            { video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } } },
-            videoRef.current,
-            onResult
-          );
-        }
+        await reader.decodeFromConstraints(
+          { video: videoConstraints },
+          videoRef.current,
+          onResult
+        );
       } catch (err) {
         if (active) setError(err.message || '카메라를 사용할 수 없습니다.');
       }
@@ -106,7 +142,7 @@ export default function BarcodeScanner({ onScan, onClose }) {
             boxShadow: '0 0 0 9999px rgba(0,0,0,0.45)',
           }} />
         </div>
-        {/* Corner marks */}
+        {/* Status text */}
         <div style={{
           position: 'absolute', bottom: 20, left: 0, right: 0,
           textAlign: 'center', color: 'rgba(255,255,255,0.85)',
