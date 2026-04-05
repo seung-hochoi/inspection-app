@@ -6,7 +6,9 @@ import { cancelMovementEvent, saveBatch, uploadPhotos, savePhotoMeta } from '../
 import { fileToBase64, getClientId } from '../utils';
 import { v4 as uuidv4 } from 'uuid';
 
-export default function RecordsPage({ records = [], jobKey, onToast, onRefresh, inspectionRows = [], config = {} }) {
+export default function RecordsPage({ records = [], jobKey, onToast, onRefresh, inspectionRows = [], config = {}, authUser }) {
+  const canEditReturnExchange = !authUser || !(authUser.permissions || []).length ||
+    (authUser.permissions || []).includes('EDIT_RETURN_EXCHANGE');
   const [filter, setFilter]       = useState('all');
   const [search, setSearch]       = useState('');
   const [expanded, setExpanded]   = useState(null);
@@ -192,22 +194,24 @@ export default function RecordsPage({ records = [], jobKey, onToast, onRefresh, 
                           {rec['비고']  && <DRow label="비고"   value={rec['비고']} />}
                         </div>
                         <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
-                          <button
-                            onClick={() => setEditTarget(rec)}
-                            className="action-btn"
-                            style={{
-                              flex: 1, height: 38,
-                              background: C.primaryLight, color: C.primary,
-                              border: `1.5px solid ${C.primaryMid}`, borderRadius: radius.sm,
-                              fontSize: 12.5, fontWeight: 600, cursor: 'pointer',
-                              fontFamily: font.base,
-                              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-                            }}
-                          >
-                            <Pencil size={12} strokeWidth={2} />
-                            상세내용
-                          </button>
-                          {rec.__rowNumber && (
+                          {canEditReturnExchange && (
+                            <button
+                              onClick={() => setEditTarget(rec)}
+                              className="action-btn"
+                              style={{
+                                flex: 1, height: 38,
+                                background: C.primaryLight, color: C.primary,
+                                border: `1.5px solid ${C.primaryMid}`, borderRadius: radius.sm,
+                                fontSize: 12.5, fontWeight: 600, cursor: 'pointer',
+                                fontFamily: font.base,
+                                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                              }}
+                            >
+                              <Pencil size={12} strokeWidth={2} />
+                              상세내용
+                            </button>
+                          )}
+                          {canEditReturnExchange && rec.__rowNumber && (
                             <button
                               onClick={() => handleCancel(rec)}
                               disabled={canceling === rec.__rowNumber}

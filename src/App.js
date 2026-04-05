@@ -6,7 +6,7 @@ import InspectionPage from './components/InspectionPage';
 import RecordsPage from './components/RecordsPage';
 import SummaryPage from './components/SummaryPage';
 import LoginPage from './components/LoginPage';
-import { manualRecalc, syncHistory, resetCurrentJobInputData, fetchHistoryData, login as apiLogin, validateSession, logout as apiLogout, setSessionToken } from './api'; // eslint-disable-line no-unused-vars
+import { manualRecalc, syncHistory, resetCurrentJobInputData, fetchHistoryData, login as apiLogin, validateSession, logout as apiLogout, setSessionToken, listSessions, forceLogoutSession } from './api'; // eslint-disable-line no-unused-vars
 import { buildAndDownloadPhotoZips } from './utils/photoZipBuilder';
 
 // ============================================================
@@ -528,6 +528,81 @@ function Modal({ title, onClose, children }) {
         {children}
       </div>
     </div>
+  );
+}
+
+// ─── Admin: Active Sessions Modal ─────────────────────────────────────────────
+function ActiveSessionsModal({ onClose, showToast }) {
+  const [sessions, setSessions]   = useState([]);
+  const [loading,  setLoading]    = useState(true);
+  const [forcing,  setForcing]    = useState(null);
+
+  useEffect(() => {
+    listSessions()
+      .then((res) => setSessions(res.sessions || []))
+      .catch((err) => showToast(err.message || '세션 목록 불러오기 실패', 'error'))
+      .finally(() => setLoading(false));
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleForce = async (token) => {
+    setForcing(token);
+    try {
+      await forceLogoutSession(token);
+      setSessions((prev) => prev.filter((s) => s.SESSION_TOKEN !== token));
+      showToast('강제 로그아웃 완료', 'success');
+    } catch (err) {
+      showToast(err.message || '강제 로그아웃 실패', 'error');
+    } finally {
+      setForcing(null);
+    }
+  };
+
+  return (
+    <Modal title="접속중인 사용자" onClose={onClose}>
+      {loading ? (
+        <div style={S.emptyBox}>⏳ 불러오는 중...</div>
+      ) : sessions.length === 0 ? (
+        <div style={S.emptyBox}>활성 세션이 없습니다.</div>
+      ) : (
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ ...S.table, fontSize: 12, minWidth: 560 }}>
+            <thead>
+              <tr>
+                {['USER_ID', 'USER_NAME', 'ROLE', 'CREATED_AT', 'LAST_SEEN_AT', 'EXPIRES_AT', ''].map((h) => (
+                  <th key={h} style={S.th}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {sessions.map((s) => (
+                <tr key={s.SESSION_TOKEN}>
+                  <td style={S.td}>{s.USER_ID}</td>
+                  <td style={S.td}>{s.USER_NAME}</td>
+                  <td style={S.td}>{s.ROLE}</td>
+                  <td style={S.td}>{s.CREATED_AT}</td>
+                  <td style={S.td}>{s.LAST_SEEN_AT}</td>
+                  <td style={S.td}>{s.EXPIRES_AT}</td>
+                  <td style={S.td}>
+                    <button
+                      onClick={() => handleForce(s.SESSION_TOKEN)}
+                      disabled={!!forcing}
+                      style={{
+                        ...S.btnDanger,
+                        fontSize: 11, padding: '4px 10px', minHeight: 28,
+                        opacity: forcing ? 0.6 : 1,
+                        cursor: forcing ? 'default' : 'pointer',
+                      }}
+                    >
+                      {forcing === s.SESSION_TOKEN ? '처리중...' : '강제 로그아웃'}
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Modal>
   );
 }
 
@@ -1572,6 +1647,10 @@ function App() {
   const [showReset,    setShowReset]    = useState(false);
   const [resetPw,      setResetPw]      = useState("");
 
+  // ── Admin: session management state ──────────────────────────────────────────
+  const [showSessionsModal, setShowSessionsModal] = useState(false);
+  const canManageUsers = !!(authUser && (authUser.permissions || []).includes('MANAGE_USERS'));
+
   // ── Action handlers (SECTION 7) ───────────────────────────────
   const showToast = useCallback((message, type = "info") => {
     setToast({ message, type });
@@ -1748,6 +1827,30 @@ function App() {
       .catch(() => {}); // silently ignore if backend not reachable
   }, []);
 
+  // ── Header summary chips (derived; used only in JSX, no perf risk) ──────────
+  const headerSkuCount = useMemo(() => {
+    const codes = new Set((jobRows || []).map((r) => r.__productCode).filter(Boolean));
+    return codes.size;
+  }, [jobRows]);
+
+  const headerInspCount = useMemo(() => {
+    const codes = new Set();
+    for (const r of (inspectionRows || [])) {
+      if (parseInt(r['검품수량'], 10) > 0 && r['상품코드']) {
+        codes.add(String(r['상품코드']).trim());
+      }
+    }
+    return codes.size;
+  }, [inspectionRows]);
+
+  const headerInspRate   = headerSkuCount > 0 ? Math.round((headerInspCount / headerSkuCount) * 100) : 0;
+  const headerStatusText = headerSkuCount === 0 ? '대기' : headerInspRate === 100 ? '완료' : '진행중';
+  const headerStatusColor = headerSkuCount === 0 ? C.textSecondary : headerInspRate === 100 ? C.green : C.accent;
+
+  const handleLogoutConfirm = useCallback(() => {
+    if (window.confirm('로그아웃 하시겠습니까?')) handleLogout();
+  }, [handleLogout]);
+
   const handleCsvUpload = useCallback(
     async (e) => {
       const file = e.target.files?.[0];
@@ -1817,56 +1920,133 @@ function App() {
 
       {/* ── Header (two rows: brand + action strip) ── */}
       <header style={S.header}>
-        {/* Row 1: brand + 시트 link */}
-        <div style={S.headerMain}>
-          <img src={gs25Logo} alt="GS25" style={{ height: 26, flexShrink: 0, verticalAlign: "middle" }} />
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <p style={S.headerTitle}>
-              검품 시스템
-              <span style={{
-                marginLeft: 8, paddingLeft: 8,
-                borderLeft: "1px solid rgba(15,23,42,0.14)",
-                fontSize: 9.5, fontWeight: 500, letterSpacing: "0.08em",
-                color: "rgba(15,23,42,0.32)",
-                verticalAlign: "middle", fontFamily: "'SF Mono','Menlo','Consolas',monospace",
-                textTransform: "uppercase",
-              }}>MADE BY. SEUNG-HO</span>
-            </p>
-            {currentFileName && (
-              <p style={S.headerSub}>
-                {currentFileName.length > 40 ? currentFileName.slice(0, 40) + "…" : currentFileName}
+        {/* Row 1: brand · summary chips · user area */}
+        <div style={{ ...S.headerMain, gap: 0, padding: '0 14px' }}>
+
+          {/* ── LEFT: logo + divider + title ── */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+            <img src={gs25Logo} alt="GS25" style={{ height: 28, flexShrink: 0, display: 'block' }} />
+            <div style={{ width: 1, height: 22, background: C.borderLight, flexShrink: 0 }} />
+            <div style={{ lineHeight: 1 }}>
+              <p style={{ fontSize: 14, fontWeight: 800, color: C.text, margin: 0, letterSpacing: '-0.025em' }}>
+                GS25 신선 검품시스템
               </p>
+              {currentFileName && (
+                <p style={{ fontSize: 10, color: C.textSecondary, margin: '2px 0 0', letterSpacing: 0 }}>
+                  {currentFileName.length > 32 ? currentFileName.slice(0, 32) + '…' : currentFileName}
+                </p>
+              )}
+            </div>
+          </div>
+
+          {/* ── CENTER: lightweight business summary chips ── */}
+          <div style={{
+            flex: 1, minWidth: 0, display: 'flex', alignItems: 'center',
+            gap: 5, marginLeft: 14, overflow: 'hidden',
+          }}>
+            {headerSkuCount > 0 && (
+              <span style={{
+                fontSize: 11, fontWeight: 700, color: C.textMid,
+                background: C.card, border: `1px solid ${C.borderLight}`,
+                borderRadius: 6, padding: '3px 8px', flexShrink: 0, whiteSpace: 'nowrap',
+              }}>
+                SKU&nbsp;<span style={{ color: C.accent }}>{headerSkuCount}</span>
+              </span>
+            )}
+            {headerSkuCount > 0 && (
+              <span style={{
+                fontSize: 11, fontWeight: 700,
+                color: headerInspRate === 100 ? C.green : C.accent,
+                background: headerInspRate === 100 ? C.greenBg : C.accentBg,
+                border: `1px solid ${headerInspRate === 100 ? C.green + '44' : C.accent + '44'}`,
+                borderRadius: 6, padding: '3px 8px', flexShrink: 0, whiteSpace: 'nowrap',
+              }}>
+                검품률&nbsp;{headerInspRate}%
+              </span>
+            )}
+            {headerSkuCount > 0 && (
+              <span style={{
+                fontSize: 11, fontWeight: 700,
+                color: headerStatusColor,
+                background: headerStatusColor === C.green ? C.greenBg : headerStatusColor === C.accent ? C.accentBg : C.card,
+                border: `1px solid ${headerStatusColor}44`,
+                borderRadius: 6, padding: '3px 8px', flexShrink: 0, whiteSpace: 'nowrap',
+              }}>
+                {headerStatusText}
+              </span>
             )}
           </div>
-          <div style={S.headerRight}>
+
+          {/* ── RIGHT: sheet link · user badge · admin button · logout ── */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0, marginLeft: 8 }}>
             {worksheetUrl && (
               <a
                 href={worksheetUrl} target="_blank" rel="noreferrer"
-                style={{ fontSize: 12, color: C.accent, fontWeight: 600, textDecoration: "none",
-                  padding: "6px 10px", background: C.accentBg, borderRadius: 8 }}
+                style={{
+                  fontSize: 11, fontWeight: 700, color: C.accent,
+                  textDecoration: 'none', padding: '4px 9px',
+                  background: C.accentBg, borderRadius: 7,
+                  border: `1px solid ${C.accent}30`,
+                  flexShrink: 0, whiteSpace: 'nowrap',
+                }}
               >시트↗</a>
             )}
-            {/* User info + logout */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 4 }}>
+
+            {/* User name + role badge */}
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 5,
+              background: C.card, border: `1px solid ${C.borderLight}`,
+              borderRadius: 8, padding: '4px 9px', flexShrink: 0,
+            }}>
               <span style={{
-                fontSize: 11, color: C.textSoft, fontWeight: 600,
-                padding: '3px 8px', background: C.accentBg, borderRadius: 6,
-                maxWidth: 80, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                fontSize: 12, fontWeight: 700, color: C.text,
+                maxWidth: 72, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
               }}>
                 {authUser.name || authUser.id}
               </span>
+              <span style={{
+                fontSize: 10, fontWeight: 700,
+                color: authUser.role === 'ADMIN' ? '#7c3aed' : authUser.role === 'MANAGER' ? C.accent : C.textSoft,
+                background: authUser.role === 'ADMIN' ? '#f5f3ff' : authUser.role === 'MANAGER' ? C.accentBg : C.borderLight,
+                border: `1px solid ${authUser.role === 'ADMIN' ? '#ddd6fe' : authUser.role === 'MANAGER' ? C.accent + '44' : C.border}`,
+                borderRadius: 5, padding: '1px 6px', letterSpacing: '0.02em',
+              }}>
+                {authUser.role || 'USER'}
+              </span>
+            </div>
+
+            {/* Admin: active sessions button — MANAGE_USERS only */}
+            {canManageUsers && (
               <button
-                onClick={handleLogout}
-                title="로그아웃"
+                onClick={() => setShowSessionsModal(true)}
+                title="접속중인 사용자 관리"
                 style={{
-                  background: 'transparent', border: `1px solid ${C.borderLight}`,
-                  borderRadius: 7, padding: '5px 7px', cursor: 'pointer',
-                  display: 'flex', alignItems: 'center', color: C.textSecondary,
+                  background: C.accentBg, border: `1px solid ${C.accent}44`,
+                  borderRadius: 7, padding: '5px 9px', cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', gap: 4,
+                  fontSize: 11, fontWeight: 700, color: C.accent,
+                  flexShrink: 0, whiteSpace: 'nowrap',
                 }}
               >
-                <LogOut size={13} strokeWidth={2} />
+                👥 접속현황
               </button>
-            </div>
+            )}
+
+            {/* Logout */}
+            <button
+              onClick={handleLogoutConfirm}
+              title="로그아웃"
+              style={{
+                background: 'transparent', border: `1px solid ${C.borderLight}`,
+                borderRadius: 7, padding: '5px 8px', cursor: 'pointer',
+                display: 'flex', alignItems: 'center', gap: 4,
+                color: C.textSecondary, fontSize: 11, fontWeight: 600,
+                flexShrink: 0,
+              }}
+            >
+              <LogOut size={13} strokeWidth={2} />
+              로그아웃
+            </button>
           </div>
         </div>
 
@@ -1908,6 +2088,7 @@ function App() {
             onCsvUpload={handleCsvUpload}
             onRefresh={loadBootstrap}
             onRecordsUpdate={setRecords}
+            authUser={authUser}
           />
         )}
         {tab === "records" && (
@@ -1918,6 +2099,7 @@ function App() {
             config={config}
             onToast={showToast}
             onRefresh={loadBootstrap}
+            authUser={authUser}
           />
         )}
         {tab === "summary" && (
@@ -1955,6 +2137,14 @@ function App() {
 
       {/* Toast */}
       <AppToast toast={toast} />
+
+      {/* Admin: active sessions modal — MANAGE_USERS only */}
+      {canManageUsers && showSessionsModal && (
+        <ActiveSessionsModal
+          onClose={() => setShowSessionsModal(false)}
+          showToast={showToast}
+        />
+      )}
     </div>
   );
 }

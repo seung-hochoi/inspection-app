@@ -146,3 +146,10 @@ export const validateSession = (token) =>
 
 export const logout = (token) =>
   post({ action: "logout", sessionToken: token || _sessionToken || "" });
+
+// ── Admin-only session management ─────────────────────────────────────────────
+export const listSessions = () =>
+  post({ action: "listSessions" });
+
+export const forceLogoutSession = (targetSessionToken) =>
+  post({ action: "forceLogout", targetSessionToken });

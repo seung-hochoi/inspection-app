@@ -38,7 +38,11 @@ export default function LoginPage({ onLogin, loading: externalLoading }) {
     try {
       await onLogin(id.trim(), password.trim());
     } catch (err) {
-      setError(err.message || '로그인에 실패했습니다.');
+      if (err.message === 'INVALID_CREDENTIALS') {
+        setError('아이디나 비밀번호를 확인해주세요.');
+      } else {
+        setError('서버 문제');
+      }
     } finally {
       setSubmitting(false);
     }

@@ -19,6 +19,7 @@ const ProductRow = React.memo(function ProductRow({
   saveStatus, highlight, centers = [], happycallRanks = null, eventName = '',
   productImageMap = {}, onProductImageUploaded, accumulatedQty = 0,
   returnCount = 0, exchangeCount = 0, returnQty = 0, exchangeQty = 0,
+  canEditInspection = true, canUploadPhoto = true, canEditReturnExchange = true,
 }) {
   // 'insp' = 검품사진, 'defect' = 불량사진 (return+exchange combined)
   const [showPhotoType, setShowPhotoType] = useState(null);
@@ -315,10 +316,10 @@ const ProductRow = React.memo(function ProductRow({
                   overflow: 'hidden',
                   border: `1px solid ${C.border}`,
                   background: C.bgAlt,
-                  cursor: 'pointer',
+                  cursor: canUploadPhoto ? 'pointer' : 'default',
                 }}
-                title="대표 이미지 변경"
-                onClick={() => thumbInputRef.current?.click()}
+                title={canUploadPhoto ? '대표 이미지 변경' : undefined}
+                onClick={canUploadPhoto ? () => thumbInputRef.current?.click() : undefined}
               >
                 {thumbUrl ? (
                   <img
@@ -338,7 +339,7 @@ const ProductRow = React.memo(function ProductRow({
                   </div>
                 )}
                 {/* Camera overlay button */}
-                {!thumbUploading && (
+                {canUploadPhoto && !thumbUploading && (
                   <div style={{
                     position: 'absolute', bottom: 2, right: 2,
                     width: 16, height: 16, borderRadius: '50%',
@@ -404,16 +405,18 @@ const ProductRow = React.memo(function ProductRow({
                   ? `0 0 0 2px ${C.greenLight}`
                   : hasDefect ? `0 0 0 2px ${C.orangeLight}` : shadow.xs,
                 background: C.card, transition: 'border-color 0.2s, box-shadow 0.2s',
+                opacity: canEditInspection ? 1 : 0.55,
               }}>
-                <StepperBtn onClick={() => stepQty(-1)} aria-label="감소">
+                <StepperBtn onClick={() => canEditInspection && stepQty(-1)} aria-label="감소" disabled={!canEditInspection}>
                   <Minus size={12} strokeWidth={2.5} />
                 </StepperBtn>
                 <input
                   type="text" inputMode="numeric" aria-label="검품수량"
                   value={inspQty}
-                  onChange={(e) => handleQtyChange(e.target.value)}
-                  onFocus={() => { if (inspQty === '0') handleQtyChange(''); }}
-                  onBlur={handleQtyBlur}
+                  onChange={(e) => canEditInspection && handleQtyChange(e.target.value)}
+                  onFocus={() => { if (canEditInspection && inspQty === '0') handleQtyChange(''); }}
+                  onBlur={() => canEditInspection && handleQtyBlur()}
+                  readOnly={!canEditInspection}
                   placeholder="0"
                   style={{
                     width: 52, height: 36, textAlign: 'center', border: 'none',
@@ -421,9 +424,10 @@ const ProductRow = React.memo(function ProductRow({
                     color: isDone ? C.green : hasDefect ? C.orange : C.text,
                     fontFamily: font.base, outline: 'none', background: 'transparent',
                     letterSpacing: '-0.02em',
+                    cursor: canEditInspection ? 'text' : 'default',
                   }}
                 />
-                <StepperBtn onClick={() => stepQty(1)} aria-label="증가" primary>
+                <StepperBtn onClick={() => canEditInspection && stepQty(1)} aria-label="증가" primary disabled={!canEditInspection}>
                   <Plus size={12} strokeWidth={2.5} />
                 </StepperBtn>
               </div>
@@ -449,46 +453,54 @@ const ProductRow = React.memo(function ProductRow({
               {/* Photos + movement actions — pushed to far right (desktop), full-width 2-row on mobile */}
               <div className="action-btn-row" style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0 }}>
                 {/* Primary photo slots: 검품 + 불량 — higher usage, show up to 3 thumbs */}
-                <PhotoSlot
-                  label="검품" fileIds={inspPhotoIds}
-                  color={C.primary} bg={C.primaryLight} border={C.primaryMid}
-                  onClick={() => setShowPhotoType('insp')}
-                  onDeletePhoto={(id) => deletePhoto('insp', id)}
-                />
-                <PhotoSlot
-                  label="불량" fileIds={defectPhotoIds}
-                  color={C.red} bg={C.redLight} border={C.redMid}
-                  onClick={() => setShowPhotoType('defect')}
-                  onDeletePhoto={(id) => deletePhoto('defect', id)}
-                />
-                {/* Compact photo slots: 중량 + 당도 — lower usage, 1 thumb max */}
-                <PhotoSlot
-                  label="중량" fileIds={weightPhotoIds}
-                  color={C.muted} bg={C.bgAlt} border={C.borderMid}
-                  onClick={() => setShowPhotoType('weight')}
-                  onDeletePhoto={(id) => deletePhoto('weight', id)}
-                  compact
-                />
-                <PhotoSlot
-                  label="당도" fileIds={brixPhotoIds}
-                  color={C.muted} bg={C.bgAlt} border={C.borderMid}
-                  onClick={() => setShowPhotoType('brix')}
-                  onDeletePhoto={(id) => deletePhoto('brix', id)}
-                  compact
-                />
-                <div className="action-separator" style={{ width: 1, height: 20, background: C.border, flexShrink: 0 }} />
-                <MovBtn
-                  icon={<Truck size={11} strokeWidth={2} />} label="회송"
-                  color={C.red} bg={C.redLight} border={C.redMid}
-                  count={returnCount}
-                  onClick={() => { setMovementType('RETURN'); setShowMovement(true); }}
-                />
-                <MovBtn
-                  icon={<ArrowLeftRight size={11} strokeWidth={2} />} label="교환"
-                  color={C.orange} bg={C.orangeLight} border={C.orangeMid}
-                  count={exchangeCount}
-                  onClick={() => { setMovementType('EXCHANGE'); setShowMovement(true); }}
-                />
+                {canUploadPhoto && (
+                  <>
+                    <PhotoSlot
+                      label="검품" fileIds={inspPhotoIds}
+                      color={C.primary} bg={C.primaryLight} border={C.primaryMid}
+                      onClick={() => setShowPhotoType('insp')}
+                      onDeletePhoto={(id) => deletePhoto('insp', id)}
+                    />
+                    <PhotoSlot
+                      label="불량" fileIds={defectPhotoIds}
+                      color={C.red} bg={C.redLight} border={C.redMid}
+                      onClick={() => setShowPhotoType('defect')}
+                      onDeletePhoto={(id) => deletePhoto('defect', id)}
+                    />
+                    {/* Compact photo slots: 중량 + 당도 — lower usage, 1 thumb max */}
+                    <PhotoSlot
+                      label="중량" fileIds={weightPhotoIds}
+                      color={C.muted} bg={C.bgAlt} border={C.borderMid}
+                      onClick={() => setShowPhotoType('weight')}
+                      onDeletePhoto={(id) => deletePhoto('weight', id)}
+                      compact
+                    />
+                    <PhotoSlot
+                      label="당도" fileIds={brixPhotoIds}
+                      color={C.muted} bg={C.bgAlt} border={C.borderMid}
+                      onClick={() => setShowPhotoType('brix')}
+                      onDeletePhoto={(id) => deletePhoto('brix', id)}
+                      compact
+                    />
+                    <div className="action-separator" style={{ width: 1, height: 20, background: C.border, flexShrink: 0 }} />
+                  </>
+                )}
+                {canEditReturnExchange && (
+                  <>
+                    <MovBtn
+                      icon={<Truck size={11} strokeWidth={2} />} label="회송"
+                      color={C.red} bg={C.redLight} border={C.redMid}
+                      count={returnCount}
+                      onClick={() => { setMovementType('RETURN'); setShowMovement(true); }}
+                    />
+                    <MovBtn
+                      icon={<ArrowLeftRight size={11} strokeWidth={2} />} label="교환"
+                      color={C.orange} bg={C.orangeLight} border={C.orangeMid}
+                      count={exchangeCount}
+                      onClick={() => { setMovementType('EXCHANGE'); setShowMovement(true); }}
+                    />
+                  </>
+                )}
                 {/* Expand / collapse photo preview toggle */}
                 <button
                   type="button"
@@ -680,21 +692,23 @@ function Tag({ bg, color, border, children, title }) {
   );
 }
 
-function StepperBtn({ onClick, children, 'aria-label': ariaLabel, primary }) {
+function StepperBtn({ onClick, children, 'aria-label': ariaLabel, primary, disabled }) {
   return (
     <button
       type="button"
       onClick={onClick}
       aria-label={ariaLabel}
+      disabled={disabled}
       className={primary ? 'stepper-btn stepper-btn-plus' : 'stepper-btn'}
       style={{
-        width: 32, height: 36, border: 'none', cursor: 'pointer',
+        width: 32, height: 36, border: 'none', cursor: disabled ? 'default' : 'pointer',
         background: C.bgAlt,
         borderRight: primary ? 'none' : `1px solid ${C.border}`,
         borderLeft:  primary ? `1px solid ${C.border}` : 'none',
         color: primary ? C.primary : C.muted,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         transition: trans, flexShrink: 0,
+        opacity: disabled ? 0.45 : 1,
       }}
     >
       {children}

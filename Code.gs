@@ -195,7 +195,7 @@ function login_(payload) {
   var sheet = getUsersSheet_();
   if (!sheet || sheet.getLastRow() < 2) {
     appendAuditLog_({ action: "LOGIN_FAIL", userId: userId, result: "FAIL", message: "USERS 시트 없음" });
-    return { ok: false, error: "아이디 또는 비밀번호가 올바르지 않습니다" };
+    return { ok: false, error: "INVALID_CREDENTIALS", message: "INVALID_CREDENTIALS" };
   }
 
   var data    = sheet.getDataRange().getValues();
@@ -215,12 +215,12 @@ function login_(payload) {
 
     if (String(row[activeIdx] || "").toUpperCase() !== "TRUE") {
       appendAuditLog_({ action: "LOGIN_FAIL", userId: userId, result: "FAIL", message: "비활성 계정" });
-      return { ok: false, error: "아이디 또는 비밀번호가 올바르지 않습니다" };
+      return { ok: false, error: "INVALID_CREDENTIALS", message: "INVALID_CREDENTIALS" };
     }
 
     if (String(row[passIdx] || "").trim() !== password) {
       appendAuditLog_({ action: "LOGIN_FAIL", userId: userId, result: "FAIL", message: "비밀번호 불일치" });
-      return { ok: false, error: "아이디 또는 비밀번호가 올바르지 않습니다" };
+      return { ok: false, error: "INVALID_CREDENTIALS", message: "INVALID_CREDENTIALS" };
     }
 
     var role       = String(row[roleIdx] || "VIEWER").trim().toUpperCase();
@@ -251,7 +251,7 @@ function login_(payload) {
   }
 
   appendAuditLog_({ action: "LOGIN_FAIL", userId: userId, result: "FAIL", message: "사용자 없음" });
-  return { ok: false, error: "아이디 또는 비밀번호가 올바르지 않습니다" };
+  return { ok: false, error: "INVALID_CREDENTIALS", message: "INVALID_CREDENTIALS" };
 }
 
 function validateSession_(sessionToken) {
@@ -286,6 +286,84 @@ function logout_(sessionToken) {
     break;
   }
   return { ok: true };
+}
+
+function getActiveSessions_(sessionToken) {
+  requirePermission_(sessionToken, "MANAGE_USERS");
+
+  var sheet = getUserSessionsSheet_();
+  if (!sheet || sheet.getLastRow() < 2) return { ok: true, sessions: [] };
+
+  var data    = sheet.getDataRange().getValues();
+  var headers = data[0].map(function(h) { return String(h).trim(); });
+  var tokenIdx    = headers.indexOf("SESSION_TOKEN");
+  var userIdIdx   = headers.indexOf("USER_ID");
+  var userNameIdx = headers.indexOf("USER_NAME");
+  var roleIdx     = headers.indexOf("ROLE");
+  var createdIdx  = headers.indexOf("CREATED_AT");
+  var lastSeenIdx = headers.indexOf("LAST_SEEN_AT");
+  var expiresIdx  = headers.indexOf("EXPIRES_AT");
+  var activeIdx   = headers.indexOf("ACTIVE");
+
+  var now = new Date();
+  var sessions = [];
+
+  for (var i = 1; i < data.length; i++) {
+    var row = data[i];
+    if (String(row[activeIdx] || "").toUpperCase() !== "TRUE") continue;
+
+    var expiresAt = row[expiresIdx];
+    if (expiresAt) {
+      var expDate = new Date(expiresAt);
+      if (!isNaN(expDate.getTime()) && expDate < now) continue;
+    }
+
+    sessions.push({
+      SESSION_TOKEN: String(row[tokenIdx]    || ""),
+      USER_ID:       String(row[userIdIdx]   || ""),
+      USER_NAME:     String(row[userNameIdx] || ""),
+      ROLE:          String(row[roleIdx]     || ""),
+      CREATED_AT:    String(row[createdIdx]  || ""),
+      LAST_SEEN_AT:  String(row[lastSeenIdx] || ""),
+      EXPIRES_AT:    String(row[expiresIdx]  || ""),
+    });
+  }
+
+  return { ok: true, sessions: sessions };
+}
+
+function forceLogout_(sessionToken, targetSessionToken) {
+  var admin = requirePermission_(sessionToken, "MANAGE_USERS");
+
+  if (!targetSessionToken) throw new Error("targetSessionToken이 필요합니다.");
+
+  var sheet = getUserSessionsSheet_();
+  if (!sheet || sheet.getLastRow() < 2) throw new Error("세션 시트를 찾을 수 없습니다.");
+
+  var data    = sheet.getDataRange().getValues();
+  var headers = data[0].map(function(h) { return String(h).trim(); });
+  var tokenIdx  = headers.indexOf("SESSION_TOKEN");
+  var activeIdx = headers.indexOf("ACTIVE");
+
+  for (var i = 1; i < data.length; i++) {
+    if (String(data[i][tokenIdx] || "").trim() !== targetSessionToken) continue;
+
+    if (activeIdx >= 0) sheet.getRange(i + 1, activeIdx + 1).setValue("FALSE");
+
+    appendAuditLog_({
+      action:    "FORCE_LOGOUT",
+      userId:    admin.id,
+      userName:  admin.name,
+      role:      admin.role,
+      targetType: "SESSION",
+      targetKey: targetSessionToken,
+      result:    "SUCCESS",
+    });
+
+    return { ok: true };
+  }
+
+  throw new Error("해당 세션을 찾을 수 없습니다.");
 }
 
 // ============================================================
@@ -591,6 +669,14 @@ function doPost(e) {
       var histSs = SpreadsheetApp.getActiveSpreadsheet();
       syncHistorySheet_(histSs);
       return jsonOutput_({ ok: true });
+    }
+
+    if (action === "listSessions") {
+      return jsonOutput_(getActiveSessions_(body.sessionToken || ""));
+    }
+
+    if (action === "forceLogout") {
+      return jsonOutput_(forceLogout_(body.sessionToken || "", body.targetSessionToken || ""));
     }
 
     return jsonOutput_({

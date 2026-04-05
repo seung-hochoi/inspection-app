@@ -13,6 +13,7 @@ export default function InspectionPage({
   jobKey, rows = [], config = {}, records = [], happycall = {}, inspectionRows = [],
   productImageMap = {}, onProductImageUploaded,
   onError, onToast, onCsvUpload, onRefresh, onRecordsUpdate,
+  authUser,
 }) {
   const [drafts, setDrafts]             = useState(() => loadDrafts());
   const [saveStatuses, setSaveStatuses] = useState({});
@@ -26,6 +27,12 @@ export default function InspectionPage({
   const csvInputRef        = useRef(null);
   const scrollContainerRef = useRef(null);
   const partnerCardRefs    = useRef({});
+
+  // ── Permission flags (derived from authUser; default true for safety) ────────
+  const _perms               = (authUser && authUser.permissions) || [];
+  const canEditInspection    = _perms.length === 0 || _perms.includes('EDIT_INSPECTION');
+  const canUploadPhoto       = _perms.length === 0 || _perms.includes('UPLOAD_PHOTO');
+  const canEditReturnExchange = _perms.length === 0 || _perms.includes('EDIT_RETURN_EXCHANGE');
 
   // Debounce: only update the filter-driving `search` after the user stops typing
   useEffect(() => {
@@ -518,6 +525,9 @@ export default function InspectionPage({
                 onSaveError={handleSaveError}
                 expanded={openPartner === partnerName}
                 onToggle={handleTogglePartner}
+                canEditInspection={canEditInspection}
+                canUploadPhoto={canUploadPhoto}
+                canEditReturnExchange={canEditReturnExchange}
               />
             </div>
           ))

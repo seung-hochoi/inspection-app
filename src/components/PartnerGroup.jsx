@@ -15,6 +15,7 @@ function PartnerGroupBase({
   movementCounts = {},
   onDraftChange, onSaved, onMovementSaved, onError, onSaveError,
   expanded = false, onToggle,
+  canEditInspection = true, canUploadPhoto = true, canEditReturnExchange = true,
 }) {
   const handleHeaderClick = () => onToggle?.(partnerName);
 
@@ -164,6 +165,9 @@ function PartnerGroupBase({
                   onMovementSaved={onMovementSaved}
                   onError={onError}
                   onSaveError={onSaveError}
+                  canEditInspection={canEditInspection}
+                  canUploadPhoto={canUploadPhoto}
+                  canEditReturnExchange={canEditReturnExchange}
                 />
               );
             })}
@@ -205,6 +209,9 @@ function arePartnerGroupPropsEqual(prev, next) {
   if (prev.onMovementSaved  !== next.onMovementSaved)  return false;
   if (prev.onError          !== next.onError)          return false;
   if (prev.onSaveError      !== next.onSaveError)      return false;
+  if (prev.canEditInspection     !== next.canEditInspection)     return false;
+  if (prev.canUploadPhoto        !== next.canUploadPhoto)        return false;
+  if (prev.canEditReturnExchange !== next.canEditReturnExchange) return false;
 
   // Check drafts and saveStatuses only for this partner's own rows
   for (const r of next.rows) {
