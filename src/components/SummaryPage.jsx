@@ -8,28 +8,63 @@ export default function SummaryPage({ summary = {}, happycall = {}, jobRows = []
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const s = useMemo(() => summary || {}, [summary]);
 
-  // ── KPI computation from live jobRows + 사전예약 rows (available immediately after CSV upload) ──
+  // ── KPI computation — backend summary is source of truth; CSV is fallback ──
   const { totalOrderedQty, totalSku, inspTargetSku, totalAmount, hasPriceData } = useMemo(() => {
     const reservationRows = Array.isArray(config.reservation_rows) ? config.reservation_rows : [];
-    const excludeRows = Array.isArray(config.exclude_rows) ? config.exclude_rows : [];
-    const hasJobRows = Array.isArray(jobRows) && jobRows.length > 0;
-    if (!hasJobRows && reservationRows.length === 0) {
+    const excludeRows     = Array.isArray(config.exclude_rows)     ? config.exclude_rows     : [];
+    const hasJobRows      = Array.isArray(jobRows) && jobRows.length > 0;
+
+    // Read a numeric field from the backend summary object (s).
+    // Returns null when the key is absent, empty string, or non-finite.
+    // Backend field names match the inspection_summary sheet headers written by
+    // updateInspectionDashboard_() in Code.gs.
+    const fromSummary = (key) => {
+      const v = s[key];
+      if (v == null || v === '') return null;
+      const n = typeof v === 'number' ? v : Number(String(v).replace(/,/g, ''));
+      return isFinite(n) ? n : null;
+    };
+
+    // Priority 1: backend-calculated values (populated by manualRecalc)
+    //   "총 입고금액"  → total inbound amount (qty × 입고원가 for all rows)
+    //   "총 입고수량"  → total ordered quantity
+    //   "입고 SKU"    → distinct product codes across all rows
+    //   "검품입고 SKU" → distinct codes after applying 제외목록 exclusions
+    const bAmount  = fromSummary('총 입고금액');
+    const bQty     = fromSummary('총 입고수량');
+    const bSku     = fromSummary('입고 SKU');
+    const bInspSku = fromSummary('검품입고 SKU');
+
+    // Fast-path: all four backend values are present — return immediately, no CSV scan needed
+    if (bAmount !== null && bQty !== null && bSku !== null && bInspSku !== null) {
       return {
-        totalOrderedQty: s['총발주수량'] || s.totalOrdered || 0,
-        totalSku: s['총상품수'] || s.totalProducts || 0,
-        inspTargetSku: s['총상품수'] || s.totalProducts || 0,
-        totalAmount: 0,
-        hasPriceData: false,
+        totalOrderedQty: bQty,
+        totalSku:        bSku,
+        inspTargetSku:   bInspSku,
+        totalAmount:     bAmount,
+        hasPriceData:    bAmount > 0,
       };
     }
 
-    const PRICE_COLS     = ['금액', '발주금액', '입고금액', '공급금액', '총금액', '합계금액'];
-    const UNIT_PRICE_COLS = ['단가', '공급단가', '매입단가'];
-    const COST_COLS      = ['입고원가', '상품원가', '원가'];
-    const CODE_COLS      = ['상품코드', '상품 코드', '코드', '바코드'];
-    const QTY_COLS       = ['발주수량', '입고수량', '수량'];
+    // Priority 2 (no CSV rows loaded yet): return whatever backend has, zero-fill the rest
+    if (!hasJobRows && reservationRows.length === 0) {
+      return {
+        totalOrderedQty: bQty  ?? 0,
+        totalSku:        bSku  ?? 0,
+        inspTargetSku:   bInspSku ?? (bSku ?? 0),
+        totalAmount:     bAmount  ?? 0,
+        hasPriceData:    bAmount !== null && bAmount > 0,
+      };
+    }
 
-    // Normalize a raw value to a number: handles commas, spaces, =T("...") wrappers, quotes
+    // Priority 3: client-side computation from loaded CSV rows (fallback / partial fill)
+    const PRICE_COLS      = ['금액', '발주금액', '입고금액', '공급금액', '총금액', '합계금액'];
+    const UNIT_PRICE_COLS = ['단가', '공급단가', '매입단가'];
+    const COST_COLS       = ['입고원가', '상품원가', '원가'];
+    const CODE_COLS       = ['상품코드', '상품 코드', '코드', '바코드'];
+    const QTY_COLS        = ['발주수량', '입고수량', '수량'];
+
+    // Normalize raw CSV value → number; handles commas, =T("...") wrappers, quotes
     const toNumber = (raw) => {
       if (raw == null || raw === '') return NaN;
       let str = String(raw).trim();
@@ -39,7 +74,6 @@ export default function SummaryPage({ summary = {}, happycall = {}, jobRows = []
       return Number(str);
     };
 
-    // Returns true when (code, partner) matches an active exclusion rule
     const isExcludedRow = (code, partner) => {
       const normCode = String(code || '').trim().toLowerCase();
       if (!normCode) return false;
@@ -49,28 +83,26 @@ export default function SummaryPage({ summary = {}, happycall = {}, jobRows = []
         const exCode = String(ex['상품코드'] || '').trim().toLowerCase();
         if (!exCode || exCode !== normCode) continue;
         const exPartner = String(ex['협력사'] || ex['협력사명'] || '').trim().toLowerCase();
-        if (!exPartner) return true; // code-only rule
-        if (exPartner === String(partner || '').trim().toLowerCase()) return true; // code+partner rule
+        if (!exPartner) return true;
+        if (exPartner === String(partner || '').trim().toLowerCase()) return true;
       }
       return false;
     };
 
-    let amount = 0;
-    let hasPriceData = false;
-    const codes = new Set();
+    let csvAmount   = 0;
+    let csvHasPrice = false;
+    const codes     = new Set();
     const inspCodes = new Set();
-    let qtySum = 0;
+    let csvQtySum   = 0;
 
-    // Process main CSV job rows
     for (const r of (hasJobRows ? jobRows : [])) {
       const code    = r.__productCode || '';
       const qty     = Number(r.__qty) || 0;
       const partner = r.__partner || r['협력사명'] || '';
-      qtySum += qty;
+      csvQtySum += qty;
       if (code) codes.add(code);
       if (code && qty > 0 && !isExcludedRow(code, partner)) inspCodes.add(code);
 
-      // Compute per-row price: try pre-calculated total → unit price × qty → cost × qty
       let rowAmount = NaN;
       for (const col of PRICE_COLS) {
         const v = toNumber(r[col]);
@@ -88,10 +120,9 @@ export default function SummaryPage({ summary = {}, happycall = {}, jobRows = []
           if (!isNaN(p) && p > 0) { rowAmount = p * qty; break; }
         }
       }
-      if (!isNaN(rowAmount) && rowAmount > 0) { amount += rowAmount; hasPriceData = true; }
+      if (!isNaN(rowAmount) && rowAmount > 0) { csvAmount += rowAmount; csvHasPrice = true; }
     }
 
-    // Merge 사전예약 reservation rows
     for (const r of reservationRows) {
       const getField = (cols) => {
         for (const c of cols) { const v = r[c]; if (v !== undefined && v !== '' && v !== null) return v; }
@@ -100,22 +131,26 @@ export default function SummaryPage({ summary = {}, happycall = {}, jobRows = []
       const code    = String(getField(CODE_COLS) || '').trim();
       const qty     = toNumber(getField(QTY_COLS) || '0') || 0;
       const partner = String(r['협력사명'] || r['협력사'] || '').trim();
-      qtySum += qty;
+      csvQtySum += qty;
       if (code) codes.add(code);
       if (code && qty > 0 && !isExcludedRow(code, partner)) inspCodes.add(code);
       const rawCost = getField(COST_COLS);
       if (rawCost !== '') {
         const cost = toNumber(rawCost);
-        if (!isNaN(cost) && cost > 0 && qty > 0) { amount += cost * qty; hasPriceData = true; }
+        if (!isNaN(cost) && cost > 0 && qty > 0) { csvAmount += cost * qty; csvHasPrice = true; }
       }
     }
 
+    // Merge: backend values override CSV-derived values wherever available
+    const finalAmount   = (bAmount !== null && bAmount > 0) ? bAmount : csvAmount;
+    const finalHasPrice = (bAmount !== null && bAmount > 0) || csvHasPrice;
+
     return {
-      totalOrderedQty: qtySum,
-      totalSku:        codes.size,
-      inspTargetSku:   inspCodes.size,
-      totalAmount:     amount,
-      hasPriceData,
+      totalOrderedQty: bQty     !== null ? bQty     : csvQtySum,
+      totalSku:        bSku     !== null ? bSku     : codes.size,
+      inspTargetSku:   bInspSku !== null ? bInspSku : inspCodes.size,
+      totalAmount:     finalAmount,
+      hasPriceData:    finalHasPrice,
     };
   }, [jobRows, config.reservation_rows, config.exclude_rows, s]);
 

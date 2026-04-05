@@ -1872,7 +1872,7 @@ function App() {
       .catch(() => {}); // silently ignore if backend not reachable
   }, []);
 
-  // ── Header summary chips (derived; used only in JSX, no perf risk) ──────────
+  // ── Header summary chips ─────────────────────────────────────────────────────
   const headerSkuCount = useMemo(() => {
     const codes = new Set((jobRows || []).map((r) => r.__productCode).filter(Boolean));
     return codes.size;
@@ -1888,9 +1888,55 @@ function App() {
     return codes.size;
   }, [inspectionRows]);
 
-  const headerInspRate   = headerSkuCount > 0 ? Math.round((headerInspCount / headerSkuCount) * 100) : 0;
-  const headerStatusText = headerSkuCount === 0 ? '대기' : headerInspRate === 100 ? '완료' : '진행중';
-  const headerStatusColor = headerSkuCount === 0 ? C.textSecondary : headerInspRate === 100 ? C.green : C.accent;
+  // eslint-disable-next-line no-unused-vars
+  const headerInspRate    = headerSkuCount > 0 ? Math.round((headerInspCount / headerSkuCount) * 100) : 0;
+
+  // headerTargetSku / headerTargetQty — exclusion-applied counts shown in header badges.
+  // Priority: backend summary ('검품입고 SKU', '검품 입고수량') → client-side from jobRows.
+  const { headerTargetSku, headerTargetQty } = useMemo(() => {
+    const fromSummary = (key) => {
+      const v = summary[key];
+      if (v == null || v === '') return null;
+      const n = typeof v === 'number' ? v : Number(String(v).replace(/,/g, ''));
+      return isFinite(n) ? n : null;
+    };
+    const bInspSku = fromSummary('검품입고 SKU');
+    const bInspQty = fromSummary('검품 입고수량');
+
+    if (bInspSku !== null && bInspQty !== null) {
+      return { headerTargetSku: bInspSku, headerTargetQty: bInspQty };
+    }
+
+    const excludeRows = Array.isArray(config.exclude_rows) ? config.exclude_rows : [];
+    const isExcluded = (code, partner) => {
+      const normCode = String(code || '').trim().toLowerCase();
+      if (!normCode) return false;
+      for (const ex of excludeRows) {
+        if (String(ex['사용여부'] || '').trim().toUpperCase() !== 'TRUE') continue;
+        const exCode = String(ex['상품코드'] || '').trim().toLowerCase();
+        if (!exCode || exCode !== normCode) continue;
+        const exPartner = String(ex['협력사'] || ex['협력사명'] || '').trim().toLowerCase();
+        if (!exPartner) return true;
+        if (exPartner === String(partner || '').trim().toLowerCase()) return true;
+      }
+      return false;
+    };
+    const codes = new Set();
+    let qty = 0;
+    for (const r of (jobRows || [])) {
+      const code    = r.__productCode || '';
+      const rowQty  = Number(r.__qty) || 0;
+      const partner = r.__partner || r['협력사명'] || '';
+      if (code && rowQty > 0 && !isExcluded(code, partner)) {
+        codes.add(code);
+        qty += rowQty;
+      }
+    }
+    return {
+      headerTargetSku: bInspSku !== null ? bInspSku : codes.size,
+      headerTargetQty: bInspQty !== null ? bInspQty : qty,
+    };
+  }, [summary, jobRows, config.exclude_rows]);
 
   const handleLogoutConfirm = useCallback(() => {
     if (window.confirm('로그아웃 하시겠습니까?')) handleLogout();
@@ -1985,14 +2031,15 @@ function App() {
             </p>
           </div>
 
-          {/* ── RIGHT: action cluster (status chips + buttons) — scrollable ── */}
+          {/* ── RIGHT: action cluster (chips + buttons) — fixed-item scrollable row ── */}
           <div
             className="header-right-cluster"
             style={{
               flex: '0 0 auto',
+              maxWidth: '65vw',
               minWidth: 0,
               marginLeft: 8,
-              display: 'flex', alignItems: 'center', gap: 6,
+              display: 'flex', flexWrap: 'nowrap', alignItems: 'center', gap: 6,
               overflowX: 'auto', overflowY: 'hidden',
               whiteSpace: 'nowrap',
               WebkitOverflowScrolling: 'touch',
@@ -2001,36 +2048,26 @@ function App() {
               scrollbarWidth: 'none', msOverflowStyle: 'none',
             }}
           >
-            {/* Status chips */}
-            {headerSkuCount > 0 && (
+            {/* SKU badge — 검품대상 SKU (exclusion-applied) */}
+            {headerTargetSku > 0 && (
               <span style={{
                 fontSize: 11, fontWeight: 700, color: C.textMid,
                 background: C.card, border: `1px solid ${C.borderLight}`,
-                borderRadius: 6, padding: '3px 8px', flexShrink: 0, whiteSpace: 'nowrap',
+                borderRadius: 6, padding: '3px 8px',
+                flex: '0 0 auto', flexShrink: 0, whiteSpace: 'nowrap',
               }}>
-                SKU&nbsp;<span style={{ color: C.accent }}>{headerSkuCount}</span>
+                SKU&nbsp;<span style={{ color: C.accent }}>{headerTargetSku.toLocaleString()}</span>
               </span>
             )}
-            {headerSkuCount > 0 && (
+            {/* 수량 badge — 검품 입고수량 (exclusion-applied total quantity) */}
+            {headerTargetQty > 0 && (
               <span style={{
-                fontSize: 11, fontWeight: 700,
-                color: headerInspRate === 100 ? C.green : C.accent,
-                background: headerInspRate === 100 ? C.greenBg : C.accentBg,
-                border: `1px solid ${headerInspRate === 100 ? C.green + '44' : C.accent + '44'}`,
-                borderRadius: 6, padding: '3px 8px', flexShrink: 0, whiteSpace: 'nowrap',
+                fontSize: 11, fontWeight: 700, color: C.textMid,
+                background: C.card, border: `1px solid ${C.borderLight}`,
+                borderRadius: 6, padding: '3px 8px',
+                flex: '0 0 auto', flexShrink: 0, whiteSpace: 'nowrap',
               }}>
-                검품률&nbsp;{headerInspRate}%
-              </span>
-            )}
-            {headerSkuCount > 0 && (
-              <span style={{
-                fontSize: 11, fontWeight: 700,
-                color: headerStatusColor,
-                background: headerStatusColor === C.green ? C.greenBg : headerStatusColor === C.accent ? C.accentBg : C.card,
-                border: `1px solid ${headerStatusColor}44`,
-                borderRadius: 6, padding: '3px 8px', flexShrink: 0, whiteSpace: 'nowrap',
-              }}>
-                {headerStatusText}
+                수량&nbsp;<span style={{ color: C.accent }}>{headerTargetQty.toLocaleString()}</span>
               </span>
             )}
             {worksheetUrl && (
@@ -2041,7 +2078,7 @@ function App() {
                   textDecoration: 'none', padding: '4px 9px',
                   background: C.accentBg, borderRadius: 7,
                   border: `1px solid ${C.accent}30`,
-                  flexShrink: 0, whiteSpace: 'nowrap',
+                  flex: '0 0 auto', flexShrink: 0, whiteSpace: 'nowrap',
                 }}
               >시트↗</a>
             )}
@@ -2050,7 +2087,8 @@ function App() {
             <div style={{
               display: 'flex', alignItems: 'center', gap: 5,
               background: C.card, border: `1px solid ${C.borderLight}`,
-              borderRadius: 8, padding: '4px 9px', flexShrink: 0,
+              borderRadius: 8, padding: '4px 9px',
+              flex: '0 0 auto', flexShrink: 0,
             }}>
               <span style={{
                 fontSize: 12, fontWeight: 700, color: C.text,
@@ -2079,7 +2117,7 @@ function App() {
                   borderRadius: 7, padding: '5px 9px', cursor: 'pointer',
                   display: 'flex', alignItems: 'center', gap: 4,
                   fontSize: 11, fontWeight: 700, color: C.accent,
-                  flexShrink: 0, whiteSpace: 'nowrap',
+                  flex: '0 0 auto', flexShrink: 0, whiteSpace: 'nowrap',
                 }}
               >
                 👥 접속현황
@@ -2095,7 +2133,7 @@ function App() {
                 borderRadius: 7, padding: '5px 8px', cursor: 'pointer',
                 display: 'flex', alignItems: 'center', gap: 4,
                 color: C.textSecondary, fontSize: 11, fontWeight: 600,
-                flexShrink: 0,
+                flex: '0 0 auto', flexShrink: 0, whiteSpace: 'nowrap',
               }}
             >
               <LogOut size={13} strokeWidth={2} />
