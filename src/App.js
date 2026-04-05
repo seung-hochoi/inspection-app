@@ -1979,21 +1979,21 @@ function App() {
             {/* Title + "MADE BY" subtitle stacked vertically */}
             <div style={{ minWidth: 0 }}>
               <p style={{
-                fontSize: 14, fontWeight: 800, color: C.text, margin: 0,
-                letterSpacing: '-0.025em', whiteSpace: 'nowrap',
+                fontSize: 15, fontWeight: 800, color: C.text, margin: 0,
+                letterSpacing: '-0.02em', whiteSpace: 'nowrap',
                 overflow: 'hidden', textOverflow: 'ellipsis',
               }}>
-                GS25 신선 검품시스템
+                검품PDA
               </p>
               <p style={{
-                margin: '1px 0 0', fontSize: 9, fontWeight: 600,
-                letterSpacing: '0.07em', color: 'rgba(15,23,42,0.28)',
-                fontFamily: "'SF Mono','Menlo','Consolas',monospace",
+                margin: '2px 0 0', fontSize: 10, fontWeight: 500,
+                letterSpacing: '0.08em', color: 'rgba(15,23,42,0.30)',
+                fontFamily: "'Pretendard',-apple-system,BlinkMacSystemFont,system-ui,sans-serif",
                 textTransform: 'uppercase', whiteSpace: 'nowrap',
               }}>
                 MADE BY. SEUNG-HO
                 {currentFileName && (
-                  <span style={{ marginLeft: 6, color: C.textSecondary, fontFamily: 'inherit', letterSpacing: 0 }}>
+                  <span style={{ marginLeft: 6, color: C.textSecondary, letterSpacing: 0 }}>
                     · {currentFileName.length > 24 ? currentFileName.slice(0, 24) + '…' : currentFileName}
                   </span>
                 )}
