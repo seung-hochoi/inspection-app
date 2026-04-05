@@ -1,4 +1,10 @@
-﻿const SHEET_NAMES = {
+﻿
+// ============================================================
+// SECTION 1: CONSTANTS / SHEET NAMES / PROPERTY KEYS
+// ============================================================
+
+// ── Sheet names and global config ──────────────────────────
+const SHEET_NAMES = {
   exclude: "제외목록",
   event: "행사표",
   mapping: "매핑",
@@ -34,132 +40,302 @@ var operationalReferenceCache_ = null;
 // ─────────────────────────────────────────────────────────────────────────────
 var DEBUG_WRITE_CONFLICTS = true;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// DIAGNOSTIC HELPERS  (write-conflict detection)
-// ─────────────────────────────────────────────────────────────────────────────
+// ── Daily automation sheet lists ───────────────────────────
+// ─── Daily Backup & Reset Automation ─────────────────────────────────────────
+// Backup at 03:00 AM (Asia/Seoul), Reset at 06:00 AM (Asia/Seoul).
+// Installed by setupDailyTriggers_() — never triggered by normal save flows.
 
-/**
- * Returns (or creates) the diagnostic log sheet.
- * Adds a header row on first creation.
- */
-function getWriteConflictLogSheet_() {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sheet = ss.getSheetByName(SHEET_NAMES.writeConflictLog);
-  if (!sheet) {
-    sheet = ss.insertSheet(SHEET_NAMES.writeConflictLog);
-    sheet.appendRow([
-      "기록시각(KST)", "action", "rowKey",
-      "clientId", "jobKey", "상품코드", "협력사명",
-      "검품수량", "회송수량", "교환수량",
-      "version", "expectedVersion",
-      "hasPhotos", "payloadKeys",
-      "기존clientId", "기존version", "기존수정일시",
-      "충돌여부",
-    ]);
-    sheet.setFrozenRows(1);
-    try { sheet.getRange(1, 1, 1, 18).setFontWeight("bold"); } catch (_) {}
-  }
-  return sheet;
-}
+var OPERATIONAL_SHEETS_TO_BACKUP_ = [
+  "inspection_data",
+  "return_exchange_records",
+  "검품 회송내역 (센터포함)",
+  "검품 회송내역 (센터미포함)",
+  "inspection_summary",
+  "이력관리",
+];
 
-/**
- * Build a short human-readable row key for a save payload.
- */
-function makeWriteConflictKey_(payload) {
-  var jobKey   = String(payload["작업기준일또는CSV식별값"] || payload["jobKey"] || "").trim();
-  var code     = normalizeCode_(payload["상품코드"] || payload["productCode"] || "");
-  var partner  = String(payload["협력사명"] || payload["partnerName"] || "").trim();
-  var center   = String(payload["센터명"]   || payload["centerName"]  || "").trim();
-  var type     = String(payload["처리유형"] || payload["movementType"]|| "").trim();
-  return [jobKey, code, partner, center, type].filter(Boolean).join(" | ");
-}
+// Sheets that have header rows to preserve during reset (clear data below row 1)
+var SHEETS_WITH_HEADERS_ = [
+  "inspection_data",
+  "return_exchange_records",
+  "검품 회송내역 (센터포함)",
+  "검품 회송내역 (센터미포함)",
+  "inspection_summary",
+  "이력관리",
+];
 
-/**
- * Write one diagnostic log row.
- * existingRecord = the row that was in the sheet BEFORE this save (may be null).
- * conflictFlag   = "" | "⚠ 다른 clientId 덮어쓰기" | "⚠ 버전 불일치" | "⚠ 동시 저장"
- */
-function logWriteConflict_(action, payload, existingRecord, conflictFlag) {
-  if (!DEBUG_WRITE_CONFLICTS) return;
+// Reference/config sheets that must NEVER be touched
+var PROTECTED_SHEETS_ = [
+  "매핑", "행사표", "제외목록", "사전예약추가", "당도",
+  "jobs", "job_cache", "happycall_data", "product_image_map", "photo_assets",
+];
+
+// ============================================================
+// SECTION 2: ENTRY POINTS (doGet / doPost)
+// ============================================================
+
+function doGet(e) {
   try {
-    var sheet = getWriteConflictLogSheet_();
-    var now   = new Date();
-    var kst   = new Date(now.getTime() + 9 * 60 * 60 * 1000);
-    var ts    = Utilities.formatDate(kst, "Asia/Seoul", "yyyy-MM-dd HH:mm:ss");
+    const action = (e && e.parameter && e.parameter.action) || "bootstrap";
 
-    var clientId        = String(payload["clientId"] || "").trim() || "(없음-구버전)";
-    var jobKey          = String(payload["작업기준일또는CSV식별값"] || payload["jobKey"] || "").trim();
-    var code            = normalizeCode_(payload["상품코드"] || payload["productCode"] || "");
-    var partner         = String(payload["협력사명"] || payload["partnerName"] || "").trim();
-    var inspQty         = parseNumber_(payload["검품수량"] || payload["inspectionQty"] || 0);
-    var returnQty       = parseNumber_(payload["회송수량"] || 0);
-    var exchangeQty     = parseNumber_(payload["교환수량"] || 0);
-    var version         = parseNumber_(payload["버전"] || 0);
-    var expectedVersion = parseNumber_(payload["expectedVersion"] || 0);
-    var hasPhotos       = !!(String(payload["사진파일ID목록"] || "").trim());
-    var payloadKeys     = Object.keys(payload || {}).sort().join(",");
-
-    var existingClientId  = existingRecord ? String(existingRecord["clientId"]  || "(없음)").trim() : "";
-    var existingVersion   = existingRecord ? parseNumber_(existingRecord["버전"] || 0) : "";
-    var existingUpdatedAt = existingRecord ? String(existingRecord["수정일시"]   || "").trim() : "";
-    var rowKey = makeWriteConflictKey_(payload);
-
-    sheet.appendRow([
-      ts, action, rowKey,
-      clientId, jobKey, code, partner,
-      inspQty, returnQty, exchangeQty,
-      version, expectedVersion,
-      hasPhotos ? "Y" : "", payloadKeys,
-      existingClientId, existingVersion, existingUpdatedAt,
-      conflictFlag || "",
-    ]);
-
-    // Also log to Cloud Logging (visible in GAS Executions > Logs)
-    console.log("[WRITE_LOG] action=" + action
-      + " key=" + rowKey
-      + " clientId=" + clientId
-      + " v=" + version + "/expected=" + expectedVersion
-      + " conflict=" + (conflictFlag || "none"));
-  } catch (logErr) {
-    console.error("[logWriteConflict_] failed: " + logErr.message);
-  }
-}
-
-/**
- * Determine if two save payloads look like different app versions.
- * Returns a description string or "" if no version difference detected.
- */
-function detectVersionDifference_(payload, existingRecord) {
-  if (!existingRecord) return "";
-
-  var payloadClientId  = String(payload["clientId"] || "").trim();
-  var existingClientId = String(existingRecord["clientId"] || "").trim();
-
-  // Old app sends no clientId at all
-  if (!payloadClientId && existingClientId) {
-    return "⚠ 구버전 앱이 신버전 행을 덮어씀 (clientId 없음)";
-  }
-  if (payloadClientId && !existingClientId) {
-    return "⚠ 신버전 앱이 구버전 행을 덮어씀";
-  }
-  if (payloadClientId && existingClientId && payloadClientId !== existingClientId) {
-    // Different clientIds = different browser sessions (possibly different users/versions)
-    var expectedVersion  = parseNumber_(payload["expectedVersion"] || 0);
-    var existingVersion  = parseNumber_(existingRecord["버전"] || 0);
-    if (expectedVersion > 0 && existingVersion > expectedVersion) {
-      return "⚠ 다른 clientId + 버전 충돌 (다른 사용자가 먼저 저장함)";
+    if (action === "bootstrap") {
+      return jsonOutput_({
+        ok: true,
+        data: {
+          config: {
+            exclude_rows: readObjectsSheet_(SHEET_NAMES.exclude),
+            event_rows: readObjectsSheet_(SHEET_NAMES.event),
+            reservation_rows: readReservationRows_(),
+            mapping_rows: readObjectsSheet_(SHEET_NAMES.mapping),
+            dangjdo_rows: readObjectsSheet_(SHEET_NAMES.dangjdo),
+          },
+          current_job: loadLatestJob_(),
+          records: loadRecords_(),
+          rows: loadInspectionRows_(),
+          worksheet_url: SpreadsheetApp.getActiveSpreadsheet().getUrl(),
+          summary: getDashboardSummary_(),
+          happycall: getHappycallAnalytics_(),
+          product_images: loadProductImageMappings_(),
+        },
+      });
     }
-    return "⚠ 다른 clientId 덮어쓰기";
+
+    if (action === "getRecords") {
+      return jsonOutput_({
+        ok: true,
+        records: loadRecords_(),
+      });
+    }
+
+    if (action === "getInspectionRows") {
+      return jsonOutput_({
+        ok: true,
+        rows: loadInspectionRows_(),
+      });
+    }
+
+    if (action === "getHappycallAnalytics") {
+      return jsonOutput_({
+        ok: true,
+        happycall: getHappycallAnalytics_(),
+      });
+    }
+
+    return jsonOutput_({
+      ok: false,
+      message: "지원하지 않는 action입니다.",
+    });
+  } catch (err) {
+    return jsonOutput_({
+      ok: false,
+      message: err.message || "GET 실패",
+    });
   }
-  // Same clientId but version mismatch (same user, stale page)
-  var expected  = parseNumber_(payload["expectedVersion"] || 0);
-  var current   = parseNumber_(existingRecord["버전"] || 0);
-  if (expected > 0 && current !== expected) {
-    return "⚠ 버전 불일치 (동일 clientId, 페이지 새로고침 필요)";
-  }
-  return "";
 }
 
+function doPost(e) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+
+  try {
+    const raw = e && e.postData && e.postData.contents ? e.postData.contents : "{}";
+    const body = JSON.parse(raw);
+    const action = body.action || "";
+
+    // ── Diagnostic entry-point log ──────────────────────────────────────────
+    if (DEBUG_WRITE_CONFLICTS) {
+      var _rows = (body.rows || [body.payload]).filter(Boolean);
+      _rows.forEach(function(_p) {
+        var _clientId  = String(_p["clientId"]  || _p["clientId"]  || "").trim() || "(없음-구버전)";
+        var _jobKey    = String(_p["작업기준일또는CSV식별값"] || _p["jobKey"]    || "").trim();
+        var _code      = String(_p["상품코드"]   || _p["productCode"] || "").trim();
+        var _partner   = String(_p["협력사명"]   || _p["partnerName"] || "").trim();
+        var _type      = String(_p["type"]       || "").trim();
+        var _version   = String(_p["버전"]       || _p["expectedVersion"] || "").trim();
+        console.log("[doPost] action=" + action
+          + " rowType=" + _type
+          + " clientId=" + _clientId
+          + " jobKey=" + _jobKey
+          + " code=" + _code
+          + " partner=" + _partner
+          + " expectedV=" + _version
+          + " payloadKeys=" + Object.keys(_p).sort().join(","));
+      });
+    }
+    // ────────────────────────────────────────────────────────────────────────
+
+    if (action === "cacheCsv") {
+      var cachedJob = cacheCsvJob_(body.payload || {});
+      return jsonOutput_({
+        ok: true,
+        job: cachedJob,
+        summary: getDashboardSummary_(),
+      });
+    }
+
+    if (action === "saveRecord") {
+      var savedRecord = appendRecord_(body.payload || {});
+      return jsonOutput_({
+        ok: true,
+        record: savedRecord,
+        records: loadRecords_(),
+        summary: getDashboardSummary_(),
+      });
+    }
+
+    if (action === "deleteRecord") {
+      var deletedRecord = deleteRecord_(body.payload || {});
+      return jsonOutput_({
+        ok: true,
+        deleted: deletedRecord,
+        records: loadRecords_(),
+        summary: getDashboardSummary_(),
+      });
+    }
+
+    if (action === "saveInspectionQty") {
+      var savedInspectionRow = saveInspectionQty_(body.payload || {});
+      return jsonOutput_({
+        ok: true,
+        row: savedInspectionRow,
+        summary: getDashboardSummary_(),
+      });
+    }
+
+    if (action === "saveInspectionBatch") {
+      var savedInspectionBatch = saveInspectionBatch_(body.rows || []);
+      return jsonOutput_({
+        ok: true,
+        data: savedInspectionBatch,
+        summary: getDashboardSummary_(),
+      });
+    }
+
+    if (action === "saveBatch") {
+      var batchData = saveBatch_(body.rows || []);
+      // Auto-sync return sheets when movement rows were saved.
+      if (batchData.hasMovement) {
+        try {
+          syncReturnSheets_(SpreadsheetApp.getActiveSpreadsheet());
+        } catch (syncErr) {
+          console.error("[doPost] syncReturnSheets_ failed after saveBatch: " + syncErr.message);
+        }
+        // Include fresh records in the response so the client can update the Records tab
+        // without a full bootstrap reload. Falls back gracefully on failure.
+        try {
+          batchData.freshRecords = loadRecords_();
+        } catch (e) {
+          console.error("[doPost] loadRecords_ for freshRecords failed: " + e.message);
+        }
+      }
+      return jsonOutput_({
+        ok: true,
+        data: batchData,
+      });
+    }
+
+    if (action === "postSaveSync") {
+      return jsonOutput_({ ok: true, data: postSaveSync_(body) });
+    }
+
+    if (action === "manualRecalc") {
+      return jsonOutput_({
+        ok: true,
+        data: manualRecalc_(),
+        records: loadRecords_(),
+        inspectionRows: loadInspectionRows_(),
+        summary: getDashboardSummary_(),
+      });
+    }
+
+    if (action === "cancelMovementEvent") {
+      var cancelled = cancelMovementEvent_(body.payload || {});
+      return jsonOutput_({
+        ok: true,
+        deleted: cancelled,
+        records: loadRecords_(),
+        inspectionRows: loadInspectionRows_(),
+        summary: getDashboardSummary_(),
+      });
+    }
+
+    if (action === "downloadPhotoZip") {
+      return jsonOutput_(Object.assign({ ok: true }, createPhotoZip_(body.payload || {})));
+    }
+
+    if (action === "resetCurrentJobInputData") {
+      return jsonOutput_(resetCurrentJobInputData_(body.payload || {}));
+    }
+
+    if (action === "importHappycallEmails") {
+      return jsonOutput_({
+        ok: true,
+        data: importHappycallBatch_(body.rows || body.payload || []),
+        happycall: getHappycallAnalytics_(),
+      });
+    }
+
+    if (action === "importHappycallCsv") {
+      return jsonOutput_({
+        ok: true,
+        data: importHappycallCsvRows_(body.rows || body.payload || []),
+        happycall: getHappycallAnalytics_(),
+      });
+    }
+
+    if (action === "saveProductImageMapping") {
+      return jsonOutput_({
+        ok: true,
+        data: saveProductImageMapping_(body.payload || {}),
+        product_images: loadProductImageMappings_(),
+      });
+    }
+
+    if (action === "uploadPhotos") {
+      return jsonOutput_({
+        ok: true,
+        data: uploadPhotos_(body.payload || {}),
+      });
+    }
+
+    if (action === "savePhotoMeta") {
+      return jsonOutput_({
+        ok: true,
+        data: savePhotoMeta_(body.payload || {}),
+      });
+    }
+
+    if (action === "syncHistory") {
+      var histSs = SpreadsheetApp.getActiveSpreadsheet();
+      syncHistorySheet_(histSs);
+      return jsonOutput_({ ok: true });
+    }
+
+    return jsonOutput_({
+      ok: false,
+      message: "지원하지 않는 action입니다.",
+    });
+  } catch (err) {
+    return jsonOutput_({
+      ok: false,
+      message: err.message || "POST 실패",
+    });
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function jsonOutput_(obj) {
+  return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(
+    ContentService.MimeType.JSON
+  );
+}
+
+// ============================================================
+// SECTION 3: BOOTSTRAP / READ HELPERS
+// ============================================================
+
+// ── Operational reference maps ─────────────────────────────
 // ─────────────────────────────────────────────────────────────────────────────
 
 function getOperationalMappingSheet_(ss) {
@@ -445,371 +621,8 @@ function mergeOperationalCategoryColumn_(sheet, rowCount) {
   sheet.getRange(2, 1, rowCount, 1).setVerticalAlignment("middle").setHorizontalAlignment("center");
 }
 
-function doGet(e) {
-  try {
-    const action = (e && e.parameter && e.parameter.action) || "bootstrap";
 
-    if (action === "bootstrap") {
-      return jsonOutput_({
-        ok: true,
-        data: {
-          config: {
-            exclude_rows: readObjectsSheet_(SHEET_NAMES.exclude),
-            event_rows: readObjectsSheet_(SHEET_NAMES.event),
-            reservation_rows: readReservationRows_(),
-            mapping_rows: readObjectsSheet_(SHEET_NAMES.mapping),
-            dangjdo_rows: readObjectsSheet_(SHEET_NAMES.dangjdo),
-          },
-          current_job: loadLatestJob_(),
-          records: loadRecords_(),
-          rows: loadInspectionRows_(),
-          worksheet_url: SpreadsheetApp.getActiveSpreadsheet().getUrl(),
-          summary: getDashboardSummary_(),
-          happycall: getHappycallAnalytics_(),
-          product_images: loadProductImageMappings_(),
-        },
-      });
-    }
-
-    if (action === "getRecords") {
-      return jsonOutput_({
-        ok: true,
-        records: loadRecords_(),
-      });
-    }
-
-    if (action === "getInspectionRows") {
-      return jsonOutput_({
-        ok: true,
-        rows: loadInspectionRows_(),
-      });
-    }
-
-    if (action === "getHappycallAnalytics") {
-      return jsonOutput_({
-        ok: true,
-        happycall: getHappycallAnalytics_(),
-      });
-    }
-
-    return jsonOutput_({
-      ok: false,
-      message: "지원하지 않는 action입니다.",
-    });
-  } catch (err) {
-    return jsonOutput_({
-      ok: false,
-      message: err.message || "GET 실패",
-    });
-  }
-}
-
-function doPost(e) {
-  const lock = LockService.getScriptLock();
-  lock.waitLock(30000);
-
-  try {
-    const raw = e && e.postData && e.postData.contents ? e.postData.contents : "{}";
-    const body = JSON.parse(raw);
-    const action = body.action || "";
-
-    // ── Diagnostic entry-point log ──────────────────────────────────────────
-    if (DEBUG_WRITE_CONFLICTS) {
-      var _rows = (body.rows || [body.payload]).filter(Boolean);
-      _rows.forEach(function(_p) {
-        var _clientId  = String(_p["clientId"]  || _p["clientId"]  || "").trim() || "(없음-구버전)";
-        var _jobKey    = String(_p["작업기준일또는CSV식별값"] || _p["jobKey"]    || "").trim();
-        var _code      = String(_p["상품코드"]   || _p["productCode"] || "").trim();
-        var _partner   = String(_p["협력사명"]   || _p["partnerName"] || "").trim();
-        var _type      = String(_p["type"]       || "").trim();
-        var _version   = String(_p["버전"]       || _p["expectedVersion"] || "").trim();
-        console.log("[doPost] action=" + action
-          + " rowType=" + _type
-          + " clientId=" + _clientId
-          + " jobKey=" + _jobKey
-          + " code=" + _code
-          + " partner=" + _partner
-          + " expectedV=" + _version
-          + " payloadKeys=" + Object.keys(_p).sort().join(","));
-      });
-    }
-    // ────────────────────────────────────────────────────────────────────────
-
-    if (action === "cacheCsv") {
-      var cachedJob = cacheCsvJob_(body.payload || {});
-      return jsonOutput_({
-        ok: true,
-        job: cachedJob,
-        summary: getDashboardSummary_(),
-      });
-    }
-
-    if (action === "saveRecord") {
-      var savedRecord = appendRecord_(body.payload || {});
-      return jsonOutput_({
-        ok: true,
-        record: savedRecord,
-        records: loadRecords_(),
-        summary: getDashboardSummary_(),
-      });
-    }
-
-    if (action === "deleteRecord") {
-      var deletedRecord = deleteRecord_(body.payload || {});
-      return jsonOutput_({
-        ok: true,
-        deleted: deletedRecord,
-        records: loadRecords_(),
-        summary: getDashboardSummary_(),
-      });
-    }
-
-    if (action === "saveInspectionQty") {
-      var savedInspectionRow = saveInspectionQty_(body.payload || {});
-      return jsonOutput_({
-        ok: true,
-        row: savedInspectionRow,
-        summary: getDashboardSummary_(),
-      });
-    }
-
-    if (action === "saveInspectionBatch") {
-      var savedInspectionBatch = saveInspectionBatch_(body.rows || []);
-      return jsonOutput_({
-        ok: true,
-        data: savedInspectionBatch,
-        summary: getDashboardSummary_(),
-      });
-    }
-
-    if (action === "saveBatch") {
-      var batchData = saveBatch_(body.rows || []);
-      // Auto-sync return sheets when movement rows were saved.
-      if (batchData.hasMovement) {
-        try {
-          syncReturnSheets_(SpreadsheetApp.getActiveSpreadsheet());
-        } catch (syncErr) {
-          console.error("[doPost] syncReturnSheets_ failed after saveBatch: " + syncErr.message);
-        }
-        // Include fresh records in the response so the client can update the Records tab
-        // without a full bootstrap reload. Falls back gracefully on failure.
-        try {
-          batchData.freshRecords = loadRecords_();
-        } catch (e) {
-          console.error("[doPost] loadRecords_ for freshRecords failed: " + e.message);
-        }
-      }
-      return jsonOutput_({
-        ok: true,
-        data: batchData,
-      });
-    }
-
-    if (action === "postSaveSync") {
-      return jsonOutput_({ ok: true, data: postSaveSync_(body) });
-    }
-
-    if (action === "manualRecalc") {
-      return jsonOutput_({
-        ok: true,
-        data: manualRecalc_(),
-        records: loadRecords_(),
-        inspectionRows: loadInspectionRows_(),
-        summary: getDashboardSummary_(),
-      });
-    }
-
-    if (action === "cancelMovementEvent") {
-      var cancelled = cancelMovementEvent_(body.payload || {});
-      return jsonOutput_({
-        ok: true,
-        deleted: cancelled,
-        records: loadRecords_(),
-        inspectionRows: loadInspectionRows_(),
-        summary: getDashboardSummary_(),
-      });
-    }
-
-    if (action === "downloadPhotoZip") {
-      return jsonOutput_(Object.assign({ ok: true }, createPhotoZip_(body.payload || {})));
-    }
-
-    if (action === "resetCurrentJobInputData") {
-      return jsonOutput_(resetCurrentJobInputData_(body.payload || {}));
-    }
-
-    if (action === "importHappycallEmails") {
-      return jsonOutput_({
-        ok: true,
-        data: importHappycallBatch_(body.rows || body.payload || []),
-        happycall: getHappycallAnalytics_(),
-      });
-    }
-
-    if (action === "importHappycallCsv") {
-      return jsonOutput_({
-        ok: true,
-        data: importHappycallCsvRows_(body.rows || body.payload || []),
-        happycall: getHappycallAnalytics_(),
-      });
-    }
-
-    if (action === "saveProductImageMapping") {
-      return jsonOutput_({
-        ok: true,
-        data: saveProductImageMapping_(body.payload || {}),
-        product_images: loadProductImageMappings_(),
-      });
-    }
-
-    if (action === "uploadPhotos") {
-      return jsonOutput_({
-        ok: true,
-        data: uploadPhotos_(body.payload || {}),
-      });
-    }
-
-    if (action === "savePhotoMeta") {
-      return jsonOutput_({
-        ok: true,
-        data: savePhotoMeta_(body.payload || {}),
-      });
-    }
-
-    if (action === "syncHistory") {
-      var histSs = SpreadsheetApp.getActiveSpreadsheet();
-      syncHistorySheet_(histSs);
-      return jsonOutput_({ ok: true });
-    }
-
-    return jsonOutput_({
-      ok: false,
-      message: "지원하지 않는 action입니다.",
-    });
-  } catch (err) {
-    return jsonOutput_({
-      ok: false,
-      message: err.message || "POST 실패",
-    });
-  } finally {
-    lock.releaseLock();
-  }
-}
-
-function normalizeCode_(value) {
-  if (value == null) return "";
-
-  var text = String(value).replace(/\uFEFF/g, "").trim();
-  var match = text.match(/^=T\("(.+)"\)$/i);
-
-  if (match) {
-    text = match[1];
-  }
-
-  text = text.replace(/^"+|"+$/g, "").trim();
-
-  var numericText = text.replace(/,/g, "").trim();
-  if (/^\d+(\.0+)?$/.test(numericText)) {
-    return numericText.replace(/\.0+$/, "");
-  }
-
-  return text;
-}
-
-function parseNumber_(value) {
-  var num = Number(String(value == null ? "" : value).replace(/,/g, "").trim());
-  return Number.isNaN(num) ? 0 : num;
-}
-
-function formatWrittenAtKst_(value) {
-  var date = value ? new Date(value) : new Date();
-  if (String(date) === "Invalid Date") {
-    date = new Date();
-  }
-
-  var timezone = "Asia/Seoul";
-  var weekdayMap = {
-    "1": "월",
-    "2": "화",
-    "3": "수",
-    "4": "목",
-    "5": "금",
-    "6": "토",
-    "7": "일",
-  };
-  var weekdayNumber = Utilities.formatDate(date, timezone, "u");
-  var weekdayLabel = weekdayMap[weekdayNumber] || "월";
-
-  return Utilities.formatDate(date, timezone, "MM.dd") + "(" + weekdayLabel + ") " +
-    Utilities.formatDate(date, timezone, "HH:mm:ss");
-}
-
-function normalizeText_(value) {
-  return String(value == null ? "" : value).replace(/\uFEFF/g, "").trim();
-}
-
-function makeEntityKey_(jobKey, productCode, partnerName) {
-  return [String(jobKey || "").trim(), normalizeCode_(productCode || ""), String(partnerName || "").trim()].join("||");
-}
-
-function makeSkuKey_(productCode, partnerName) {
-  return [normalizeCode_(productCode || ""), normalizeText_(partnerName || "")].join("||");
-}
-
-function normalizeImageLookupText_(value) {
-  return String(value || "")
-    .replace(/\uFEFF/g, "")
-    .toLowerCase()
-    .replace(/\s+/g, "")
-    .replace(/[^\u3131-\uD79Da-z0-9]/gi, "")
-    .trim();
-}
-
-function makeProductImageMapKey_(productCode, partnerName, productName) {
-  var code = normalizeCode_(productCode || "");
-  var partner = normalizeText_(partnerName || "");
-  if (code || partner) {
-    return "sku::" + makeSkuKey_(code, partner);
-  }
-  return "name::" + normalizeImageLookupText_(productName || "") + "||" + normalizeImageLookupText_(partnerName || "");
-}
-
-function isExcludedByRules_(productCode, partnerName, excludedCodes, excludedPairs, excludedPartners) {
-  var code = normalizeCode_(productCode || "");
-  var partner = normalizeText_(partnerName || "");
-  if (!code && !partner) return false;
-  return !!excludedCodes[code] || !!excludedPairs[code + "||" + partner] || !!excludedPartners[partner];
-}
-
-function isExclusionRowActive_(row) {
-  var val = String(row["사용여부"] || "").trim().toLowerCase();
-  if (!val) return true; // treat blank as active (backward compat)
-  return val === "y" || val === "yes" || val === "사용" || val === "활성" || val === "1" || val === "true";
-}
-
-function buildExclusionIndex_() {
-  var excludeRows = readObjectsSheet_(SHEET_NAMES.exclude);
-  var excludedCodes = {};
-  var excludedPairs = {};
-  var excludedPartners = {};
-  excludeRows.forEach(function (row) {
-    if (!isExclusionRowActive_(row)) return;
-    var code = normalizeCode_(row["상품코드"] || row["상품 코드"] || row["코드"] || row["바코드"]);
-    var partner = normalizeText_(row["협력사"] || row["협력사명"] || "");
-    if (!code && !partner) return;
-    if (partner) {
-      if (code) {
-        excludedPairs[code + "||" + partner] = true;
-      } else {
-        excludedPartners[partner] = true;
-      }
-    } else {
-      excludedCodes[code] = true;
-    }
-  });
-  return { excludedCodes: excludedCodes, excludedPairs: excludedPairs, excludedPartners: excludedPartners };
-}
-
+// ── Sheet / job-cache helpers ──────────────────────────────
 function readObjectsSheet_(sheetName) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sheet = ss.getSheetByName(sheetName);
@@ -1072,200 +885,6 @@ function findJobByKey_(jobsSheet, jobKey) {
   return null;
 }
 
-function getRecordSheet_(ss) {
-  const sheet = getOrCreateSheet_(ss, SHEET_NAMES.records);
-  migrateRecordSheetIfNeeded_(sheet);
-  ensureHeaderRow_(sheet, recordHeaders_());
-  return sheet;
-}
-
-function getInspectionSheet_(ss) {
-  const sheet = getOrCreateSheet_(ss, SHEET_NAMES.inspection);
-  migrateInspectionSheetIfNeeded_(sheet);
-  ensureHeaderRow_(sheet, inspectionHeaders_());
-  return sheet;
-}
-
-function getInspectionSummarySheet_(ss) {
-  return getOrCreateSheet_(ss, SHEET_NAMES.summary);
-}
-
-function photoAssetHeaders_() {
-  return [
-    "키",
-    "사진파일ID목록",
-    "사진개수",
-    "수정일시",
-    "photoCategoriesJSON",  // per-category photo IDs — added for type-specific hydration
-  ];
-}
-
-function getPhotoAssetSheet_(ss) {
-  var sheet = getOrCreateSheet_(ss, SHEET_NAMES.photoAssets);
-  ensureHeaderRow_(sheet, photoAssetHeaders_());
-  if (!sheet.isSheetHidden()) {
-    sheet.hideSheet();
-  }
-  return sheet;
-}
-
-function makeInspectionPhotoAssetKey_(jobKey, productCode, partnerName) {
-  return [
-    "inspection",
-    String(jobKey || "").trim(),
-    normalizeCode_(productCode || ""),
-    normalizeText_(partnerName || ""),
-  ].join("||");
-}
-
-function makeMovementPhotoAssetKey_(jobKey, productCode, partnerName, centerName, typeName) {
-  return [
-    "movement",
-    String(jobKey || "").trim(),
-    normalizeCode_(productCode || ""),
-    normalizeText_(partnerName || ""),
-    normalizeText_(centerName || ""),
-    normalizeText_(typeName || ""),
-  ].join("||");
-}
-
-function makePhotoAssetKeyFromRecord_(record, kind) {
-  if (kind === "inspection") {
-    return makeInspectionPhotoAssetKey_(
-      record["작업기준일또는CSV식별값"],
-      record["상품코드"],
-      record["협력사명"]
-    );
-  }
-
-  return makeMovementPhotoAssetKey_(
-    record["작업기준일또는CSV식별값"],
-    record["상품코드"],
-    record["협력사명"],
-    record["센터명"],
-    record["처리유형"]
-  );
-}
-
-function loadPhotoAssetMap_(ss) {
-  var sheet = getPhotoAssetSheet_(ss);
-  if (!sheet || sheet.getLastRow() < 2) return {};
-
-  var values = sheet.getDataRange().getValues();
-  var map = {};
-
-  for (var r = 1; r < values.length; r += 1) {
-    var key = String(values[r][0] || "").trim();
-    if (!key) continue;
-    var categoriesRaw = (values[r][4] !== undefined && values[r][4] !== null)
-      ? String(values[r][4]).trim() : "";
-    var categories = null;
-    if (categoriesRaw) {
-      try { categories = JSON.parse(categoriesRaw); } catch (_) {}
-    }
-    map[key] = {
-      rowNumber: r + 1,
-      fileIdsText: String(values[r][1] || "").trim(),
-      photoCount: parseNumber_(values[r][2] || 0),
-      updatedAt: values[r][3] || "",
-      categories: categories,
-    };
-  }
-
-  return map;
-}
-
-// categoriesJSON — optional JSON string with per-type photo IDs:
-//   {"insp":["id1"],"defect":["id2"],"weight":["id3"],"brix":["id4"]}
-// Stored in column 5 of photo_assets for type-specific preview hydration.
-function upsertPhotoAsset_(assetKey, fileIdsText, preloadedMap, categoriesJSON) {
-  var key = String(assetKey || "").trim();
-  if (!key) return;
-
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var normalizedFileIds = splitPhotoSourceText_(fileIdsText).join("\n");
-  if (!normalizedFileIds) {
-    deletePhotoAsset_(key);
-    return;
-  }
-
-  var sheet = getPhotoAssetSheet_(ss);
-  var map = preloadedMap !== undefined ? preloadedMap : loadPhotoAssetMap_(ss);
-  var photoCount = splitPhotoSourceText_(normalizedFileIds).length;
-  var rowValues = [[key, normalizedFileIds, photoCount, new Date().toISOString(), categoriesJSON || ""]];
-  var existing = map[key];
-
-  if (existing && existing.rowNumber) {
-    sheet.getRange(existing.rowNumber, 1, 1, rowValues[0].length).setValues(rowValues);
-  } else {
-    sheet.appendRow(rowValues[0]);
-  }
-}
-
-function deletePhotoAsset_(assetKey) {
-  var key = String(assetKey || "").trim();
-  if (!key) return;
-
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var map = loadPhotoAssetMap_(ss);
-  var existing = map[key];
-  if (!existing || !existing.rowNumber) return;
-
-  getPhotoAssetSheet_(ss).deleteRow(existing.rowNumber);
-}
-
-function buildDriveViewUrl_(fileId) {
-  var id = extractGoogleDriveId_(fileId);
-  return id ? "https://drive.google.com/uc?export=view&id=" + id : "";
-}
-
-function getEditorLabel_(payload) {
-  var explicitLabel = String(
-    (payload && (payload.updatedBy || payload["수정자"] || payload.editorName || payload.userName || payload.userEmail)) || ""
-  ).trim();
-  if (explicitLabel) return explicitLabel;
-
-  try {
-    var email = String(Session.getActiveUser().getEmail() || "").trim();
-    if (email) return email;
-  } catch (err) {}
-
-  try {
-    var tempKey = String(Session.getTemporaryActiveUserKey() || "").trim();
-    if (tempKey) return "user:" + tempKey.slice(0, 8);
-  } catch (err2) {}
-
-  return "unknown";
-}
-
-function applyPhotoAssetFieldsToRow_(row, assetMap, kind) {
-  var key = makePhotoAssetKeyFromRecord_(row, kind);
-  var asset = assetMap[key];
-  var fileIds = asset ? splitPhotoSourceText_(asset.fileIdsText) : [];
-  var photoLinks = fileIds
-    .map(function (fileId) {
-      return buildDriveViewUrl_(fileId);
-    })
-    .filter(Boolean);
-
-  row["사진파일ID목록"] = fileIds.join("\n");
-  row["사진링크목록"] = photoLinks.join("\n");
-  row["사진링크"] = photoLinks[0] || "";
-  row["사진URL"] = row["사진링크"];
-  row["사진개수"] = asset ? parseNumber_(asset.photoCount || fileIds.length) : parseNumber_(row["사진개수"] || 0);
-
-  // Set per-category photo ID fields when category data is available.
-  // These are consumed by InspectionPage.jsx for type-specific preview hydration on reload.
-  if (asset && asset.categories) {
-    row["inspPhotoIds"]   = (asset.categories.insp   || []).join("\n");
-    row["defectPhotoIds"] = (asset.categories.defect || []).join("\n");
-    row["weightPhotoIds"] = (asset.categories.weight || []).join("\n");
-    row["brixPhotoIds"]   = (asset.categories.brix   || []).join("\n");
-  }
-
-  return row;
-}
-
 function pruneJobCacheRows_(cacheSheet) {
   if (!cacheSheet) return;
   var dataRowCount = Math.max(cacheSheet.getLastRow() - 1, 0);
@@ -1317,6 +936,35 @@ function pruneExpiredJobCacheRows_(jobsSheet, cacheSheet) {
 
 function autoResizeOperationalSheets_(ss) {
   return;
+}
+
+// ── Data loaders ───────────────────────────────────────────
+function loadPhotoAssetMap_(ss) {
+  var sheet = getPhotoAssetSheet_(ss);
+  if (!sheet || sheet.getLastRow() < 2) return {};
+
+  var values = sheet.getDataRange().getValues();
+  var map = {};
+
+  for (var r = 1; r < values.length; r += 1) {
+    var key = String(values[r][0] || "").trim();
+    if (!key) continue;
+    var categoriesRaw = (values[r][4] !== undefined && values[r][4] !== null)
+      ? String(values[r][4]).trim() : "";
+    var categories = null;
+    if (categoriesRaw) {
+      try { categories = JSON.parse(categoriesRaw); } catch (_) {}
+    }
+    map[key] = {
+      rowNumber: r + 1,
+      fileIdsText: String(values[r][1] || "").trim(),
+      photoCount: parseNumber_(values[r][2] || 0),
+      updatedAt: values[r][3] || "",
+      categories: categories,
+    };
+  }
+
+  return map;
 }
 
 function getDashboardSummary_() {
@@ -1433,1073 +1081,29 @@ function loadInspectionRows_() {
   return rows;
 }
 
-function appendRecord_(payload) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const recordsSheet = getRecordSheet_(ss);
-  const record = upsertMovementRow_(recordsSheet, payload || {});
-  return record;
-}
-
-function deleteRecord_(payload) {
-  const rowNumber = Number(payload.rowNumber || 0);
-  if (!rowNumber || rowNumber <= 1) {
-    throw new Error("삭제할 행 번호가 올바르지 않습니다.");
-  }
-
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = getRecordSheet_(ss);
-
-  if (rowNumber > sheet.getLastRow()) {
-    throw new Error("이미 삭제되었거나 존재하지 않는 행입니다.");
-  }
-
-  var existingRecord = readMovementRow_(sheet, rowNumber);
-  deletePhotoAsset_(makeMovementPhotoAssetKey_(
-    existingRecord["작업기준일또는CSV식별값"],
-    existingRecord["상품코드"],
-    existingRecord["협력사명"],
-    existingRecord["센터명"],
-    existingRecord["처리유형"]
-  ));
-  sheet.deleteRow(rowNumber);
-
-  return {
-    rowNumber: rowNumber,
-  };
-}
-
-function cancelMovementEvent_(payload) {
-  return deleteRecord_(payload);
-}
-
-function saveInspectionQty_(payload) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const inspectionSheet = getInspectionSheet_(ss);
-  const saved = upsertInspectionRow_(inspectionSheet, payload || {});
-  return saved;
-}
-
-function saveInspectionBatch_(rows) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const inspectionSheet = getInspectionSheet_(ss);
-  const recordsSheet = getRecordSheet_(ss);
-  const list = Array.isArray(rows) ? rows : [];
-  const saved = [];
-
-  list.forEach(function (row) {
-    saved.push(upsertInspectionRow_(inspectionSheet, row || {}));
-  });
-
-  return {
-    rows: saved,
-  };
-}
-
-function saveBatch_(rows) {
-  console.log("[saveBatch_] incoming rows=" + (Array.isArray(rows) ? rows.length : 0));
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const inspectionSheet = getInspectionSheet_(ss);
-  const recordsSheet = getRecordSheet_(ss);
-  const photoAssetMap = loadPhotoAssetMap_(ss);
-
-  // Pre-load the entire inspection sheet once for all row lookups in this request.
-  // findInspectionRow_ and readInspectionRowByValues_ will use this array instead
-  // of issuing separate sheet.getRange() calls per row.
-  var inspSheetValues = null;
-  if (inspectionSheet && inspectionSheet.getLastRow() >= 2) {
-    inspSheetValues = inspectionSheet
-      .getRange(2, 1, inspectionSheet.getLastRow() - 1, inspectionSheet.getLastColumn())
-      .getValues();
-  }
-
-  const list = Array.isArray(rows) ? rows : [];
-  const inspectionRows = [];
-  const movementRows = [];
-  const conflicts = [];
-
-  list.forEach(function (rawRow) {
-    const row = rawRow || {};
-    const type = String(row.type || "").trim();
-
-    if (type === "inspection") {
-      var savedInspection = upsertInspectionRow_(inspectionSheet, row, photoAssetMap, inspSheetValues);
-      if (savedInspection && savedInspection.__conflict) {
-        conflicts.push(savedInspection);
-      } else if (savedInspection && inspSheetValues !== null) {
-        // Keep the preloaded in-memory array in sync so later rows in the same
-        // batch see the updated state without re-reading the sheet.
-        var iHeaders = inspectionHeaders_();
-        var updatedRowData = iHeaders.map(function(h) {
-          return (savedInspection[h] !== undefined ? savedInspection[h] : "");
-        });
-        var rowNum = savedInspection.__rowNumber || 0;
-        if (rowNum >= 2) {
-          var rowIdx = rowNum - 2; // 0-based index into values array
-          if (rowIdx < inspSheetValues.length) {
-            inspSheetValues[rowIdx] = updatedRowData; // update existing slot
-          } else if (rowIdx === inspSheetValues.length) {
-            inspSheetValues.push(updatedRowData); // append for new rows
-          }
-        }
-      }
-      inspectionRows.push(savedInspection);
-      return;
-    }
-
-    if (type === "movement" || type === "return" || type === "exchange") {
-      var savedMovement = upsertMovementRow_(recordsSheet, row, photoAssetMap);
-      if (savedMovement && savedMovement.__conflict) {
-        conflicts.push(savedMovement);
-      }
-      movementRows.push(savedMovement);
-    }
-  });
-
-  return {
-    inspectionRows: inspectionRows,
-    movementRows: movementRows,
-    hasInspection: inspectionRows.some(function (row) { return row && !row.__conflict; }),
-    hasMovement: movementRows.some(function (row) { return row && !row.__conflict; }),
-    conflicts: conflicts,
-  };
-}
-
-// Runs a targeted post-save sync: syncs return/exchange summary sheets and
-// recalculates inspection+movement totals on the inspection sheet.
-// Called by the "postSaveSync" action so clients can request a lightweight sync
-// without triggering a full bootstrap reload.
-function postSaveSync_(payload) {
+function loadProductImageMappings_() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
-  try { syncReturnSheets_(ss); } catch (e) {
-    console.error("[postSaveSync_] syncReturnSheets_ failed: " + e.message);
-  }
-  try {
-    syncInspectionMovementTotals_(getInspectionSheet_(ss), getRecordSheet_(ss));
-  } catch (e) {
-    console.error("[postSaveSync_] syncInspectionMovementTotals_ failed: " + e.message);
-  }
-  return { synced: true };
-}
-
-function manualRecalc_() {
-  CacheService.getScriptCache().remove('dashboardSummary');
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const inspectionSheet = getInspectionSheet_(ss);
-  const recordsSheet = getRecordSheet_(ss);
-  syncInspectionMovementTotals_(inspectionSheet, recordsSheet);
-  updateInspectionDashboard_(ss);
-  syncReturnSheets_(ss);
-  autoResizeOperationalSheets_(ss);
-  return { ok: true };
-}
-
-function upsertInspectionRow_(sheet, payload, photoAssetMap, preloadedValues) {
-  const rawPayload = payload || {};
-  const targetRow = findInspectionRow_(
-    sheet,
-    rawPayload["작업기준일또는CSV식별값"] || rawPayload["jobKey"] || "",
-    rawPayload["상품코드"] || rawPayload["productCode"] || "",
-    rawPayload["협력사명"] || rawPayload["partnerName"] || "",
-    preloadedValues
-  );
-  const existingRecord = targetRow > 0
-    ? (preloadedValues !== undefined
-        ? readInspectionRowByValues_(preloadedValues, targetRow - 2, photoAssetMap)
-        : readInspectionRow_(sheet, targetRow, photoAssetMap))
-    : null;
-
-  // ── Diagnostic: log every write attempt with conflict detection ──
-  var conflictFlag = detectVersionDifference_(rawPayload, existingRecord);
-  logWriteConflict_("saveInspection", rawPayload, existingRecord, conflictFlag);
-
-  if (hasRowConflict_(rawPayload, existingRecord)) {
-    return buildConflictResult_("inspection", rawPayload, existingRecord);
-  }
-  const row = buildInspectionPayload_(rawPayload, existingRecord);
-  console.log("[upsertInspectionRow_] built row=" + JSON.stringify({
-    jobKey: row["작업기준일또는CSV식별값"],
-    productCode: row["상품코드"],
-    productName: row["상품명"],
-    partnerName: row["협력사명"],
-    orderedQty: row["발주수량"],
-    inspectionQty: row["검품수량"],
-    photoLinks: row["사진링크목록"],
-    memo: row["불량사유"]
-  }));
-  if (shouldDeleteInspectionRow_(row)) {
-    if (targetRow > 0) {
-      deletePhotoAsset_(makeInspectionPhotoAssetKey_(row["작업기준일또는CSV식별값"], row["상품코드"], row["협력사명"]));
-      sheet.deleteRow(targetRow);
-      row.__rowNumber = 0;
-    }
-    return row;
-  }
-  writeInspectionRow_(sheet, targetRow, row);
-  upsertPhotoAsset_(makeInspectionPhotoAssetKey_(row["작업기준일또는CSV식별값"], row["상품코드"], row["협력사명"]), row["사진파일ID목록"], photoAssetMap, row["photoCategoriesJSON"] || "");
-  console.log("[upsertInspectionRow_] written row=" + JSON.stringify({
-    rowNumber: targetRow > 0 ? targetRow : sheet.getLastRow(),
-    productCode: row["상품코드"],
-    partnerName: row["협력사명"],
-    inspectionQty: row["검품수량"],
-    photoLinks: row["사진링크목록"],
-    memo: row["불량사유"]
-  }));
-  row.__rowNumber = targetRow > 0 ? targetRow : sheet.getLastRow();
-  return row;
-}
-
-function upsertMovementRow_(sheet, payload, photoAssetMap) {
-  const rawPayload = payload || {};
-  const targetRow = findMovementRow_(
-    sheet,
-    rawPayload["작업기준일또는CSV식별값"] || rawPayload["jobKey"] || "",
-    rawPayload["상품코드"] || rawPayload["productCode"] || "",
-    rawPayload["협력사명"] || rawPayload["partnerName"] || "",
-    rawPayload["센터명"] || rawPayload["centerName"] || "",
-    rawPayload["처리유형"] || (String(rawPayload["movementType"] || "").trim().toUpperCase() === "RETURN" ? "회송" : String(rawPayload["movementType"] || "").trim().toUpperCase() === "EXCHANGE" ? "교환" : "")
-  );
-  const existingRecord = targetRow > 0 ? readMovementRow_(sheet, targetRow) : null;
-
-  // ── Diagnostic: log every movement write attempt with conflict detection ──
-  var conflictFlag = detectVersionDifference_(rawPayload, existingRecord);
-  logWriteConflict_("saveMovement", rawPayload, existingRecord, conflictFlag);
-
-  if (hasRowConflict_(rawPayload, existingRecord)) {
-    return buildConflictResult_("movement", rawPayload, existingRecord);
-  }
-  const row = buildRecordPayload_(rawPayload, existingRecord);
-  console.log("[upsertMovementRow_] built row(before merge)=" + JSON.stringify({
-    jobKey: row["작업기준일또는CSV식별값"],
-    productCode: row["상품코드"],
-    partnerName: row["협력사명"],
-    centerName: row["센터명"],
-    typeName: row["처리유형"],
-    returnQty: row["회송수량"],
-    exchangeQty: row["교환수량"],
-    orderedQty: row["발주수량"],
-    totalOrderedQty: row["총 발주 수량"]
-  }));
-
-  // Only skip/delete for brand-new rows with no data.
-  // For existing rows, merge first then check — so we never delete accumulated data.
-  if (targetRow === 0 && shouldDeleteMovementRow_(row)) {
-    return row;
-  }
-
-  if (targetRow > 0) {
-    const existing = readMovementRow_(sheet, targetRow);
-    if (rawPayload.replaceQtyMode) {
-      row["회송수량"] = parseNumber_(row["회송수량"]);
-      row["교환수량"] = parseNumber_(row["교환수량"]);
-      row["비고"] = String(rawPayload["비고"] || rawPayload["memo"] || row["비고"] || "").trim();
-    } else {
-      row["회송수량"] = parseNumber_(existing["회송수량"]) + parseNumber_(row["회송수량"]);
-      row["교환수량"] = parseNumber_(existing["교환수량"]) + parseNumber_(row["교환수량"]);
-      row["비고"] = row["비고"] || existing["비고"]; // last non-empty value wins; no concatenation
-    }
-    row["발주수량"] = parseNumber_(existing["발주수량"] || row["발주수량"]);
-    row["총 발주 수량"] = parseNumber_(existing["총 발주 수량"] || row["총 발주 수량"]);
-    console.log("[upsertMovementRow_] merged row(before write)=" + JSON.stringify({
-      rowNumber: targetRow,
-      typeName: row["처리유형"],
-      returnQty: row["회송수량"],
-      exchangeQty: row["교환수량"],
-      totalOrderedQty: row["총 발주 수량"]
-    }));
-
-    // After merge, delete only if merged result is completely empty.
-    if (shouldDeleteMovementRow_(row)) {
-      deletePhotoAsset_(makeMovementPhotoAssetKey_(row["작업기준일또는CSV식별값"], row["상품코드"], row["협력사명"], row["센터명"], row["처리유형"]));
-      sheet.deleteRow(targetRow);
-      row.__rowNumber = 0;
-      return row;
-    }
-
-    writeRecordRow_(sheet, targetRow, row);
-    upsertPhotoAsset_(makeMovementPhotoAssetKey_(row["작업기준일또는CSV식별값"], row["상품코드"], row["협력사명"], row["센터명"], row["처리유형"]), row["사진파일ID목록"], photoAssetMap);
-    row.__rowNumber = targetRow;
-    return row;
-  }
-
-  console.log("[upsertMovementRow_] new row(before write)=" + JSON.stringify({
-    typeName: row["처리유형"],
-    returnQty: row["회송수량"],
-    exchangeQty: row["교환수량"],
-    totalOrderedQty: row["총 발주 수량"]
-  }));
-  writeRecordRow_(sheet, 0, row);
-  upsertPhotoAsset_(makeMovementPhotoAssetKey_(row["작업기준일또는CSV식별값"], row["상품코드"], row["협력사명"], row["센터명"], row["처리유형"]), row["사진파일ID목록"], photoAssetMap);
-  row.__rowNumber = sheet.getLastRow();
-  return row;
-}
-
-function findMovementRow_(sheet, jobKey, productCode, partnerName, centerName, typeName) {
-  if (!sheet || sheet.getLastRow() < 2) return 0;
-
-  const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues();
-  const normalizedJobKey = String(jobKey || "").trim();
-  const normalizedCode = normalizeCode_(productCode || "");
-  const normalizedCenter = String(centerName || "").trim();
-  const normalizedPartner = String(partnerName || "").trim();
-  const normalizedType = String(typeName || "").trim();
-  var fallbackRow = 0;
-
-  for (var i = values.length - 1; i >= 0; i -= 1) {
-    const rowJobKey = String(values[i][1] || "").trim();
-    const rowCode = normalizeCode_(values[i][3] || "");
-    const rowCenter = String(values[i][4] || "").trim();
-    const rowPartner = String(values[i][5] || "").trim();
-    const rowType = String(values[i][9] || "").trim();
-
-    if (
-      rowJobKey === normalizedJobKey &&
-      rowCode === normalizedCode &&
-      rowCenter === normalizedCenter &&
-      rowPartner === normalizedPartner &&
-      rowType === normalizedType
-    ) {
-      return i + 2;
-    }
-
-    if (
-      !fallbackRow &&
-      rowCode === normalizedCode &&
-      rowCenter === normalizedCenter &&
-      rowPartner === normalizedPartner &&
-      rowType === normalizedType
-    ) {
-      fallbackRow = i + 2;
-    }
-  }
-
-  return fallbackRow;
-}
-
-function readMovementRow_(sheet, rowNumber) {
-  const values = sheet.getRange(rowNumber, 1, 1, sheet.getLastColumn()).getValues()[0];
-  const headers = recordHeaders_();
-  const row = {};
-
-  for (var i = 0; i < headers.length; i += 1) {
-    row[headers[i]] = values[i];
-  }
-
-  return row;
-}
-
-function mergeTextValue_(a, b) {
-  const left = String(a || "").trim();
-  const right = String(b || "").trim();
-  if (left && right && left !== right) return left + "\n" + right;
-  return right || left;
-}
-
-function getRowVersion_(row) {
-  return parseNumber_(row && row["버전"] ? row["버전"] : 0);
-}
-
-function getRowUpdatedAt_(row) {
-  return String((row && row["수정일시"]) || "").trim();
-}
-
-function hasRowConflict_(payload, existingRecord) {
-  var expectedUpdatedAt = String(payload && (payload.expectedUpdatedAt || payload["expectedUpdatedAt"]) || "").trim();
-  var expectedVersion   = parseNumber_(payload && (payload.expectedVersion || payload["expectedVersion"]) || 0);
-  var payloadClientId   = String((payload && (payload.clientId || payload["clientId"])) || "").trim();
-
-  // ── Legacy-app guard ──────────────────────────────────────────────────────
-  // Old app sends no clientId and no version info.
-  // If the server row was already written by the new app (has clientId), or
-  // has been saved more than once (version > 1), block the overwrite.
-  // New-app retries after versionConflict resolution still carry clientId,
-  // so they are NOT affected by this path.
-  if (!expectedUpdatedAt && !expectedVersion && !payloadClientId) {
-    if (existingRecord) {
-      var existingClientId_ = String(existingRecord["clientId"] || "").trim();
-      var existingVersion_  = parseNumber_(existingRecord["버전"] || 0);
-      if (existingClientId_ || existingVersion_ > 1) {
-        return true; // legacy overwrite blocked
-      }
-    }
-    return false;
-  }
-
-  if (!existingRecord) {
-    return expectedVersion > 0 || !!expectedUpdatedAt;
-  }
-
-  // Same browser session re-saving: bypass version/timestamp gating entirely.
-  // This eliminates false "another user is editing" for sequential edits by the same user.
-  var existingClientId = String(existingRecord["clientId"] || "").trim();
-  if (payloadClientId && existingClientId && payloadClientId === existingClientId) {
-    return false;
-  }
-
-  var currentUpdatedAt = getRowUpdatedAt_(existingRecord);
-  var currentVersion   = getRowVersion_(existingRecord);
-
-  if (expectedUpdatedAt && currentUpdatedAt && expectedUpdatedAt !== currentUpdatedAt) {
-    return true;
-  }
-
-  if (expectedVersion && currentVersion !== expectedVersion) {
-    return true;
-  }
-
-  return false;
-}
-
-function buildConflictResult_(rowType, payload, existingRecord) {
-  var payloadClientId = String((payload && (payload.clientId || payload["clientId"])) || "").trim();
-  var existingClientId = String((existingRecord && existingRecord["clientId"]) || "").trim();
-  // editorConflict   = two distinct identified sessions both have clientIds
-  // legacyConflict   = old-app payload (no clientId) tried to overwrite a new-app row (has clientId)
-  // versionConflict  = stale version, same or unknown session
-  var conflictType = (payloadClientId && existingClientId && payloadClientId !== existingClientId)
-    ? "editorConflict"
-    : (!payloadClientId && existingClientId)
-    ? "legacyConflict"
-    : "versionConflict";
-  return {
-    __conflict: true,
-    type: rowType,
-    conflictType: conflictType,
-    key: payload.key || "",
-    productCode: payload["상품코드"] || payload.productCode || "",
-    partnerName: payload["협력사명"] || payload.partnerName || "",
-    centerName: payload["센터명"] || payload.centerName || "",
-    expectedVersion: parseNumber_(payload.expectedVersion || 0),
-    expectedUpdatedAt: String(payload.expectedUpdatedAt || "").trim(),
-    currentVersion: getRowVersion_(existingRecord),
-    currentUpdatedAt: getRowUpdatedAt_(existingRecord),
-    serverRow: existingRecord || null,
-  };
-}
-
-function mergePhotoLinks_(existingLinksText, newLinksText, newPrimaryLink) {
-  const map = {};
-  String(existingLinksText || "")
-    .split(/\n+/)
-    .map(function (item) {
-      return String(item || "").trim();
-    })
-    .filter(Boolean)
-    .forEach(function (item) {
-      map[item] = true;
-    });
-
-  String(newLinksText || "")
-    .split(/\n+/)
-    .map(function (item) {
-      return String(item || "").trim();
-    })
-    .filter(Boolean)
-    .forEach(function (item) {
-      map[item] = true;
-    });
-
-  if (newPrimaryLink) {
-    map[String(newPrimaryLink).trim()] = true;
-  }
-
-  return Object.keys(map).join("\n");
-}
-
-function isLikelyPhotoLinkText_(value) {
-  var lines = String(value || "")
-    .split(/\n+/)
-    .map(function (item) {
-      return String(item || "").trim();
-    })
-    .filter(Boolean);
-
-  if (!lines.length) return false;
-
-  return lines.every(function (line) {
-    return /^https?:\/\/.+/i.test(line) || !!extractGoogleDriveId_(line);
-  });
-}
-
-function findInspectionRow_(sheet, jobKey, productCode, partnerName, preloadedValues) {
-  if (!sheet || sheet.getLastRow() < 2) return 0;
-
-  const values = preloadedValues !== undefined
-    ? preloadedValues
-    : sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues();
-
-  for (var i = values.length - 1; i >= 0; i -= 1) {
-    const rowJobKey = String(values[i][1] || "").trim();
-    const rowCode = normalizeCode_(values[i][2] || "");
-    const rowPartner = String(values[i][4] || "").trim();
-
-    if (
-      rowJobKey === String(jobKey || "").trim() &&
-      rowCode === normalizeCode_(productCode || "") &&
-      rowPartner === String(partnerName || "").trim()
-    ) {
-      return i + 2;
-    }
-  }
-
-  return 0;
-}
-
-function readInspectionRow_(sheet, rowNumber, photoAssetMap) {
-  const values = sheet.getRange(rowNumber, 1, 1, sheet.getLastColumn()).getValues()[0];
-  const headers = inspectionHeaders_();
-  const row = {};
-
-  for (var i = 0; i < headers.length; i += 1) {
-    row[headers[i]] = values[i];
-  }
-
-  var map = photoAssetMap !== undefined
-    ? photoAssetMap
-    : loadPhotoAssetMap_(SpreadsheetApp.getActiveSpreadsheet());
-  return applyPhotoAssetFieldsToRow_(row, map, "inspection");
-}
-
-// Read an inspection row from an already-loaded values array (row index is 0-based: targetRow - 2).
-// Avoids a second sheet.getRange() call when the caller has already read the sheet.
-function readInspectionRowByValues_(preloadedValues, rowIndex, photoAssetMap) {
-  const headers  = inspectionHeaders_();
-  const rowData  = preloadedValues[rowIndex] || [];
-  const row      = {};
-
-  for (var i = 0; i < headers.length; i += 1) {
-    row[headers[i]] = rowData[i] !== undefined ? rowData[i] : "";
-  }
-
-  var map = photoAssetMap !== undefined
-    ? photoAssetMap
-    : loadPhotoAssetMap_(SpreadsheetApp.getActiveSpreadsheet());
-  return applyPhotoAssetFieldsToRow_(row, map, "inspection");
-}
-
-function buildInspectionPayload_(payload, existingRecord) {
-  const photos = Array.isArray(payload["사진들"]) ? payload["사진들"] : [];
-  const uploaded = photos.length
-    ? savePhotosToDrive_(
-        photos,
-        payload["상품명"] || payload["productName"] || "검품",
-        existingRecord ? existingRecord["사진파일ID목록"] : ""
-      )
-    : [];
-  const existingPhotoFileIds = splitPhotoSourceText_((existingRecord && existingRecord["사진파일ID목록"]) || "");
-  const payloadPhotoFileIds = splitPhotoSourceText_(
-    payload["사진파일ID목록"] || payload["photoFileIds"] || ""
-  );
-  const uploadedPhotoFileIds = uploaded.map(function (item) {
-    return item.fileId;
-  });
-  // Collect file IDs from photoTypeFileIdsMap (sent by saveRecordDetail)
-  const photoTypeMap = payload["photoTypeFileIdsMap"] || {};
-  const typeMapFileIds = Object.values(photoTypeMap).reduce(function (acc, ids) {
-    return acc.concat(Array.isArray(ids) ? ids.filter(Boolean) : []);
-  }, []);
-  const replacePhotoFileIdsMode = !!payload["replacePhotoFileIdsMode"];
-  const photoFileIds = replacePhotoFileIdsMode
-    ? splitPhotoSourceText_(payloadPhotoFileIds.join("\n") + "\n" + uploadedPhotoFileIds.join("\n") + "\n" + typeMapFileIds.join("\n"))
-    : mergePhotoLinks_(
-        mergePhotoLinks_(
-          mergePhotoLinks_(existingPhotoFileIds.join("\n"), payloadPhotoFileIds.join("\n"), ""),
-          uploadedPhotoFileIds.join("\n"),
-          ""
-        ),
-        typeMapFileIds.join("\n"),
-        ""
-      ).split(/\n+/).filter(Boolean);
-
-  // ── Per-category photo IDs ──────────────────────────────────────────────────
-  // The new app sends per-category arrays so photo types survive page reload.
-  // Fall back to null so older saves (no category data) leave photo_assets unchanged.
-  var parseCatArr = function (val) {
-    if (Array.isArray(val)) return val.filter(Boolean);
-    var text = String(val || "").trim();
-    return text ? splitPhotoSourceText_(text) : [];
-  };
-  var catInsp   = parseCatArr(payload["inspPhotoIds"]);
-  var catDefect = parseCatArr(payload["defectPhotoIds"]);
-  var catWeight = parseCatArr(payload["weightPhotoIds"]);
-  var catBrix   = parseCatArr(payload["brixPhotoIds"]);
-  var hasCategories = catInsp.length || catDefect.length || catWeight.length || catBrix.length;
-  var photoCategoriesJSON = hasCategories
-    ? JSON.stringify({ insp: catInsp, defect: catDefect, weight: catWeight, brix: catBrix })
-    : "";
-
-  return {
-    "작성일시": formatWrittenAtKst_(payload["작성일시"] || (existingRecord && existingRecord["작성일시"]) || new Date().toISOString()),
-    "작업기준일또는CSV식별값": payload["작업기준일또는CSV식별값"] || "",
-    "상품코드": normalizeCode_(payload["상품코드"] || payload["productCode"] || ""),
-    "상품명": payload["상품명"] || payload["productName"] || "",
-    "협력사명": payload["협력사명"] || payload["partnerName"] || "",
-    "발주수량": parseNumber_(payload["발주수량"] || payload["totalQty"] || payload["전체발주수량"] || 0),
-    "검품수량": parseNumber_(payload["검품수량"] || payload["inspectionQty"] || 0),
-    "회송수량": parseNumber_(payload["회송수량"] || 0),
-    "교환수량": parseNumber_(payload["교환수량"] || 0),
-    "불량사유": payload["불량사유"] || payload["비고"] || payload["memo"] || "",
-    "BRIX최저": payload["BRIX최저"] || payload["brixMin"] || "",
-    "BRIX최고": payload["BRIX최고"] || payload["brixMax"] || "",
-    "BRIX평균": payload["BRIX평균"] || payload["brixAvg"] || "",
-    "사진파일ID목록": photoFileIds.join("\n"),
-    "photoCategoriesJSON": photoCategoriesJSON,  // passed to upsertPhotoAsset_ below
-    "수정일시": new Date().toISOString(),
-    "버전": existingRecord ? (parseNumber_(existingRecord["버전"] || 0) + 1) : 1,
-    "clientId": String(payload["clientId"] || (existingRecord && existingRecord["clientId"]) || "").trim(),
-  };
-}
-
-function buildRecordPayload_(payload, existingRecord) {
-  var now = new Date().toISOString();
-  var version = existingRecord ? getRowVersion_(existingRecord) + 1 : 1;
-  var updatedBy = getEditorLabel_(payload);
-  const movementType = String(payload["movementType"] || "").trim().toUpperCase();
-  const photos = Array.isArray(payload["사진들"]) ? payload["사진들"] : [];
-  const uploaded = photos.length
-    ? savePhotosToDrive_(
-        photos,
-        payload["상품명"] || payload["productName"] || "불량",
-        existingRecord ? existingRecord["사진파일ID목록"] : ""
-      )
-    : [];
-  const existingPhotoFileIds = splitPhotoSourceText_((existingRecord && existingRecord["사진파일ID목록"]) || "");
-  const payloadPhotoFileIds = splitPhotoSourceText_(
-    payload["사진파일ID목록"] || payload["photoFileIds"] || ""
-  );
-  const uploadedPhotoFileIds = uploaded.map(function (item) {
-    return item.fileId;
-  });
-  const replacePhotoFileIdsMode = !!payload["replacePhotoFileIdsMode"];
-  const photoFileIds = replacePhotoFileIdsMode
-    ? splitPhotoSourceText_(payloadPhotoFileIds.join("\n") + "\n" + uploadedPhotoFileIds.join("\n"))
-    : mergePhotoLinks_(
-        mergePhotoLinks_(existingPhotoFileIds.join("\n"), payloadPhotoFileIds.join("\n"), ""),
-        uploadedPhotoFileIds.join("\n"),
-        ""
-      ).split(/\n+/).filter(Boolean);
-
-  const record = {
-    "작성일시": formatWrittenAtKst_(payload["작성일시"] || (existingRecord && existingRecord["작성일시"]) || now),
-    "작업기준일또는CSV식별값": payload["작업기준일또는CSV식별값"] || "",
-    "상품명": payload["상품명"] || payload["productName"] || "",
-    "상품코드": normalizeCode_(payload["상품코드"] || payload["productCode"] || ""),
-    "센터명": payload["센터명"] || payload["centerName"] || "",
-    "협력사명": payload["협력사명"] || payload["partnerName"] || "",
-    "발주수량": parseNumber_(payload["발주수량"] || payload["qty"] || 0),
-    "행사명": payload["행사명"] || payload["eventName"] || "",
-    "행사여부": payload["행사여부"] || payload["eventFlag"] || "",
-    "처리유형": payload["처리유형"] || "",
-    "회송수량": parseNumber_(payload["회송수량"] || 0),
-    "교환수량": parseNumber_(payload["교환수량"] || 0),
-    "비고": payload["비고"] || payload["memo"] || "",
-    "사진파일ID목록": photoFileIds.join("\n"),
-    "사진개수": photoFileIds.length,
-    "총 발주 수량": parseNumber_(payload["전체발주수량"] || payload["totalQty"] || payload["발주수량"] || 0),
-    "수정일시": now,
-    "수정자": updatedBy,
-    "버전": version,
-    "수주수량": parseNumber_(payload["수주수량"] || 0),
-  };
-
-  if (movementType === "RETURN") {
-    record["처리유형"] = "회송";
-    record["회송수량"] = parseNumber_(payload["qty"] || payload["회송수량"] || 0);
-    record["교환수량"] = 0;
-  } else if (movementType === "EXCHANGE") {
-    record["처리유형"] = "교환";
-    record["교환수량"] = parseNumber_(payload["qty"] || payload["교환수량"] || 0);
-    record["회송수량"] = 0;
-  } else if (!record["처리유형"]) {
-    if (record["회송수량"] > 0) {
-      record["처리유형"] = "회송";
-    } else if (record["교환수량"] > 0) {
-      record["처리유형"] = "교환";
-    }
-  }
-
-  return record;
-}
-
-function shouldDeleteInspectionRow_(row) {
-  if (!row) return false;
-  var inspectionQty = parseNumber_(row["검품수량"] || 0);
-  var returnQty = parseNumber_(row["회송수량"] || 0);
-  var exchangeQty = parseNumber_(row["교환수량"] || 0);
-  var hasPhoto = !!String(row["사진링크"] || row["사진링크목록"] || row["사진파일ID목록"] || "").trim();
-  return inspectionQty <= 0 && returnQty <= 0 && exchangeQty <= 0 && !hasPhoto;
-}
-
-function shouldDeleteMovementRow_(row) {
-  if (!row) return false;
-  var returnQty = parseNumber_(row["회송수량"] || 0);
-  var exchangeQty = parseNumber_(row["교환수량"] || 0);
-  var memo = String(row["비고"] || "").trim();
-  var hasPhoto =
-    parseNumber_(row["사진개수"] || 0) > 0 ||
-    !!String(row["사진링크"] || row["사진링크목록"] || row["사진파일ID목록"] || "").trim();
-  return returnQty <= 0 && exchangeQty <= 0 && !memo && !hasPhoto;
-}
-
-function writeInspectionRow_(sheet, targetRow, record) {
-  const values = [[
-    record["작성일시"],
-    record["작업기준일또는CSV식별값"],
-    record["상품코드"],
-    record["상품명"],
-    record["협력사명"],
-    record["발주수량"],
-    record["검품수량"],
-    record["회송수량"],
-    record["교환수량"],
-    record["불량사유"],
-    record["BRIX최저"],
-    record["BRIX최고"],
-    record["BRIX평균"],
-    record["수정일시"] || "",
-    record["버전"] || 0,
-    record["clientId"] || "",
-  ]];
-
-  if (targetRow > 0) {
-    sheet.getRange(targetRow, 1, 1, values[0].length).setValues(values);
-  } else {
-    sheet.appendRow(values[0]);
-  }
-}
-
-function writeRecordRow_(sheet, targetRow, record) {
-  const values = [[
-    record["작성일시"],
-    record["작업기준일또는CSV식별값"],
-    record["상품명"],
-    record["상품코드"],
-    record["센터명"],
-    record["협력사명"],
-    record["발주수량"],
-    record["행사명"],
-    record["행사여부"],
-    record["처리유형"],
-    record["회송수량"],
-    record["교환수량"],
-    record["비고"],
-    record["사진개수"],
-    record["총 발주 수량"],
-    record["수정일시"],
-    record["수정자"],
-    record["버전"],
-    record["수주수량"] || 0,
-  ]];
-
-  if (targetRow > 0) {
-    sheet.getRange(targetRow, 1, 1, values[0].length).setValues(values);
-  } else {
-    sheet.appendRow(values[0]);
-  }
-}
-
-function buildMovementTotalsMap_(recordsSheet) {
-  const totalsMap = {};
-  if (!recordsSheet || recordsSheet.getLastRow() < 2) {
-    return totalsMap;
-  }
-
-  const values = recordsSheet.getDataRange().getValues();
-  const headers = values[0].map(function (header) {
+  var sheet = getProductImageSheet_(ss);
+  if (!sheet || sheet.getLastRow() < 2) return [];
+
+  var values = sheet.getDataRange().getValues();
+  var headers = values[0].map(function (header) {
     return String(header || "").trim();
   });
 
-  for (var r = 1; r < values.length; r += 1) {
-    const row = {};
-    for (var c = 0; c < headers.length; c += 1) {
-      const header = headers[c];
-      if (!header) continue;
-      row[header] = values[r][c];
-    }
-
-    const key = makeEntityKey_(row["작업기준일또는CSV식별값"], row["상품코드"], row["협력사명"]);
-    if (!totalsMap[key]) {
-      totalsMap[key] = { returnQty: 0, exchangeQty: 0 };
-    }
-
-    totalsMap[key].returnQty += parseNumber_(row["회송수량"] || 0);
-    totalsMap[key].exchangeQty += parseNumber_(row["교환수량"] || 0);
-  }
-
-  return totalsMap;
-}
-
-function syncInspectionMovementTotals_(inspectionSheet, recordsSheet) {
-  if (!inspectionSheet || inspectionSheet.getLastRow() < 2) {
-    return;
-  }
-
-  const totalsMap = buildMovementTotalsMap_(recordsSheet);
-  const range = inspectionSheet.getRange(2, 1, inspectionSheet.getLastRow() - 1, inspectionSheet.getLastColumn());
-  const values = range.getValues();
-
-  for (var i = 0; i < values.length; i += 1) {
-    const jobKey = String(values[i][1] || "").trim();
-    const productCode = normalizeCode_(values[i][2] || "");
-    const partnerName = String(values[i][4] || "").trim();
-    const key = makeEntityKey_(jobKey, productCode, partnerName);
-    const totals = totalsMap[key] || { returnQty: 0, exchangeQty: 0 };
-    values[i][7] = totals.returnQty;
-    values[i][8] = totals.exchangeQty;
-  }
-
-  range.setValues(values);
-  purgeEmptyInspectionRows_(inspectionSheet);
-}
-
-function purgeEmptyInspectionRows_(inspectionSheet) {
-  if (!inspectionSheet || inspectionSheet.getLastRow() < 2) return 0;
-
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const photoAssetMap = loadPhotoAssetMap_(ss);
-
-  const values = inspectionSheet
-    .getRange(2, 1, inspectionSheet.getLastRow() - 1, inspectionSheet.getLastColumn())
-    .getValues();
-  const rowsToDelete = [];
-
-  for (var i = 0; i < values.length; i += 1) {
-    const jobKey = String(values[i][1] || "").trim();
-    const productCode = normalizeCode_(values[i][2] || "");
-    const partnerName = String(values[i][4] || "").trim();
-    const assetKey = makeInspectionPhotoAssetKey_(jobKey, productCode, partnerName);
-    const photoEntry = photoAssetMap[assetKey];
-    const photoFileIds = photoEntry ? String(photoEntry.fileIdsText || "").trim() : "";
-    const row = {
-      "검품수량": values[i][6],
-      "회송수량": values[i][7],
-      "교환수량": values[i][8],
-      "사진파일ID목록": photoFileIds,
-    };
-    if (shouldDeleteInspectionRow_(row)) {
-      rowsToDelete.push(i + 2);
-    }
-  }
-
-  rowsToDelete.sort(function (a, b) {
-    return b - a;
+  return values.slice(1).map(function (row, index) {
+    var item = {};
+    headers.forEach(function (header, headerIndex) {
+      item[header] = row[headerIndex];
+    });
+    item.__rowNumber = index + 2;
+    return item;
+  }).filter(function (row) {
+    return String(row["맵키"] || "").trim();
   });
-  rowsToDelete.forEach(function (rowNumber) {
-    inspectionSheet.deleteRow(rowNumber);
-  });
-
-  return rowsToDelete.length;
 }
 
-function migrateRecordSheetIfNeeded_(sheet) {
-  if (!sheet || sheet.getLastRow() === 0) {
-    return;
-  }
-
-  const currentHeaders = sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), recordHeaders_().length)).getValues()[0];
-  const current = currentHeaders.map(function (item) {
-    return String(item || "").trim();
-  });
-  const next = recordHeaders_();
-
-  const isNewFormat =
-    current[9] === "처리유형" &&
-    current[10] === "회송수량" &&
-    current[11] === "교환수량" &&
-    current[12] === "비고" &&
-    current[13] === "사진개수" &&
-    current[14] === "총 발주 수량";
-
-  if (isNewFormat) {
-    // Already in the new format — just ensure the header row includes any new columns
-    // (e.g. 수주수량 added as column 19). Existing data rows are left untouched.
-    ensureHeaderRow_(sheet, next);
-    return;
-  }
-
-  if (sheet.getLastRow() < 2) {
-    ensureHeaderRow_(sheet, next);
-    return;
-  }
-
-  const dataRange = sheet.getRange(2, 1, sheet.getLastRow() - 1, Math.max(sheet.getLastColumn(), 17));
-  const rows = dataRange.getValues();
-  const migrated = rows.map(function (row) {
-    const typeValue = String(row[9] || "").trim() || (String(row[10] || "").trim() === "EXCHANGE" ? "교환" : String(row[10] || "").trim() === "RETURN" ? "회송" : "");
-    const returnQty = parseNumber_(row[11] || 0);
-    const exchangeQty = parseNumber_(row[12] || 0);
-    const photoLink = String(row[14] || "").trim();
-
-    return [
-      row[0] || "",
-      row[1] || "",
-      row[2] || "",
-      row[3] || "",
-      row[4] || "",
-      row[5] || "",
-      row[6] || "",
-      row[8] || "",
-      row[7] || "",
-      typeValue,
-      returnQty,
-      exchangeQty,
-      row[13] || "",
-      [photoLink, row[15] || "", row[14] || ""].filter(Boolean).length,
-      row[16] || row[15] || 0,
-    ];
-  });
-
-  ensureHeaderRow_(sheet, next);
-  if (migrated.length) {
-    sheet.getRange(2, 1, migrated.length, next.length).setValues(migrated);
-  }
-  if (sheet.getLastColumn() > next.length) {
-    sheet.getRange(1, next.length + 1, sheet.getMaxRows(), sheet.getLastColumn() - next.length).clearContent();
-  }
-}
-
-function migrateInspectionSheetIfNeeded_(sheet) {
-  if (!sheet || sheet.getLastRow() === 0) {
-    return;
-  }
-
-  var next = inspectionHeaders_(); // 15 cols
-  var currentHeaders = sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), 19)).getValues()[0];
-  var current = currentHeaders.map(function (item) {
-    return String(item || "").trim();
-  });
-
-  // Already 15-col (current) format: 불량사유 at [9], BRIX평균 at [12], 수정일시 at [13], 버전 at [14]
-  var isCurrentFormat = current[9] === "불량사유" && current[12] === "BRIX평균" && current[13] === "수정일시" && current[14] === "버전";
-  // Already in the current format — just extend headers for any new columns (e.g. clientId).
-  // Existing data rows are untouched; new rows get the new column on next write.
-  if (isCurrentFormat) {
-    ensureHeaderRow_(sheet, next);
-    return;
-  }
-
-  if (sheet.getLastRow() < 2) {
-    ensureHeaderRow_(sheet, next);
-    return;
-  }
-
-  // 13-col → 15-col upgrade: add the two new header columns; leave data rows untouched
-  // (existing rows get blank 수정일시/버전 which is safe — treated as version 0)
-  var is13col = current[9] === "불량사유" && current[12] === "BRIX평균" && current[13] !== "수정일시";
-  if (is13col) {
-    ensureHeaderRow_(sheet, next);
-    return;
-  }
-
-  // Detect legacy formats: 19-col (비고 at [10], 사진개수 at [15]) or old 14-col (사진개수 at [10])
-  var is19col = current[10] === "비고" && current[15] === "사진개수";
-  var isOld14col = current[10] === "사진개수";
-
-  var dataRange = sheet.getRange(2, 1, sheet.getLastRow() - 1, Math.max(sheet.getLastColumn(), 19));
-  var rows = dataRange.getValues();
-  var migrated = rows.map(function (row) {
-    if (is19col) {
-      // 19-col → 15-col: skip 전체발주수량[5]; 비고[10]→불량사유[9]; drop 중량메모[14], 사진개수[15], 수정일시[16], 수정자[17], 버전[18]
-      return [
-        row[0] || "",   // 작성일시
-        row[1] || "",   // 작업기준일또는CSV식별값
-        row[2] || "",   // 상품코드
-        row[3] || "",   // 상품명
-        row[4] || "",   // 협력사명
-        row[6] || 0,    // 발주수량 (was [6], skip 전체발주수량[5])
-        row[7] || 0,    // 검품수량
-        row[8] || 0,    // 회송수량
-        row[9] || 0,    // 교환수량
-        row[10] || "",  // 불량사유 (was 비고)
-        row[11] || "",  // BRIX최저
-        row[12] || "",  // BRIX최고
-        row[13] || "",  // BRIX평균
-        "",             // 수정일시 (new)
-        0,              // 버전 (new)
-      ];
-    } else if (isOld14col) {
-      // Old 14-col → 15-col: 사진개수 was at [10], skip it
-      return [
-        row[0] || "",   // 작성일시
-        row[1] || "",   // 작업기준일또는CSV식별값
-        row[2] || "",   // 상품코드
-        row[3] || "",   // 상품명
-        row[4] || "",   // 협력사명
-        row[6] || row[5] || 0, // 발주수량
-        row[7] || 0,    // 검품수량
-        row[8] || 0,    // 회송수량
-        row[9] || 0,    // 교환수량
-        "",             // 불량사유 (new)
-        "",             // BRIX최저 (new)
-        "",             // BRIX최고 (new)
-        "",             // BRIX평균 (new)
-        "",             // 수정일시 (new)
-        0,              // 버전 (new)
-      ];
-    } else {
-      // Unknown/partial — best-effort preserve what we can
-      return [
-        row[0] || "", row[1] || "", row[2] || "", row[3] || "", row[4] || "",
-        row[5] || 0, row[6] || 0, row[7] || 0, row[8] || 0,
-        "", "", "", "",
-        "", 0,
-      ];
-    }
-  });
-
-  ensureHeaderRow_(sheet, next);
-  if (migrated.length) {
-    sheet.getRange(2, 1, migrated.length, next.length).setValues(migrated);
-  }
-  if (sheet.getLastColumn() > next.length) {
-    sheet.getRange(1, next.length + 1, sheet.getMaxRows(), sheet.getLastColumn() - next.length).clearContent();
-  }
-}
-
-function inspectionHeaders_() {
-  return [
-    "작성일시",
-    "작업기준일또는CSV식별값",
-    "상품코드",
-    "상품명",
-    "협력사명",
-    "발주수량",
-    "검품수량",
-    "회송수량",
-    "교환수량",
-    "불량사유",
-    "BRIX최저",
-    "BRIX최고",
-    "BRIX평균",
-    "수정일시",
-    "버전",
-    "clientId",
-  ];
-}
-
-function recordHeaders_() {
-  return [
-    "작성일시",
-    "작업기준일또는CSV식별값",
-    "상품명",
-    "상품코드",
-    "센터명",
-    "협력사명",
-    "발주수량",
-    "행사명",
-    "행사여부",
-    "처리유형",
-    "회송수량",
-    "교환수량",
-    "비고",
-    "사진개수",
-    "총 발주 수량",
-    "수정일시",
-    "수정자",
-    "버전",
-    "수주수량",
-  ];
-}
-
+// ── Happycall analytics ────────────────────────────────────
 function happycallHeaders_() {
   return [
     "수집키",
@@ -3569,28 +2173,417 @@ function buildHappycallLookupKeys_(item) {
   return keys.filter(Boolean);
 }
 
-function savePhotosToDrive_(photos, baseName, existingFileIdsText) {
-  const list = Array.isArray(photos) ? photos : [];
-  const saved = [];
-  const existingNames = getExistingPhotoNameMap_(existingFileIdsText);
-  const incomingNames = {};
+// ============================================================
+// SECTION 4: SAVE BATCH / SAVE HANDLERS
+// ============================================================
 
-  list.forEach(function (photo, index) {
-    if (photo && photo.imageBase64) {
-      var preferredFileName = buildPreferredPhotoFileName_(photo, baseName, saved.length);
-      var dedupeKey = String(preferredFileName || "").trim().toLowerCase();
-      if (!dedupeKey || existingNames[dedupeKey] || incomingNames[dedupeKey]) {
-        return;
-      }
+// ── Record CRUD ────────────────────────────────────────────
+function appendRecord_(payload) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const recordsSheet = getRecordSheet_(ss);
+  const record = upsertMovementRow_(recordsSheet, payload || {});
+  return record;
+}
 
-      incomingNames[dedupeKey] = true;
-      saved.push(savePhotoToDrive_(photo, baseName, saved.length, preferredFileName));
-    }
-  });
+function deleteRecord_(payload) {
+  const rowNumber = Number(payload.rowNumber || 0);
+  if (!rowNumber || rowNumber <= 1) {
+    throw new Error("삭제할 행 번호가 올바르지 않습니다.");
+  }
 
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = getRecordSheet_(ss);
+
+  if (rowNumber > sheet.getLastRow()) {
+    throw new Error("이미 삭제되었거나 존재하지 않는 행입니다.");
+  }
+
+  var existingRecord = readMovementRow_(sheet, rowNumber);
+  deletePhotoAsset_(makeMovementPhotoAssetKey_(
+    existingRecord["작업기준일또는CSV식별값"],
+    existingRecord["상품코드"],
+    existingRecord["협력사명"],
+    existingRecord["센터명"],
+    existingRecord["처리유형"]
+  ));
+  sheet.deleteRow(rowNumber);
+
+  return {
+    rowNumber: rowNumber,
+  };
+}
+
+function cancelMovementEvent_(payload) {
+  return deleteRecord_(payload);
+}
+
+function saveInspectionQty_(payload) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const inspectionSheet = getInspectionSheet_(ss);
+  const saved = upsertInspectionRow_(inspectionSheet, payload || {});
   return saved;
 }
 
+function saveInspectionBatch_(rows) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const inspectionSheet = getInspectionSheet_(ss);
+  const recordsSheet = getRecordSheet_(ss);
+  const list = Array.isArray(rows) ? rows : [];
+  const saved = [];
+
+  list.forEach(function (row) {
+    saved.push(upsertInspectionRow_(inspectionSheet, row || {}));
+  });
+
+  return {
+    rows: saved,
+  };
+}
+
+// ── Batch save ─────────────────────────────────────────────
+function saveBatch_(rows) {
+  console.log("[saveBatch_] incoming rows=" + (Array.isArray(rows) ? rows.length : 0));
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const inspectionSheet = getInspectionSheet_(ss);
+  const recordsSheet = getRecordSheet_(ss);
+  const photoAssetMap = loadPhotoAssetMap_(ss);
+
+  // Pre-load the entire inspection sheet once for all row lookups in this request.
+  // findInspectionRow_ and readInspectionRowByValues_ will use this array instead
+  // of issuing separate sheet.getRange() calls per row.
+  var inspSheetValues = null;
+  if (inspectionSheet && inspectionSheet.getLastRow() >= 2) {
+    inspSheetValues = inspectionSheet
+      .getRange(2, 1, inspectionSheet.getLastRow() - 1, inspectionSheet.getLastColumn())
+      .getValues();
+  }
+
+  const list = Array.isArray(rows) ? rows : [];
+  const inspectionRows = [];
+  const movementRows = [];
+  const conflicts = [];
+
+  list.forEach(function (rawRow) {
+    const row = rawRow || {};
+    const type = String(row.type || "").trim();
+
+    if (type === "inspection") {
+      var savedInspection = upsertInspectionRow_(inspectionSheet, row, photoAssetMap, inspSheetValues);
+      if (savedInspection && savedInspection.__conflict) {
+        conflicts.push(savedInspection);
+      } else if (savedInspection && inspSheetValues !== null) {
+        // Keep the preloaded in-memory array in sync so later rows in the same
+        // batch see the updated state without re-reading the sheet.
+        var iHeaders = inspectionHeaders_();
+        var updatedRowData = iHeaders.map(function(h) {
+          return (savedInspection[h] !== undefined ? savedInspection[h] : "");
+        });
+        var rowNum = savedInspection.__rowNumber || 0;
+        if (rowNum >= 2) {
+          var rowIdx = rowNum - 2; // 0-based index into values array
+          if (rowIdx < inspSheetValues.length) {
+            inspSheetValues[rowIdx] = updatedRowData; // update existing slot
+          } else if (rowIdx === inspSheetValues.length) {
+            inspSheetValues.push(updatedRowData); // append for new rows
+          }
+        }
+      }
+      inspectionRows.push(savedInspection);
+      return;
+    }
+
+    if (type === "movement" || type === "return" || type === "exchange") {
+      var savedMovement = upsertMovementRow_(recordsSheet, row, photoAssetMap);
+      if (savedMovement && savedMovement.__conflict) {
+        conflicts.push(savedMovement);
+      }
+      movementRows.push(savedMovement);
+    }
+  });
+
+  return {
+    inspectionRows: inspectionRows,
+    movementRows: movementRows,
+    hasInspection: inspectionRows.some(function (row) { return row && !row.__conflict; }),
+    hasMovement: movementRows.some(function (row) { return row && !row.__conflict; }),
+    conflicts: conflicts,
+  };
+}
+
+// Runs a targeted post-save sync: syncs return/exchange summary sheets and
+// recalculates inspection+movement totals on the inspection sheet.
+// Called by the "postSaveSync" action so clients can request a lightweight sync
+// without triggering a full bootstrap reload.
+function postSaveSync_(payload) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  try { syncReturnSheets_(ss); } catch (e) {
+    console.error("[postSaveSync_] syncReturnSheets_ failed: " + e.message);
+  }
+  try {
+    syncInspectionMovementTotals_(getInspectionSheet_(ss), getRecordSheet_(ss));
+  } catch (e) {
+    console.error("[postSaveSync_] syncInspectionMovementTotals_ failed: " + e.message);
+  }
+  return { synced: true };
+}
+
+function manualRecalc_() {
+  CacheService.getScriptCache().remove('dashboardSummary');
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const inspectionSheet = getInspectionSheet_(ss);
+  const recordsSheet = getRecordSheet_(ss);
+  syncInspectionMovementTotals_(inspectionSheet, recordsSheet);
+  updateInspectionDashboard_(ss);
+  syncReturnSheets_(ss);
+  autoResizeOperationalSheets_(ss);
+  return { ok: true };
+}
+
+// ── Payload builders ───────────────────────────────────────
+function buildInspectionPayload_(payload, existingRecord) {
+  const photos = Array.isArray(payload["사진들"]) ? payload["사진들"] : [];
+  const uploaded = photos.length
+    ? savePhotosToDrive_(
+        photos,
+        payload["상품명"] || payload["productName"] || "검품",
+        existingRecord ? existingRecord["사진파일ID목록"] : ""
+      )
+    : [];
+  const existingPhotoFileIds = splitPhotoSourceText_((existingRecord && existingRecord["사진파일ID목록"]) || "");
+  const payloadPhotoFileIds = splitPhotoSourceText_(
+    payload["사진파일ID목록"] || payload["photoFileIds"] || ""
+  );
+  const uploadedPhotoFileIds = uploaded.map(function (item) {
+    return item.fileId;
+  });
+  // Collect file IDs from photoTypeFileIdsMap (sent by saveRecordDetail)
+  const photoTypeMap = payload["photoTypeFileIdsMap"] || {};
+  const typeMapFileIds = Object.values(photoTypeMap).reduce(function (acc, ids) {
+    return acc.concat(Array.isArray(ids) ? ids.filter(Boolean) : []);
+  }, []);
+  const replacePhotoFileIdsMode = !!payload["replacePhotoFileIdsMode"];
+  const photoFileIds = replacePhotoFileIdsMode
+    ? splitPhotoSourceText_(payloadPhotoFileIds.join("\n") + "\n" + uploadedPhotoFileIds.join("\n") + "\n" + typeMapFileIds.join("\n"))
+    : mergePhotoLinks_(
+        mergePhotoLinks_(
+          mergePhotoLinks_(existingPhotoFileIds.join("\n"), payloadPhotoFileIds.join("\n"), ""),
+          uploadedPhotoFileIds.join("\n"),
+          ""
+        ),
+        typeMapFileIds.join("\n"),
+        ""
+      ).split(/\n+/).filter(Boolean);
+
+  // ── Per-category photo IDs ──────────────────────────────────────────────────
+  // The new app sends per-category arrays so photo types survive page reload.
+  // Fall back to null so older saves (no category data) leave photo_assets unchanged.
+  var parseCatArr = function (val) {
+    if (Array.isArray(val)) return val.filter(Boolean);
+    var text = String(val || "").trim();
+    return text ? splitPhotoSourceText_(text) : [];
+  };
+  var catInsp   = parseCatArr(payload["inspPhotoIds"]);
+  var catDefect = parseCatArr(payload["defectPhotoIds"]);
+  var catWeight = parseCatArr(payload["weightPhotoIds"]);
+  var catBrix   = parseCatArr(payload["brixPhotoIds"]);
+  var hasCategories = catInsp.length || catDefect.length || catWeight.length || catBrix.length;
+  var photoCategoriesJSON = hasCategories
+    ? JSON.stringify({ insp: catInsp, defect: catDefect, weight: catWeight, brix: catBrix })
+    : "";
+
+  return {
+    "작성일시": formatWrittenAtKst_(payload["작성일시"] || (existingRecord && existingRecord["작성일시"]) || new Date().toISOString()),
+    "작업기준일또는CSV식별값": payload["작업기준일또는CSV식별값"] || "",
+    "상품코드": normalizeCode_(payload["상품코드"] || payload["productCode"] || ""),
+    "상품명": payload["상품명"] || payload["productName"] || "",
+    "협력사명": payload["협력사명"] || payload["partnerName"] || "",
+    "발주수량": parseNumber_(payload["발주수량"] || payload["totalQty"] || payload["전체발주수량"] || 0),
+    "검품수량": parseNumber_(payload["검품수량"] || payload["inspectionQty"] || 0),
+    "회송수량": parseNumber_(payload["회송수량"] || 0),
+    "교환수량": parseNumber_(payload["교환수량"] || 0),
+    "불량사유": payload["불량사유"] || payload["비고"] || payload["memo"] || "",
+    "BRIX최저": payload["BRIX최저"] || payload["brixMin"] || "",
+    "BRIX최고": payload["BRIX최고"] || payload["brixMax"] || "",
+    "BRIX평균": payload["BRIX평균"] || payload["brixAvg"] || "",
+    "사진파일ID목록": photoFileIds.join("\n"),
+    "photoCategoriesJSON": photoCategoriesJSON,  // passed to upsertPhotoAsset_ below
+    "수정일시": new Date().toISOString(),
+    "버전": existingRecord ? (parseNumber_(existingRecord["버전"] || 0) + 1) : 1,
+    "clientId": String(payload["clientId"] || (existingRecord && existingRecord["clientId"]) || "").trim(),
+  };
+}
+
+function buildRecordPayload_(payload, existingRecord) {
+  var now = new Date().toISOString();
+  var version = existingRecord ? getRowVersion_(existingRecord) + 1 : 1;
+  var updatedBy = getEditorLabel_(payload);
+  const movementType = String(payload["movementType"] || "").trim().toUpperCase();
+  const photos = Array.isArray(payload["사진들"]) ? payload["사진들"] : [];
+  const uploaded = photos.length
+    ? savePhotosToDrive_(
+        photos,
+        payload["상품명"] || payload["productName"] || "불량",
+        existingRecord ? existingRecord["사진파일ID목록"] : ""
+      )
+    : [];
+  const existingPhotoFileIds = splitPhotoSourceText_((existingRecord && existingRecord["사진파일ID목록"]) || "");
+  const payloadPhotoFileIds = splitPhotoSourceText_(
+    payload["사진파일ID목록"] || payload["photoFileIds"] || ""
+  );
+  const uploadedPhotoFileIds = uploaded.map(function (item) {
+    return item.fileId;
+  });
+  const replacePhotoFileIdsMode = !!payload["replacePhotoFileIdsMode"];
+  const photoFileIds = replacePhotoFileIdsMode
+    ? splitPhotoSourceText_(payloadPhotoFileIds.join("\n") + "\n" + uploadedPhotoFileIds.join("\n"))
+    : mergePhotoLinks_(
+        mergePhotoLinks_(existingPhotoFileIds.join("\n"), payloadPhotoFileIds.join("\n"), ""),
+        uploadedPhotoFileIds.join("\n"),
+        ""
+      ).split(/\n+/).filter(Boolean);
+
+  const record = {
+    "작성일시": formatWrittenAtKst_(payload["작성일시"] || (existingRecord && existingRecord["작성일시"]) || now),
+    "작업기준일또는CSV식별값": payload["작업기준일또는CSV식별값"] || "",
+    "상품명": payload["상품명"] || payload["productName"] || "",
+    "상품코드": normalizeCode_(payload["상품코드"] || payload["productCode"] || ""),
+    "센터명": payload["센터명"] || payload["centerName"] || "",
+    "협력사명": payload["협력사명"] || payload["partnerName"] || "",
+    "발주수량": parseNumber_(payload["발주수량"] || payload["qty"] || 0),
+    "행사명": payload["행사명"] || payload["eventName"] || "",
+    "행사여부": payload["행사여부"] || payload["eventFlag"] || "",
+    "처리유형": payload["처리유형"] || "",
+    "회송수량": parseNumber_(payload["회송수량"] || 0),
+    "교환수량": parseNumber_(payload["교환수량"] || 0),
+    "비고": payload["비고"] || payload["memo"] || "",
+    "사진파일ID목록": photoFileIds.join("\n"),
+    "사진개수": photoFileIds.length,
+    "총 발주 수량": parseNumber_(payload["전체발주수량"] || payload["totalQty"] || payload["발주수량"] || 0),
+    "수정일시": now,
+    "수정자": updatedBy,
+    "버전": version,
+    "수주수량": parseNumber_(payload["수주수량"] || 0),
+  };
+
+  if (movementType === "RETURN") {
+    record["처리유형"] = "회송";
+    record["회송수량"] = parseNumber_(payload["qty"] || payload["회송수량"] || 0);
+    record["교환수량"] = 0;
+  } else if (movementType === "EXCHANGE") {
+    record["처리유형"] = "교환";
+    record["교환수량"] = parseNumber_(payload["qty"] || payload["교환수량"] || 0);
+    record["회송수량"] = 0;
+  } else if (!record["처리유형"]) {
+    if (record["회송수량"] > 0) {
+      record["처리유형"] = "회송";
+    } else if (record["교환수량"] > 0) {
+      record["처리유형"] = "교환";
+    }
+  }
+
+  return record;
+}
+
+// ── Conflict detection ─────────────────────────────────────
+function hasRowConflict_(payload, existingRecord) {
+  var expectedUpdatedAt = String(payload && (payload.expectedUpdatedAt || payload["expectedUpdatedAt"]) || "").trim();
+  var expectedVersion   = parseNumber_(payload && (payload.expectedVersion || payload["expectedVersion"]) || 0);
+  var payloadClientId   = String((payload && (payload.clientId || payload["clientId"])) || "").trim();
+
+  // ── Legacy-app guard ──────────────────────────────────────────────────────
+  // Old app sends no clientId and no version info.
+  // If the server row was already written by the new app (has clientId), or
+  // has been saved more than once (version > 1), block the overwrite.
+  // New-app retries after versionConflict resolution still carry clientId,
+  // so they are NOT affected by this path.
+  if (!expectedUpdatedAt && !expectedVersion && !payloadClientId) {
+    if (existingRecord) {
+      var existingClientId_ = String(existingRecord["clientId"] || "").trim();
+      var existingVersion_  = parseNumber_(existingRecord["버전"] || 0);
+      if (existingClientId_ || existingVersion_ > 1) {
+        return true; // legacy overwrite blocked
+      }
+    }
+    return false;
+  }
+
+  if (!existingRecord) {
+    return expectedVersion > 0 || !!expectedUpdatedAt;
+  }
+
+  // Same browser session re-saving: bypass version/timestamp gating entirely.
+  // This eliminates false "another user is editing" for sequential edits by the same user.
+  var existingClientId = String(existingRecord["clientId"] || "").trim();
+  if (payloadClientId && existingClientId && payloadClientId === existingClientId) {
+    return false;
+  }
+
+  var currentUpdatedAt = getRowUpdatedAt_(existingRecord);
+  var currentVersion   = getRowVersion_(existingRecord);
+
+  if (expectedUpdatedAt && currentUpdatedAt && expectedUpdatedAt !== currentUpdatedAt) {
+    return true;
+  }
+
+  if (expectedVersion && currentVersion !== expectedVersion) {
+    return true;
+  }
+
+  return false;
+}
+
+function buildConflictResult_(rowType, payload, existingRecord) {
+  var payloadClientId = String((payload && (payload.clientId || payload["clientId"])) || "").trim();
+  var existingClientId = String((existingRecord && existingRecord["clientId"]) || "").trim();
+  // editorConflict   = two distinct identified sessions both have clientIds
+  // legacyConflict   = old-app payload (no clientId) tried to overwrite a new-app row (has clientId)
+  // versionConflict  = stale version, same or unknown session
+  var conflictType = (payloadClientId && existingClientId && payloadClientId !== existingClientId)
+    ? "editorConflict"
+    : (!payloadClientId && existingClientId)
+    ? "legacyConflict"
+    : "versionConflict";
+  return {
+    __conflict: true,
+    type: rowType,
+    conflictType: conflictType,
+    key: payload.key || "",
+    productCode: payload["상품코드"] || payload.productCode || "",
+    partnerName: payload["협력사명"] || payload.partnerName || "",
+    centerName: payload["센터명"] || payload.centerName || "",
+    expectedVersion: parseNumber_(payload.expectedVersion || 0),
+    expectedUpdatedAt: String(payload.expectedUpdatedAt || "").trim(),
+    currentVersion: getRowVersion_(existingRecord),
+    currentUpdatedAt: getRowUpdatedAt_(existingRecord),
+    serverRow: existingRecord || null,
+  };
+}
+
+// ── Totals sync ────────────────────────────────────────────
+function syncInspectionMovementTotals_(inspectionSheet, recordsSheet) {
+  if (!inspectionSheet || inspectionSheet.getLastRow() < 2) {
+    return;
+  }
+
+  const totalsMap = buildMovementTotalsMap_(recordsSheet);
+  const range = inspectionSheet.getRange(2, 1, inspectionSheet.getLastRow() - 1, inspectionSheet.getLastColumn());
+  const values = range.getValues();
+
+  for (var i = 0; i < values.length; i += 1) {
+    const jobKey = String(values[i][1] || "").trim();
+    const productCode = normalizeCode_(values[i][2] || "");
+    const partnerName = String(values[i][4] || "").trim();
+    const key = makeEntityKey_(jobKey, productCode, partnerName);
+    const totals = totalsMap[key] || { returnQty: 0, exchangeQty: 0 };
+    values[i][7] = totals.returnQty;
+    values[i][8] = totals.exchangeQty;
+  }
+
+  range.setValues(values);
+  purgeEmptyInspectionRows_(inspectionSheet);
+}
+
+// ── Photo & misc saves ─────────────────────────────────────
 function uploadPhotos_(payload) {
   var itemKey = String(payload.itemKey || "").trim();
   var productName = String(payload.productName || payload.baseName || "상품").trim();
@@ -3667,529 +2660,6 @@ function savePhotoMeta_(payload) {
   };
 }
 
-function getOrCreatePhotoFolder_() {
-  var props = PropertiesService.getScriptProperties();
-  var folderId = props.getProperty("PHOTO_FOLDER_ID");
-  if (folderId) {
-    try {
-      DriveApp.getFolderById(folderId);
-      return folderId;
-    } catch (_) {
-      // Folder was deleted or inaccessible — recreate below.
-    }
-  }
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var folderName = "GS25검품_사진_" + ss.getId().slice(0, 8);
-  var newFolder = DriveApp.createFolder(folderName);
-  folderId = newFolder.getId();
-  props.setProperty("PHOTO_FOLDER_ID", folderId);
-  return folderId;
-}
-
-function savePhotoToDrive_(photo, baseName, index, preferredFileName) {
-  const folderId = getOrCreatePhotoFolder_();
-
-  const folder = DriveApp.getFolderById(folderId);
-  const safeBaseName = sanitizeFileName_(baseName || "상품");
-  const extension = getExtensionFromMimeType_(photo.mimeType || "") || getExtensionFromFileName_(photo.fileName || "") || "jpg";
-  const fileName =
-    sanitizeFileName_(preferredFileName || "") ||
-    (safeBaseName + (index > 0 ? "_" + (index + 1) : "") + "." + extension);
-  const blob = Utilities.newBlob(
-    Utilities.base64Decode(photo.imageBase64),
-    photo.mimeType || "application/octet-stream",
-    fileName
-  );
-
-  const file = folder.createFile(blob);
-  file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-
-  const fileId = file.getId();
-  const viewUrl = "https://drive.google.com/uc?export=view&id=" + fileId;
-  const previewUrl = "https://drive.google.com/thumbnail?id=" + fileId + "&sz=w1200";
-
-  return {
-    fileId: fileId,
-    viewUrl: viewUrl,
-    previewUrl: previewUrl,
-    driveUrl: file.getUrl(),
-    fileName: file.getName(),
-  };
-}
-
-function buildPreferredPhotoFileName_(photo, baseName, index) {
-  var rawName = sanitizeFileName_(String((photo && photo.fileName) || "").trim());
-  if (rawName) {
-    return rawName;
-  }
-
-  var safeBaseName = sanitizeFileName_(baseName || "상품");
-  var extension =
-    getExtensionFromMimeType_((photo && photo.mimeType) || "") ||
-    getExtensionFromFileName_((photo && photo.fileName) || "") ||
-    "jpg";
-
-  return safeBaseName + (index > 0 ? "_" + (index + 1) : "") + "." + extension;
-}
-
-function getExistingPhotoNameMap_(fileIdsText) {
-  var map = {};
-
-  splitPhotoSourceText_(fileIdsText).forEach(function (item) {
-    var driveId = extractGoogleDriveId_(item);
-    if (!driveId) return;
-
-    try {
-      var fileName = String(DriveApp.getFileById(driveId).getName() || "").trim();
-      if (!fileName) return;
-      map[fileName.toLowerCase()] = true;
-    } catch (_) {
-      // Ignore unreadable existing files.
-    }
-  });
-
-  return map;
-}
-
-function getOrCreateSheet_(ss, name) {
-  var sheet = ss.getSheetByName(name);
-  if (!sheet) {
-    try {
-      sheet = ss.insertSheet(name);
-    } catch (err) {
-      var message = String((err && err.message) || err || "");
-      if (message.indexOf("already exists") >= 0 || message.indexOf("이미 있습니다") >= 0) {
-        sheet = ss.getSheetByName(name);
-      } else {
-        throw err;
-      }
-    }
-  }
-  if (!sheet) {
-    throw new Error("시트를 찾을 수 없습니다: " + name);
-  }
-  return sheet;
-}
-
-function ensureHeaderRow_(sheet, headers) {
-  if (!sheet || !headers || !headers.length) return;
-
-  const width = headers.length;
-  const existing = sheet.getRange(1, 1, 1, width).getValues()[0].map(function (value) {
-    return String(value || "").trim();
-  });
-
-  var changed = false;
-  for (var i = 0; i < width; i += 1) {
-    if (existing[i] !== headers[i]) {
-      changed = true;
-      break;
-    }
-  }
-
-  if (sheet.getLastRow() === 0 || changed) {
-    sheet.getRange(1, 1, 1, width).setValues([headers]);
-  }
-}
-
-function createPhotoZip_(payload) {
-  var mode = String(payload.mode || "movement").trim();
-  // sugar and weight photos live in inspection rows (photo type columns), not movement records
-  var usesInspectionSheet = mode === "inspection" || mode === "sugar" || mode === "weight";
-  var records = usesInspectionSheet ? loadInspectionRows_() : loadRecords_();
-  var maxZipBytes = 20 * 1024 * 1024;
-  var baseFileName = zipFileName_(mode);
-
-  // ── Phase 1: Pre-compute reference maps ONCE (avoids per-file sheet read) ──
-  var refMaps = readOperationalReferenceMaps_(SpreadsheetApp.getActiveSpreadsheet());
-
-  // ── Phase 2: Collect photo entries without fetching any blobs ──
-  var photoEntries = []; // { record, source, index }
-  records.forEach(function (record) {
-    var photos = getPhotoSourcesFromRecord_(record);
-    if (!photos.length) return;
-
-    if (mode === "inspection") {
-      var hasInspPh =
-        !!String(record["사진링크"] || "").trim() ||
-        !!String(record["사진링크목록"] || "").trim() ||
-        !!String(record["사진파일ID목록"] || "").trim();
-      if (!hasInspPh) return;
-    } else if (mode === "sugar") {
-      var assetMap1 = {};
-      try { assetMap1 = JSON.parse(record["photoAssetMap"] || "{}"); } catch (_) {}
-      if (!assetMap1["sugar"] || !assetMap1["sugar"].length) return;
-      photos = assetMap1["sugar"];
-    } else if (mode === "weight") {
-      var assetMap2 = {};
-      try { assetMap2 = JSON.parse(record["photoAssetMap"] || "{}"); } catch (_) {}
-      if (!assetMap2["weight"] || !assetMap2["weight"].length) return;
-      photos = assetMap2["weight"];
-    } else {
-      var isMov = isMovementRecord_(record);
-      if (mode === "movement" && !isMov) return;
-      if (mode !== "movement" && isMov) return;
-    }
-
-    photos.forEach(function (source, index) {
-      photoEntries.push({ record: record, source: source, index: index });
-    });
-  });
-
-  if (!photoEntries.length) {
-    return {
-      fileName: baseFileName, mimeType: "application/zip",
-      zipBase64: "", downloadUrl: "", fileId: "",
-      addedCount: 0, skippedCount: 0, zipFiles: [],
-    };
-  }
-
-  // ── Phase 3: Collect unique Drive file IDs and batch-fetch blobs in parallel ──
-  // Using UrlFetchApp.fetchAll() + Drive API v3 instead of N sequential DriveApp calls.
-  var blobCache = {}; // fileId → Blob
-  var driveIds = [];
-  var driveIdSet = {};
-  photoEntries.forEach(function (entry) {
-    var text = extractImageFormulaUrl_(entry.source);
-    var id = extractGoogleDriveId_(text);
-    if (id && !driveIdSet[id]) {
-      driveIdSet[id] = true;
-      driveIds.push(id);
-    }
-  });
-
-  if (driveIds.length > 0) {
-    var token = ScriptApp.getOAuthToken();
-    var BATCH_SIZE = 10; // fetchAll concurrency cap per call
-    for (var bi = 0; bi < driveIds.length; bi += BATCH_SIZE) {
-      var chunk = driveIds.slice(bi, bi + BATCH_SIZE);
-      var requests = chunk.map(function (id) {
-        return {
-          url: "https://www.googleapis.com/drive/v3/files/" + id + "?alt=media",
-          headers: { "Authorization": "Bearer " + token },
-          muteHttpExceptions: true,
-        };
-      });
-      var responses = UrlFetchApp.fetchAll(requests);
-      responses.forEach(function (resp, ri) {
-        var code = resp.getResponseCode();
-        if (code >= 200 && code < 300) {
-          blobCache[chunk[ri]] = resp.getBlob();
-        } else {
-          console.warn("[createPhotoZip_] Drive fetch failed id=" + chunk[ri] + " status=" + code);
-        }
-      });
-    }
-  }
-
-  // ── Phase 4: Process entries with cached blobs and build ZIP parts ──
-  var zipParts = [];
-  var currentPart = [];
-  var currentBytes = 0;
-  var usedNames = {};
-  var skippedCount = 0;
-
-  photoEntries.forEach(function (entry) {
-    try {
-      var blob = getPhotoBlob_(entry.source, blobCache);
-      if (!blob) { skippedCount += 1; return; }
-
-      var finalName = buildPhotoZipFileName_(entry.record, entry.index + 1, blob, entry.source, refMaps);
-      var dedupeKey = finalName.toLowerCase();
-      var dupSuffix = 2;
-      while (usedNames[dedupeKey]) {
-        finalName = appendDuplicateSuffixToFileName_(finalName, dupSuffix);
-        dedupeKey = finalName.toLowerCase();
-        dupSuffix += 1;
-      }
-      usedNames[dedupeKey] = true;
-
-      var namedBlob = blob.setName(finalName);
-      var blobBytes = namedBlob.getBytes().length;
-      if (currentPart.length > 0 && currentBytes + blobBytes > maxZipBytes) {
-        zipParts.push(currentPart);
-        currentPart = [];
-        currentBytes = 0;
-      }
-      currentPart.push(namedBlob);
-      currentBytes += blobBytes;
-    } catch (err) {
-      skippedCount += 1;
-      console.error("[createPhotoZip_] " + err.message);
-    }
-  });
-
-  if (currentPart.length > 0) zipParts.push(currentPart);
-
-  if (!zipParts.length) {
-    return {
-      fileName: baseFileName, mimeType: "application/zip",
-      zipBase64: "", downloadUrl: "", fileId: "",
-      addedCount: 0, skippedCount: skippedCount, zipFiles: [],
-    };
-  }
-
-  // ── Phase 5: Build and save ZIP archives ──
-  var savedFiles = zipParts.map(function (partBlobs, index) {
-    var partName = zipParts.length > 1 ? appendZipPartSuffix_(baseFileName, index + 1) : baseFileName;
-    var zipBlob = Utilities.zip(partBlobs, partName).setName(partName);
-    var saved = saveZipToDrive_(zipBlob, partName);
-    return {
-      fileName: partName,
-      mimeType: zipBlob.getContentType() || "application/zip",
-      downloadUrl: saved.downloadUrl,
-      fileId: saved.fileId,
-      driveUrl: saved.driveUrl,
-      addedCount: partBlobs.length,
-    };
-  });
-
-  var primaryFile = savedFiles[0];
-  return {
-    fileName: primaryFile.fileName,
-    mimeType: primaryFile.mimeType,
-    zipBase64: "",
-    downloadUrl: primaryFile.downloadUrl,
-    fileId: primaryFile.fileId,
-    driveUrl: primaryFile.driveUrl,
-    addedCount: savedFiles.reduce(function (sum, f) { return sum + f.addedCount; }, 0),
-    skippedCount: skippedCount,
-    zipFiles: savedFiles,
-  };
-}
-
-// Returns the Blob for a photo source using the pre-built blob cache.
-// Falls back to a live URL fetch for non-Drive HTTP sources (rare).
-function getPhotoBlob_(source, blobCache) {
-  var text = extractImageFormulaUrl_(source);
-  var driveId = extractGoogleDriveId_(text);
-  if (driveId) return blobCache[driveId] || null;
-  if (/^https?:\/\//i.test(text)) {
-    var resp = UrlFetchApp.fetch(text, { muteHttpExceptions: true, followRedirects: true });
-    if (resp.getResponseCode() >= 200 && resp.getResponseCode() < 300) return resp.getBlob();
-  }
-  return null;
-}
-
-// Build the output ZIP file name for a given mode.
-function zipFileName_(mode) {
-  var dateStr = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyyMMdd");
-  if (mode === "movement")   return "불량_"  + dateStr + ".zip";
-  if (mode === "inspection") return "검품_"  + dateStr + ".zip";
-  if (mode === "sugar")      return "당도_"  + dateStr + ".zip";
-  if (mode === "weight")     return "중량_"  + dateStr + ".zip";
-  return "사진_" + dateStr + ".zip";
-}
-
-// maps is now pre-computed by the caller (avoids a sheet read per photo file).
-function buildPhotoZipFileName_(record, sequence, blob, source, maps) {
-  if (!maps) maps = readOperationalReferenceMaps_(SpreadsheetApp.getActiveSpreadsheet());
-  var typeLabel = getPhotoZipTypeLabel_(record, source);
-  var rawPartner = String(record["협력사명"] || record["파트너사"] || "협력사").trim();
-  var partnerKey = normalizeOperationalLookupText_(rawPartner);
-  var partnerName = sanitizeFileName_((maps.partnerToStandard && maps.partnerToStandard[partnerKey]) || rawPartner);
-  var productName = sanitizeFileName_(record["상품명"] || record["상품코드"] || "상품");
-  var extension = getBlobExtension_(blob, source);
-  // 중량사진 omits productName/partnerName per naming convention
-  if (typeLabel === "중량") {
-    return typeLabel + "_" + sequence + "." + extension;
-  }
-  return typeLabel + "_" + productName + "_" + partnerName + "_" + sequence + "." + extension;
-}
-
-function getPhotoZipTypeLabel_(record, source) {
-  var sourceText = String(source || "").toLowerCase();
-  if (sourceText.indexOf("sugar") >= 0) return "당도";
-  if (sourceText.indexOf("weight") >= 0) return "중량";
-  if (sourceText.indexOf("exchange") >= 0) return "불량";
-  if (sourceText.indexOf("return") >= 0) return "불량";
-  var type = String(getRecordType_(record) || "").trim();
-  if (type === "회송" || type === "교환") return "불량";
-  if (type) return sanitizeFileName_(type);
-  return "검품";
-}
-
-function appendZipPartSuffix_(fileName, partNumber) {
-  var text = String(fileName || "photos.zip");
-  var match = text.match(/^(.*?)(\.[a-zA-Z0-9]+)?$/);
-  var base = match ? match[1] : text;
-  var extension = match && match[2] ? match[2] : ".zip";
-  var padded = partNumber < 10 ? "0" + partNumber : String(partNumber);
-  return base + "_" + padded + extension;
-}
-
-function appendDuplicateSuffixToFileName_(fileName, suffix) {
-  var text = String(fileName || "image.jpg");
-  var match = text.match(/^(.*?)(\.[a-zA-Z0-9]+)?$/);
-  var base = match ? match[1] : text;
-  var extension = match && match[2] ? match[2] : "";
-  return base + "_" + suffix + extension;
-}
-
-function getPhotoSourcesFromRecord_(record) {
-  var rawItems = []
-    .concat([record["사진URL"], record["사진링크"]])
-    .concat(splitPhotoSourceText_(record["사진링크목록"]))
-    .concat(splitPhotoSourceText_(record["사진파일ID목록"]));
-
-  var seen = {};
-  var sources = [];
-
-  rawItems.forEach(function (item) {
-    var normalized = extractImageFormulaUrl_(item);
-    var text = String(normalized || "").trim();
-    if (!text || seen[text]) return;
-    seen[text] = true;
-    sources.push(text);
-  });
-
-  return sources;
-}
-
-function splitPhotoSourceText_(value) {
-  return String(value || "")
-    .split(/\r?\n|[,;]+/)
-    .map(function (item) {
-      return String(item || "").trim();
-    })
-    .filter(Boolean);
-}
-
-function extractImageFormulaUrl_(value) {
-  var text = String(value || "").trim();
-  var match = text.match(/^=IMAGE\("(.+)"\)$/i);
-  return match ? match[1] : text;
-}
-
-function extractGoogleDriveId_(value) {
-  var text = String(value || "").trim();
-  if (!text) return "";
-
-  var directId = text.match(/^[a-zA-Z0-9_-]{20,}$/);
-  if (directId) return directId[0];
-
-  var fileMatch = text.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
-  if (fileMatch) return fileMatch[1];
-
-  var openMatch = text.match(/[?&]id=([a-zA-Z0-9_-]+)/);
-  if (openMatch) return openMatch[1];
-
-  var ucMatch = text.match(/\/d\/([a-zA-Z0-9_-]+)/);
-  if (ucMatch) return ucMatch[1];
-
-  return "";
-}
-
-function getPhotoBlobFromSource_(source) {
-  var asset = getPhotoAssetFromSource_(source);
-  return asset ? asset.blob : null;
-}
-
-function getPhotoAssetFromSource_(source) {
-  var text = extractImageFormulaUrl_(source);
-  var driveId = extractGoogleDriveId_(text);
-
-  if (driveId) {
-    var driveFile = DriveApp.getFileById(driveId);
-    return {
-      blob: driveFile.getBlob(),
-      fileName: driveFile.getName(),
-    };
-  }
-
-  if (/^https?:\/\//i.test(text)) {
-    var response = UrlFetchApp.fetch(text, {
-      muteHttpExceptions: true,
-      followRedirects: true,
-    });
-
-    if (response.getResponseCode() >= 200 && response.getResponseCode() < 300) {
-      return {
-        blob: response.getBlob(),
-        fileName: getFileNameFromUrl_(text),
-      };
-    }
-  }
-
-  return null;
-}
-
-function getFileNameFromUrl_(value) {
-  var text = String(value || "").trim();
-  var match = text.match(/\/([^\/?#]+)(?:[?#].*)?$/);
-  return match ? match[1] : "";
-}
-
-function getBlobExtension_(blob, source) {
-  var contentType = String((blob && blob.getContentType && blob.getContentType()) || "").toLowerCase();
-  if (contentType.indexOf("png") >= 0) return "png";
-  if (contentType.indexOf("gif") >= 0) return "gif";
-  if (contentType.indexOf("webp") >= 0) return "webp";
-  if (contentType.indexOf("bmp") >= 0) return "bmp";
-  if (contentType.indexOf("heic") >= 0) return "heic";
-
-  var text = String(source || "").toLowerCase();
-  if (text.indexOf(".png") >= 0) return "png";
-  if (text.indexOf(".gif") >= 0) return "gif";
-  if (text.indexOf(".webp") >= 0) return "webp";
-  return "jpg";
-}
-
-function getExtensionFromMimeType_(mimeType) {
-  var text = String(mimeType || "").toLowerCase();
-  if (text.indexOf("png") >= 0) return "png";
-  if (text.indexOf("gif") >= 0) return "gif";
-  if (text.indexOf("webp") >= 0) return "webp";
-  if (text.indexOf("bmp") >= 0) return "bmp";
-  if (text.indexOf("heic") >= 0) return "heic";
-  if (text.indexOf("jpeg") >= 0 || text.indexOf("jpg") >= 0) return "jpg";
-  return "";
-}
-
-function getExtensionFromFileName_(fileName) {
-  var text = String(fileName || "");
-  var match = text.match(/\.([a-zA-Z0-9]+)$/);
-  return match ? match[1].toLowerCase() : "";
-}
-
-function sanitizeFileName_(name) {
-  var text = String(name || "상품")
-    .replace(/[\\\/:*?"<>|]/g, "")
-    .replace(/\s+/g, "_")
-    .trim();
-
-  return text || "상품";
-}
-
-function saveZipToDrive_(zipBlob, fileName) {
-  var folderId =
-    PropertiesService.getScriptProperties().getProperty("ZIP_FOLDER_ID") ||
-    PropertiesService.getScriptProperties().getProperty("PHOTO_FOLDER_ID");
-  var folder = folderId ? DriveApp.getFolderById(folderId) : DriveApp.getRootFolder();
-  var file = folder.createFile(zipBlob.setName(fileName));
-  file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-
-  return {
-    fileId: file.getId(),
-    downloadUrl: "https://drive.google.com/uc?export=download&id=" + file.getId(),
-    driveUrl: file.getUrl(),
-  };
-}
-
-function getRecordType_(record) {
-  var type = String(record["처리유형"] || "").trim();
-  if (type) return type;
-  if (parseNumber_(record["회송수량"]) > 0) return "회송";
-  if (parseNumber_(record["교환수량"]) > 0) return "교환";
-  return "기타";
-}
-
-function isMovementRecord_(record) {
-  var type = String(getRecordType_(record) || "").trim().toUpperCase();
-  if (["회송", "교환", "RETURN", "EXCHANGE"].indexOf(type) >= 0) return true;
-  return parseNumber_(record["회송수량"]) > 0 || parseNumber_(record["교환수량"]) > 0;
-}
-
 function resetCurrentJobInputData_(payload) {
   var jobKey = String(payload.jobKey || "").trim();
   var password = String(payload.password || "").trim();
@@ -4221,408 +2691,6 @@ function resetCurrentJobInputData_(payload) {
     records: loadRecords_(),
     inspectionRows: loadInspectionRows_(),
   };
-}
-
-function trashPhotosForJob_(recordsSheet, jobKey) {
-  if (!recordsSheet || recordsSheet.getLastRow() < 2) return 0;
-
-  var values = recordsSheet.getDataRange().getValues();
-  var headers = values[0].map(function (header) {
-    return String(header || "").trim();
-  });
-  var seenIds = {};
-  var deletedCount = 0;
-
-  for (var r = 1; r < values.length; r += 1) {
-    var row = {};
-    for (var c = 0; c < headers.length; c += 1) {
-      if (!headers[c]) continue;
-      row[headers[c]] = values[r][c];
-    }
-
-    if (String(row["작업기준일또는CSV식별값"] || "").trim() !== jobKey) continue;
-
-    getPhotoSourcesFromRecord_(row).forEach(function (source) {
-      var driveId = extractGoogleDriveId_(source);
-      if (!driveId || seenIds[driveId]) return;
-      seenIds[driveId] = true;
-
-      try {
-        DriveApp.getFileById(driveId).setTrashed(true);
-        deletedCount += 1;
-      } catch (_) {
-        // Ignore photo deletion failures and continue.
-      }
-    });
-  }
-
-  return deletedCount;
-}
-
-function trashPhotosInSheet_(sheet) {
-  if (!sheet || sheet.getLastRow() < 2) return 0;
-
-  var values = sheet.getDataRange().getValues();
-  var headers = values[0].map(function (header) {
-    return String(header || "").trim();
-  });
-  var seenIds = {};
-  var deletedCount = 0;
-
-  for (var r = 1; r < values.length; r += 1) {
-    var row = {};
-    for (var c = 0; c < headers.length; c += 1) {
-      if (!headers[c]) continue;
-      row[headers[c]] = values[r][c];
-    }
-
-    getPhotoSourcesFromRecord_(row).forEach(function (source) {
-      var driveId = extractGoogleDriveId_(source);
-      if (!driveId || seenIds[driveId]) return;
-      seenIds[driveId] = true;
-
-      try {
-        DriveApp.getFileById(driveId).setTrashed(true);
-        deletedCount += 1;
-      } catch (_) {
-        // Ignore deletion failures during bulk cleanup.
-      }
-    });
-  }
-
-  return deletedCount;
-}
-
-function deleteRecordRowsByJobKey_(recordsSheet, jobKey) {
-  if (!recordsSheet || recordsSheet.getLastRow() < 2) return 0;
-
-  var rowNumbers = [];
-  var values = recordsSheet
-    .getRange(2, 1, recordsSheet.getLastRow() - 1, recordsSheet.getLastColumn())
-    .getValues();
-
-  for (var i = 0; i < values.length; i += 1) {
-    if (String(values[i][1] || "").trim() === jobKey) {
-      rowNumbers.push(i + 2);
-    }
-  }
-
-  rowNumbers.sort(function (a, b) {
-    return b - a;
-  });
-
-  rowNumbers.forEach(function (rowNumber) {
-    recordsSheet.deleteRow(rowNumber);
-  });
-
-  return rowNumbers.length;
-}
-
-function resetInspectionRowsByJobKey_(inspectionSheet, jobKey) {
-  if (!inspectionSheet || inspectionSheet.getLastRow() < 2) return 0;
-
-  var range = inspectionSheet.getRange(
-    2,
-    1,
-    inspectionSheet.getLastRow() - 1,
-    inspectionSheet.getLastColumn()
-  );
-  var values = range.getValues();
-  var resetCount = 0;
-
-  for (var i = 0; i < values.length; i += 1) {
-    if (String(values[i][1] || "").trim() !== jobKey) continue;
-    values[i][7] = 0;
-    values[i][8] = 0;
-    values[i][9] = 0;
-    resetCount += 1;
-  }
-
-  range.setValues(values);
-  return resetCount;
-}
-
-function deleteInspectionRowsByJobKey_(inspectionSheet, jobKey) {
-  if (!inspectionSheet || inspectionSheet.getLastRow() < 2) return 0;
-
-  var rowNumbers = [];
-  var values = inspectionSheet
-    .getRange(2, 1, inspectionSheet.getLastRow() - 1, inspectionSheet.getLastColumn())
-    .getValues();
-
-  for (var i = 0; i < values.length; i += 1) {
-    if (String(values[i][1] || "").trim() === jobKey) {
-      rowNumbers.push(i + 2);
-    }
-  }
-
-  rowNumbers.sort(function (a, b) {
-    return b - a;
-  });
-
-  rowNumbers.forEach(function (rowNumber) {
-    inspectionSheet.deleteRow(rowNumber);
-  });
-
-  return rowNumbers.length;
-}
-
-function getRowFieldValue_(row, candidates) {
-  for (var i = 0; i < candidates.length; i += 1) {
-    var key = candidates[i];
-    if (row[key] !== undefined && row[key] !== null && row[key] !== "") {
-      return row[key];
-    }
-  }
-  return "";
-}
-
-function getRowSkuKey_(row) {
-  var code = normalizeCode_(getRowFieldValue_(row, ["상품코드", "상품 코드", "코드", "바코드"]));
-  var partner = normalizeText_(
-    getRowFieldValue_(row, ["협력사명", "협력사", "거래처명(구매조건명)", "거래처명"])
-  );
-  if (code || partner) return makeSkuKey_(code, partner);
-  return String(getRowFieldValue_(row, ["상품명", "상품 명", "품목명", "품명"]) || "").trim();
-}
-
-function buildDashboardSourceRows_(latestRows, reservationRows) {
-  var merged = Array.isArray(latestRows) ? latestRows.slice() : [];
-
-  (Array.isArray(reservationRows) ? reservationRows : []).forEach(function (row, index) {
-    var productCode = normalizeCode_(
-      getRowFieldValue_(row, ["상품코드", "상품 코드", "코드", "바코드"])
-    );
-    var partnerName = normalizeText_(
-      getRowFieldValue_(row, ["협력사명", "협력사", "거래처명"])
-    );
-    var productName = String(
-      getRowFieldValue_(row, ["상품명", "상품 명", "품목명", "품명"])
-    ).trim();
-    var centerName = String(getRowFieldValue_(row, ["센터", "센터명"])).trim();
-    var qty = parseNumber_(getRowFieldValue_(row, ["발주수량", "입고수량", "수량"]));
-    var cost = parseNumber_(getRowFieldValue_(row, ["상품원가", "입고원가", "원가"]));
-
-    if (!productCode && !partnerName && !productName) {
-      return;
-    }
-
-    merged.push({
-      __id: "reservation-dashboard-" + index,
-      __reservationRow: true,
-      __productCode: productCode,
-      __productName: productName,
-      __partner: partnerName,
-      __center: centerName,
-      __qty: qty,
-      __incomingCost: cost,
-      상품코드: productCode,
-      상품명: productName,
-      협력사명: partnerName,
-      센터명: centerName,
-      발주수량: qty,
-      상품원가: cost,
-      입고원가: cost,
-    });
-  });
-
-  return merged;
-}
-
-function updateInspectionDashboard_(ss) {
-  var inspectionSheet = getInspectionSheet_(ss);
-  var summarySheet = getInspectionSummarySheet_(ss);
-  if (!inspectionSheet || !summarySheet) return;
-
-  var latestJob = loadLatestJob_();
-  var currentJobKey = latestJob && latestJob.job_key ? String(latestJob.job_key).trim() : "";
-  var latestRows = latestJob && Array.isArray(latestJob.rows) ? latestJob.rows : [];
-  var reservationRows = readReservationRows_();
-  var sourceRows = buildDashboardSourceRows_(latestRows, reservationRows);
-  var inspectionRows = loadInspectionRows_().filter(function (row) {
-    return String(row["작업기준일또는CSV식별값"] || "").trim() === currentJobKey;
-  });
-  var recordRows = loadRecords_().filter(function (row) {
-    return String(row["작업기준일또는CSV식별값"] || "").trim() === currentJobKey;
-  });
-  var eventRows = readObjectsSheet_(SHEET_NAMES.event);
-  var exclusionIdx = buildExclusionIndex_();
-  var excludedCodes = exclusionIdx.excludedCodes;
-  var excludedPairs = exclusionIdx.excludedPairs;
-  var excludedPartners = exclusionIdx.excludedPartners;
-
-  var totalInboundAmount = 0;
-  var totalInboundQty = 0;
-  var targetInboundAmount = 0;
-  var targetInboundQty = 0;
-  var totalSkuMap = {};
-  var targetSkuMap = {};
-  var inspectedSkuMap = {};
-  var eventSkuMap = {};
-  var returnQtyTotal = 0;
-  var exchangeQtyTotal = 0;
-  var eventCodeMap = {};
-
-  eventRows.forEach(function (row) {
-    var code = normalizeCode_(row["상품코드"] || row["상품 코드"] || row["코드"] || row["바코드"]);
-    if (code) {
-      eventCodeMap[code] = true;
-    }
-  });
-
-  sourceRows.forEach(function (row) {
-    var code = normalizeCode_(row.__productCode || getRowFieldValue_(row, ["상품코드", "상품 코드", "코드", "바코드"]));
-    var partner = normalizeText_(row.__partner || getRowFieldValue_(row, ["거래처명(구매조건명)", "거래처명", "협력사", "협력사명"]) || "");
-    var qty = parseNumber_(row.__qty || getRowFieldValue_(row, ["총 발주수량", "발주수량", "입고수량", "수량"]));
-    var cost = parseNumber_(row.__incomingCost || getRowFieldValue_(row, ["상품원가", "입고원가", "원가"]));
-    var skuKey = getRowSkuKey_(row);
-    var excluded = isExcludedByRules_(code, partner, excludedCodes, excludedPairs, excludedPartners);
-
-    totalInboundQty += qty;
-    totalInboundAmount += qty * cost;
-
-    if (skuKey) {
-      totalSkuMap[skuKey] = true;
-    }
-
-    if (eventCodeMap[code] && skuKey) {
-      eventSkuMap[skuKey || code] = true;
-    }
-
-    if (excluded) return;
-
-    targetInboundQty += qty;
-    targetInboundAmount += qty * cost;
-
-    if (skuKey) {
-      targetSkuMap[skuKey] = true;
-    }
-  });
-
-  var inspectionQtyTotal = 0;
-  var inspectionPhotoCount = 0;
-  inspectionRows.forEach(function (row) {
-    var code = normalizeCode_(row["상품코드"]);
-    var partner = normalizeText_(row["협력사명"] || "");
-    var excluded = isExcludedByRules_(code, partner, excludedCodes, excludedPairs, excludedPartners);
-    if (excluded) return;
-
-    var inspectionQty = parseNumber_(row["검품수량"] || 0);
-    var returnQty = parseNumber_(row["회송수량"] || 0);
-    var exchangeQty = parseNumber_(row["교환수량"] || 0);
-    inspectionQtyTotal += inspectionQty;
-    returnQtyTotal += returnQty;
-    exchangeQtyTotal += exchangeQty;
-
-    var skuKey = makeSkuKey_(row["상품코드"], row["협력사명"]) || String(row["상품명"] || "").trim();
-    if (inspectionQty > 0 && skuKey) {
-      inspectedSkuMap[skuKey] = true;
-    }
-
-    if (getPhotoSourcesFromRecord_(row).length > 0) {
-      inspectionPhotoCount += 1;
-    }
-  });
-
-  var photoRecordCount = 0;
-  recordRows.forEach(function (row) {
-    if (getPhotoSourcesFromRecord_(row).length > 0) {
-      photoRecordCount += 1;
-    }
-  });
-
-  var targetSkuCount = Object.keys(targetSkuMap).length;
-  var totalSkuCount = Object.keys(totalSkuMap).length;
-  var inspectedSkuCount = Object.keys(inspectedSkuMap).length;
-  var eventSkuCount = Object.keys(eventSkuMap).length;
-  var values = [
-    ["총 입고금액", "총 입고수량", "검품 수량", "검품률", "실검품률", "최근 갱신"],
-    [
-      totalInboundAmount,
-      totalInboundQty,
-      inspectionQtyTotal,
-      totalInboundQty > 0 ? inspectionQtyTotal / totalInboundQty : 0,
-      targetInboundQty > 0 ? inspectionQtyTotal / targetInboundQty : 0,
-      Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm"),
-    ],
-    ["검품 입고금액", "입고 SKU", "검품 SKU", "SKU 커버리지", "검품입고 SKU", "실제 SKU 커버리지"],
-    [
-      targetInboundAmount,
-      totalSkuCount,
-      inspectedSkuCount,
-      totalSkuCount > 0 ? inspectedSkuCount / totalSkuCount : 0,
-      targetSkuCount,
-      targetSkuCount > 0 ? inspectedSkuCount / targetSkuCount : 0,
-    ],
-    ["행사 SKU", "검품입고 SKU", "검품 입고수량", "회송 수량", "교환 수량", "사진 기록 건수"],
-    [
-      eventSkuCount,
-      targetSkuCount,
-      targetInboundQty,
-      returnQtyTotal,
-      exchangeQtyTotal,
-      photoRecordCount + inspectionPhotoCount,
-    ],
-  ];
-
-  inspectionSheet.getRange("L2:Q7").clearContent().clearFormat();
-
-  summarySheet.getRange("A1:F6").clearContent().clearFormat();
-  summarySheet.getRange("A1:F6").setValues(values);
-  summarySheet.getRange("A1:F1").setBackground("#c6efce").setFontWeight("bold");
-  summarySheet.getRange("A3:F3").setBackground("#fff2cc").setFontWeight("bold");
-  summarySheet.getRange("A5:F5").setBackground("#d9ead3").setFontWeight("bold");
-  summarySheet.getRange("A2:F2").setNumberFormats([["#,##0", "#,##0", "#,##0", "0.0%", "0.0%", "@"]]);
-  summarySheet.getRange("A4:F4").setNumberFormats([["#,##0", "#,##0", "#,##0", "0.0%", "#,##0", "0.0%"]]);
-  summarySheet.getRange("A6:F6").setNumberFormats([["#,##0", "#,##0", "#,##0", "#,##0", "#,##0", "#,##0"]]);
-  summarySheet.autoResizeColumns(1, 6);
-  [1, 2, 3, 4, 5, 6].forEach(function (col) {
-    if (summarySheet.getColumnWidth(col) < 110) {
-      summarySheet.setColumnWidth(col, 110);
-    }
-  });
-}
-
-function productImageHeaders_() {
-  return [
-    "맵키",
-    "상품코드",
-    "협력사명",
-    "상품명",
-    "이미지URL",
-    "파일ID",
-    "파일명",
-    "생성일시",
-    "수정일시",
-  ];
-}
-
-function getProductImageSheet_(ss) {
-  var sheet = getOrCreateSheet_(ss, SHEET_NAMES.productImages);
-  ensureHeaderRow_(sheet, productImageHeaders_());
-  return sheet;
-}
-
-function loadProductImageMappings_() {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sheet = getProductImageSheet_(ss);
-  if (!sheet || sheet.getLastRow() < 2) return [];
-
-  var values = sheet.getDataRange().getValues();
-  var headers = values[0].map(function (header) {
-    return String(header || "").trim();
-  });
-
-  return values.slice(1).map(function (row, index) {
-    var item = {};
-    headers.forEach(function (header, headerIndex) {
-      item[header] = row[headerIndex];
-    });
-    item.__rowNumber = index + 2;
-    return item;
-  }).filter(function (row) {
-    return String(row["맵키"] || "").trim();
-  });
 }
 
 function saveProductImageMapping_(payload) {
@@ -4684,37 +2752,771 @@ function saveProductImageMapping_(payload) {
   return rowObject;
 }
 
-function saveProductImageAssetToDrive_(photo, baseName, index) {
-  var folderId =
-    PropertiesService.getScriptProperties().getProperty("PRODUCT_IMAGE_FOLDER_ID") ||
-    PropertiesService.getScriptProperties().getProperty("PHOTO_FOLDER_ID");
+// ============================================================
+// SECTION 5: INSPECTION ROW HELPERS
+// ============================================================
 
-  if (!folderId) {
-    throw new Error("이미지 업로드 실패: PRODUCT_IMAGE_FOLDER_ID 또는 PHOTO_FOLDER_ID가 설정되지 않았습니다.");
-  }
-
-  var folder = DriveApp.getFolderById(folderId);
-  var safeBaseName = sanitizeFileName_(baseName || "product_image");
-  var extension =
-    getExtensionFromMimeType_(photo.mimeType || "") ||
-    getExtensionFromFileName_(photo.fileName || "") ||
-    "jpg";
-  var blob = Utilities.newBlob(
-    Utilities.base64Decode(photo.imageBase64),
-    photo.mimeType || "application/octet-stream",
-    safeBaseName + (index > 0 ? "_" + (index + 1) : "") + "." + extension
-  );
-
-  var file = folder.createFile(blob);
-  file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-
-  return {
-    fileId: file.getId(),
-    fileName: file.getName(),
-    viewUrl: "https://drive.google.com/uc?export=view&id=" + file.getId(),
-  };
+// ── Sheet accessor / headers ───────────────────────────────
+function getInspectionSheet_(ss) {
+  const sheet = getOrCreateSheet_(ss, SHEET_NAMES.inspection);
+  migrateInspectionSheetIfNeeded_(sheet);
+  ensureHeaderRow_(sheet, inspectionHeaders_());
+  return sheet;
 }
 
+function getInspectionSummarySheet_(ss) {
+  return getOrCreateSheet_(ss, SHEET_NAMES.summary);
+}
+
+function makeInspectionPhotoAssetKey_(jobKey, productCode, partnerName) {
+  return [
+    "inspection",
+    String(jobKey || "").trim(),
+    normalizeCode_(productCode || ""),
+    normalizeText_(partnerName || ""),
+  ].join("||");
+}
+
+function inspectionHeaders_() {
+  return [
+    "작성일시",
+    "작업기준일또는CSV식별값",
+    "상품코드",
+    "상품명",
+    "협력사명",
+    "발주수량",
+    "검품수량",
+    "회송수량",
+    "교환수량",
+    "불량사유",
+    "BRIX최저",
+    "BRIX최고",
+    "BRIX평균",
+    "수정일시",
+    "버전",
+    "clientId",
+  ];
+}
+
+function migrateInspectionSheetIfNeeded_(sheet) {
+  if (!sheet || sheet.getLastRow() === 0) {
+    return;
+  }
+
+  var next = inspectionHeaders_(); // 15 cols
+  var currentHeaders = sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), 19)).getValues()[0];
+  var current = currentHeaders.map(function (item) {
+    return String(item || "").trim();
+  });
+
+  // Already 15-col (current) format: 불량사유 at [9], BRIX평균 at [12], 수정일시 at [13], 버전 at [14]
+  var isCurrentFormat = current[9] === "불량사유" && current[12] === "BRIX평균" && current[13] === "수정일시" && current[14] === "버전";
+  // Already in the current format — just extend headers for any new columns (e.g. clientId).
+  // Existing data rows are untouched; new rows get the new column on next write.
+  if (isCurrentFormat) {
+    ensureHeaderRow_(sheet, next);
+    return;
+  }
+
+  if (sheet.getLastRow() < 2) {
+    ensureHeaderRow_(sheet, next);
+    return;
+  }
+
+  // 13-col → 15-col upgrade: add the two new header columns; leave data rows untouched
+  // (existing rows get blank 수정일시/버전 which is safe — treated as version 0)
+  var is13col = current[9] === "불량사유" && current[12] === "BRIX평균" && current[13] !== "수정일시";
+  if (is13col) {
+    ensureHeaderRow_(sheet, next);
+    return;
+  }
+
+  // Detect legacy formats: 19-col (비고 at [10], 사진개수 at [15]) or old 14-col (사진개수 at [10])
+  var is19col = current[10] === "비고" && current[15] === "사진개수";
+  var isOld14col = current[10] === "사진개수";
+
+  var dataRange = sheet.getRange(2, 1, sheet.getLastRow() - 1, Math.max(sheet.getLastColumn(), 19));
+  var rows = dataRange.getValues();
+  var migrated = rows.map(function (row) {
+    if (is19col) {
+      // 19-col → 15-col: skip 전체발주수량[5]; 비고[10]→불량사유[9]; drop 중량메모[14], 사진개수[15], 수정일시[16], 수정자[17], 버전[18]
+      return [
+        row[0] || "",   // 작성일시
+        row[1] || "",   // 작업기준일또는CSV식별값
+        row[2] || "",   // 상품코드
+        row[3] || "",   // 상품명
+        row[4] || "",   // 협력사명
+        row[6] || 0,    // 발주수량 (was [6], skip 전체발주수량[5])
+        row[7] || 0,    // 검품수량
+        row[8] || 0,    // 회송수량
+        row[9] || 0,    // 교환수량
+        row[10] || "",  // 불량사유 (was 비고)
+        row[11] || "",  // BRIX최저
+        row[12] || "",  // BRIX최고
+        row[13] || "",  // BRIX평균
+        "",             // 수정일시 (new)
+        0,              // 버전 (new)
+      ];
+    } else if (isOld14col) {
+      // Old 14-col → 15-col: 사진개수 was at [10], skip it
+      return [
+        row[0] || "",   // 작성일시
+        row[1] || "",   // 작업기준일또는CSV식별값
+        row[2] || "",   // 상품코드
+        row[3] || "",   // 상품명
+        row[4] || "",   // 협력사명
+        row[6] || row[5] || 0, // 발주수량
+        row[7] || 0,    // 검품수량
+        row[8] || 0,    // 회송수량
+        row[9] || 0,    // 교환수량
+        "",             // 불량사유 (new)
+        "",             // BRIX최저 (new)
+        "",             // BRIX최고 (new)
+        "",             // BRIX평균 (new)
+        "",             // 수정일시 (new)
+        0,              // 버전 (new)
+      ];
+    } else {
+      // Unknown/partial — best-effort preserve what we can
+      return [
+        row[0] || "", row[1] || "", row[2] || "", row[3] || "", row[4] || "",
+        row[5] || 0, row[6] || 0, row[7] || 0, row[8] || 0,
+        "", "", "", "",
+        "", 0,
+      ];
+    }
+  });
+
+  ensureHeaderRow_(sheet, next);
+  if (migrated.length) {
+    sheet.getRange(2, 1, migrated.length, next.length).setValues(migrated);
+  }
+  if (sheet.getLastColumn() > next.length) {
+    sheet.getRange(1, next.length + 1, sheet.getMaxRows(), sheet.getLastColumn() - next.length).clearContent();
+  }
+}
+
+// ── Upsert / write ─────────────────────────────────────────
+function upsertInspectionRow_(sheet, payload, photoAssetMap, preloadedValues) {
+  const rawPayload = payload || {};
+  const targetRow = findInspectionRow_(
+    sheet,
+    rawPayload["작업기준일또는CSV식별값"] || rawPayload["jobKey"] || "",
+    rawPayload["상품코드"] || rawPayload["productCode"] || "",
+    rawPayload["협력사명"] || rawPayload["partnerName"] || "",
+    preloadedValues
+  );
+  const existingRecord = targetRow > 0
+    ? (preloadedValues !== undefined
+        ? readInspectionRowByValues_(preloadedValues, targetRow - 2, photoAssetMap)
+        : readInspectionRow_(sheet, targetRow, photoAssetMap))
+    : null;
+
+  // ── Diagnostic: log every write attempt with conflict detection ──
+  var conflictFlag = detectVersionDifference_(rawPayload, existingRecord);
+  logWriteConflict_("saveInspection", rawPayload, existingRecord, conflictFlag);
+
+  if (hasRowConflict_(rawPayload, existingRecord)) {
+    return buildConflictResult_("inspection", rawPayload, existingRecord);
+  }
+  const row = buildInspectionPayload_(rawPayload, existingRecord);
+  console.log("[upsertInspectionRow_] built row=" + JSON.stringify({
+    jobKey: row["작업기준일또는CSV식별값"],
+    productCode: row["상품코드"],
+    productName: row["상품명"],
+    partnerName: row["협력사명"],
+    orderedQty: row["발주수량"],
+    inspectionQty: row["검품수량"],
+    photoLinks: row["사진링크목록"],
+    memo: row["불량사유"]
+  }));
+  if (shouldDeleteInspectionRow_(row)) {
+    if (targetRow > 0) {
+      deletePhotoAsset_(makeInspectionPhotoAssetKey_(row["작업기준일또는CSV식별값"], row["상품코드"], row["협력사명"]));
+      sheet.deleteRow(targetRow);
+      row.__rowNumber = 0;
+    }
+    return row;
+  }
+  writeInspectionRow_(sheet, targetRow, row);
+  upsertPhotoAsset_(makeInspectionPhotoAssetKey_(row["작업기준일또는CSV식별값"], row["상품코드"], row["협력사명"]), row["사진파일ID목록"], photoAssetMap, row["photoCategoriesJSON"] || "");
+  console.log("[upsertInspectionRow_] written row=" + JSON.stringify({
+    rowNumber: targetRow > 0 ? targetRow : sheet.getLastRow(),
+    productCode: row["상품코드"],
+    partnerName: row["협력사명"],
+    inspectionQty: row["검품수량"],
+    photoLinks: row["사진링크목록"],
+    memo: row["불량사유"]
+  }));
+  row.__rowNumber = targetRow > 0 ? targetRow : sheet.getLastRow();
+  return row;
+}
+
+function writeInspectionRow_(sheet, targetRow, record) {
+  const values = [[
+    record["작성일시"],
+    record["작업기준일또는CSV식별값"],
+    record["상품코드"],
+    record["상품명"],
+    record["협력사명"],
+    record["발주수량"],
+    record["검품수량"],
+    record["회송수량"],
+    record["교환수량"],
+    record["불량사유"],
+    record["BRIX최저"],
+    record["BRIX최고"],
+    record["BRIX평균"],
+    record["수정일시"] || "",
+    record["버전"] || 0,
+    record["clientId"] || "",
+  ]];
+
+  if (targetRow > 0) {
+    sheet.getRange(targetRow, 1, 1, values[0].length).setValues(values);
+  } else {
+    sheet.appendRow(values[0]);
+  }
+}
+
+// ── Find / read ────────────────────────────────────────────
+function findInspectionRow_(sheet, jobKey, productCode, partnerName, preloadedValues) {
+  if (!sheet || sheet.getLastRow() < 2) return 0;
+
+  const values = preloadedValues !== undefined
+    ? preloadedValues
+    : sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues();
+
+  for (var i = values.length - 1; i >= 0; i -= 1) {
+    const rowJobKey = String(values[i][1] || "").trim();
+    const rowCode = normalizeCode_(values[i][2] || "");
+    const rowPartner = String(values[i][4] || "").trim();
+
+    if (
+      rowJobKey === String(jobKey || "").trim() &&
+      rowCode === normalizeCode_(productCode || "") &&
+      rowPartner === String(partnerName || "").trim()
+    ) {
+      return i + 2;
+    }
+  }
+
+  return 0;
+}
+
+function readInspectionRow_(sheet, rowNumber, photoAssetMap) {
+  const values = sheet.getRange(rowNumber, 1, 1, sheet.getLastColumn()).getValues()[0];
+  const headers = inspectionHeaders_();
+  const row = {};
+
+  for (var i = 0; i < headers.length; i += 1) {
+    row[headers[i]] = values[i];
+  }
+
+  var map = photoAssetMap !== undefined
+    ? photoAssetMap
+    : loadPhotoAssetMap_(SpreadsheetApp.getActiveSpreadsheet());
+  return applyPhotoAssetFieldsToRow_(row, map, "inspection");
+}
+
+// Read an inspection row from an already-loaded values array (row index is 0-based: targetRow - 2).
+// Avoids a second sheet.getRange() call when the caller has already read the sheet.
+function readInspectionRowByValues_(preloadedValues, rowIndex, photoAssetMap) {
+  const headers  = inspectionHeaders_();
+  const rowData  = preloadedValues[rowIndex] || [];
+  const row      = {};
+
+  for (var i = 0; i < headers.length; i += 1) {
+    row[headers[i]] = rowData[i] !== undefined ? rowData[i] : "";
+  }
+
+  var map = photoAssetMap !== undefined
+    ? photoAssetMap
+    : loadPhotoAssetMap_(SpreadsheetApp.getActiveSpreadsheet());
+  return applyPhotoAssetFieldsToRow_(row, map, "inspection");
+}
+
+// ── Purge / delete ─────────────────────────────────────────
+function purgeEmptyInspectionRows_(inspectionSheet) {
+  if (!inspectionSheet || inspectionSheet.getLastRow() < 2) return 0;
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const photoAssetMap = loadPhotoAssetMap_(ss);
+
+  const values = inspectionSheet
+    .getRange(2, 1, inspectionSheet.getLastRow() - 1, inspectionSheet.getLastColumn())
+    .getValues();
+  const rowsToDelete = [];
+
+  for (var i = 0; i < values.length; i += 1) {
+    const jobKey = String(values[i][1] || "").trim();
+    const productCode = normalizeCode_(values[i][2] || "");
+    const partnerName = String(values[i][4] || "").trim();
+    const assetKey = makeInspectionPhotoAssetKey_(jobKey, productCode, partnerName);
+    const photoEntry = photoAssetMap[assetKey];
+    const photoFileIds = photoEntry ? String(photoEntry.fileIdsText || "").trim() : "";
+    const row = {
+      "검품수량": values[i][6],
+      "회송수량": values[i][7],
+      "교환수량": values[i][8],
+      "사진파일ID목록": photoFileIds,
+    };
+    if (shouldDeleteInspectionRow_(row)) {
+      rowsToDelete.push(i + 2);
+    }
+  }
+
+  rowsToDelete.sort(function (a, b) {
+    return b - a;
+  });
+  rowsToDelete.forEach(function (rowNumber) {
+    inspectionSheet.deleteRow(rowNumber);
+  });
+
+  return rowsToDelete.length;
+}
+
+function shouldDeleteInspectionRow_(row) {
+  if (!row) return false;
+  var inspectionQty = parseNumber_(row["검품수량"] || 0);
+  var returnQty = parseNumber_(row["회송수량"] || 0);
+  var exchangeQty = parseNumber_(row["교환수량"] || 0);
+  var hasPhoto = !!String(row["사진링크"] || row["사진링크목록"] || row["사진파일ID목록"] || "").trim();
+  return inspectionQty <= 0 && returnQty <= 0 && exchangeQty <= 0 && !hasPhoto;
+}
+
+function resetInspectionRowsByJobKey_(inspectionSheet, jobKey) {
+  if (!inspectionSheet || inspectionSheet.getLastRow() < 2) return 0;
+
+  var range = inspectionSheet.getRange(
+    2,
+    1,
+    inspectionSheet.getLastRow() - 1,
+    inspectionSheet.getLastColumn()
+  );
+  var values = range.getValues();
+  var resetCount = 0;
+
+  for (var i = 0; i < values.length; i += 1) {
+    if (String(values[i][1] || "").trim() !== jobKey) continue;
+    values[i][7] = 0;
+    values[i][8] = 0;
+    values[i][9] = 0;
+    resetCount += 1;
+  }
+
+  range.setValues(values);
+  return resetCount;
+}
+
+function deleteInspectionRowsByJobKey_(inspectionSheet, jobKey) {
+  if (!inspectionSheet || inspectionSheet.getLastRow() < 2) return 0;
+
+  var rowNumbers = [];
+  var values = inspectionSheet
+    .getRange(2, 1, inspectionSheet.getLastRow() - 1, inspectionSheet.getLastColumn())
+    .getValues();
+
+  for (var i = 0; i < values.length; i += 1) {
+    if (String(values[i][1] || "").trim() === jobKey) {
+      rowNumbers.push(i + 2);
+    }
+  }
+
+  rowNumbers.sort(function (a, b) {
+    return b - a;
+  });
+
+  rowNumbers.forEach(function (rowNumber) {
+    inspectionSheet.deleteRow(rowNumber);
+  });
+
+  return rowNumbers.length;
+}
+
+// ── Photo field hydration ──────────────────────────────────
+function applyPhotoAssetFieldsToRow_(row, assetMap, kind) {
+  var key = makePhotoAssetKeyFromRecord_(row, kind);
+  var asset = assetMap[key];
+  var fileIds = asset ? splitPhotoSourceText_(asset.fileIdsText) : [];
+  var photoLinks = fileIds
+    .map(function (fileId) {
+      return buildDriveViewUrl_(fileId);
+    })
+    .filter(Boolean);
+
+  row["사진파일ID목록"] = fileIds.join("\n");
+  row["사진링크목록"] = photoLinks.join("\n");
+  row["사진링크"] = photoLinks[0] || "";
+  row["사진URL"] = row["사진링크"];
+  row["사진개수"] = asset ? parseNumber_(asset.photoCount || fileIds.length) : parseNumber_(row["사진개수"] || 0);
+
+  // Set per-category photo ID fields when category data is available.
+  // These are consumed by InspectionPage.jsx for type-specific preview hydration on reload.
+  if (asset && asset.categories) {
+    row["inspPhotoIds"]   = (asset.categories.insp   || []).join("\n");
+    row["defectPhotoIds"] = (asset.categories.defect || []).join("\n");
+    row["weightPhotoIds"] = (asset.categories.weight || []).join("\n");
+    row["brixPhotoIds"]   = (asset.categories.brix   || []).join("\n");
+  }
+
+  return row;
+}
+
+// ============================================================
+// SECTION 6: MOVEMENT ROW HELPERS
+// ============================================================
+
+// ── Sheet accessor / headers ───────────────────────────────
+function getRecordSheet_(ss) {
+  const sheet = getOrCreateSheet_(ss, SHEET_NAMES.records);
+  migrateRecordSheetIfNeeded_(sheet);
+  ensureHeaderRow_(sheet, recordHeaders_());
+  return sheet;
+}
+
+function makeMovementPhotoAssetKey_(jobKey, productCode, partnerName, centerName, typeName) {
+  return [
+    "movement",
+    String(jobKey || "").trim(),
+    normalizeCode_(productCode || ""),
+    normalizeText_(partnerName || ""),
+    normalizeText_(centerName || ""),
+    normalizeText_(typeName || ""),
+  ].join("||");
+}
+
+function recordHeaders_() {
+  return [
+    "작성일시",
+    "작업기준일또는CSV식별값",
+    "상품명",
+    "상품코드",
+    "센터명",
+    "협력사명",
+    "발주수량",
+    "행사명",
+    "행사여부",
+    "처리유형",
+    "회송수량",
+    "교환수량",
+    "비고",
+    "사진개수",
+    "총 발주 수량",
+    "수정일시",
+    "수정자",
+    "버전",
+    "수주수량",
+  ];
+}
+
+function migrateRecordSheetIfNeeded_(sheet) {
+  if (!sheet || sheet.getLastRow() === 0) {
+    return;
+  }
+
+  const currentHeaders = sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), recordHeaders_().length)).getValues()[0];
+  const current = currentHeaders.map(function (item) {
+    return String(item || "").trim();
+  });
+  const next = recordHeaders_();
+
+  const isNewFormat =
+    current[9] === "처리유형" &&
+    current[10] === "회송수량" &&
+    current[11] === "교환수량" &&
+    current[12] === "비고" &&
+    current[13] === "사진개수" &&
+    current[14] === "총 발주 수량";
+
+  if (isNewFormat) {
+    // Already in the new format — just ensure the header row includes any new columns
+    // (e.g. 수주수량 added as column 19). Existing data rows are left untouched.
+    ensureHeaderRow_(sheet, next);
+    return;
+  }
+
+  if (sheet.getLastRow() < 2) {
+    ensureHeaderRow_(sheet, next);
+    return;
+  }
+
+  const dataRange = sheet.getRange(2, 1, sheet.getLastRow() - 1, Math.max(sheet.getLastColumn(), 17));
+  const rows = dataRange.getValues();
+  const migrated = rows.map(function (row) {
+    const typeValue = String(row[9] || "").trim() || (String(row[10] || "").trim() === "EXCHANGE" ? "교환" : String(row[10] || "").trim() === "RETURN" ? "회송" : "");
+    const returnQty = parseNumber_(row[11] || 0);
+    const exchangeQty = parseNumber_(row[12] || 0);
+    const photoLink = String(row[14] || "").trim();
+
+    return [
+      row[0] || "",
+      row[1] || "",
+      row[2] || "",
+      row[3] || "",
+      row[4] || "",
+      row[5] || "",
+      row[6] || "",
+      row[8] || "",
+      row[7] || "",
+      typeValue,
+      returnQty,
+      exchangeQty,
+      row[13] || "",
+      [photoLink, row[15] || "", row[14] || ""].filter(Boolean).length,
+      row[16] || row[15] || 0,
+    ];
+  });
+
+  ensureHeaderRow_(sheet, next);
+  if (migrated.length) {
+    sheet.getRange(2, 1, migrated.length, next.length).setValues(migrated);
+  }
+  if (sheet.getLastColumn() > next.length) {
+    sheet.getRange(1, next.length + 1, sheet.getMaxRows(), sheet.getLastColumn() - next.length).clearContent();
+  }
+}
+
+// ── Upsert / write ─────────────────────────────────────────
+function upsertMovementRow_(sheet, payload, photoAssetMap) {
+  const rawPayload = payload || {};
+  const targetRow = findMovementRow_(
+    sheet,
+    rawPayload["작업기준일또는CSV식별값"] || rawPayload["jobKey"] || "",
+    rawPayload["상품코드"] || rawPayload["productCode"] || "",
+    rawPayload["협력사명"] || rawPayload["partnerName"] || "",
+    rawPayload["센터명"] || rawPayload["centerName"] || "",
+    rawPayload["처리유형"] || (String(rawPayload["movementType"] || "").trim().toUpperCase() === "RETURN" ? "회송" : String(rawPayload["movementType"] || "").trim().toUpperCase() === "EXCHANGE" ? "교환" : "")
+  );
+  const existingRecord = targetRow > 0 ? readMovementRow_(sheet, targetRow) : null;
+
+  // ── Diagnostic: log every movement write attempt with conflict detection ──
+  var conflictFlag = detectVersionDifference_(rawPayload, existingRecord);
+  logWriteConflict_("saveMovement", rawPayload, existingRecord, conflictFlag);
+
+  if (hasRowConflict_(rawPayload, existingRecord)) {
+    return buildConflictResult_("movement", rawPayload, existingRecord);
+  }
+  const row = buildRecordPayload_(rawPayload, existingRecord);
+  console.log("[upsertMovementRow_] built row(before merge)=" + JSON.stringify({
+    jobKey: row["작업기준일또는CSV식별값"],
+    productCode: row["상품코드"],
+    partnerName: row["협력사명"],
+    centerName: row["센터명"],
+    typeName: row["처리유형"],
+    returnQty: row["회송수량"],
+    exchangeQty: row["교환수량"],
+    orderedQty: row["발주수량"],
+    totalOrderedQty: row["총 발주 수량"]
+  }));
+
+  // Only skip/delete for brand-new rows with no data.
+  // For existing rows, merge first then check — so we never delete accumulated data.
+  if (targetRow === 0 && shouldDeleteMovementRow_(row)) {
+    return row;
+  }
+
+  if (targetRow > 0) {
+    const existing = readMovementRow_(sheet, targetRow);
+    if (rawPayload.replaceQtyMode) {
+      row["회송수량"] = parseNumber_(row["회송수량"]);
+      row["교환수량"] = parseNumber_(row["교환수량"]);
+      row["비고"] = String(rawPayload["비고"] || rawPayload["memo"] || row["비고"] || "").trim();
+    } else {
+      row["회송수량"] = parseNumber_(existing["회송수량"]) + parseNumber_(row["회송수량"]);
+      row["교환수량"] = parseNumber_(existing["교환수량"]) + parseNumber_(row["교환수량"]);
+      row["비고"] = row["비고"] || existing["비고"]; // last non-empty value wins; no concatenation
+    }
+    row["발주수량"] = parseNumber_(existing["발주수량"] || row["발주수량"]);
+    row["총 발주 수량"] = parseNumber_(existing["총 발주 수량"] || row["총 발주 수량"]);
+    console.log("[upsertMovementRow_] merged row(before write)=" + JSON.stringify({
+      rowNumber: targetRow,
+      typeName: row["처리유형"],
+      returnQty: row["회송수량"],
+      exchangeQty: row["교환수량"],
+      totalOrderedQty: row["총 발주 수량"]
+    }));
+
+    // After merge, delete only if merged result is completely empty.
+    if (shouldDeleteMovementRow_(row)) {
+      deletePhotoAsset_(makeMovementPhotoAssetKey_(row["작업기준일또는CSV식별값"], row["상품코드"], row["협력사명"], row["센터명"], row["처리유형"]));
+      sheet.deleteRow(targetRow);
+      row.__rowNumber = 0;
+      return row;
+    }
+
+    writeRecordRow_(sheet, targetRow, row);
+    upsertPhotoAsset_(makeMovementPhotoAssetKey_(row["작업기준일또는CSV식별값"], row["상품코드"], row["협력사명"], row["센터명"], row["처리유형"]), row["사진파일ID목록"], photoAssetMap);
+    row.__rowNumber = targetRow;
+    return row;
+  }
+
+  console.log("[upsertMovementRow_] new row(before write)=" + JSON.stringify({
+    typeName: row["처리유형"],
+    returnQty: row["회송수량"],
+    exchangeQty: row["교환수량"],
+    totalOrderedQty: row["총 발주 수량"]
+  }));
+  writeRecordRow_(sheet, 0, row);
+  upsertPhotoAsset_(makeMovementPhotoAssetKey_(row["작업기준일또는CSV식별값"], row["상품코드"], row["협력사명"], row["센터명"], row["처리유형"]), row["사진파일ID목록"], photoAssetMap);
+  row.__rowNumber = sheet.getLastRow();
+  return row;
+}
+
+function writeRecordRow_(sheet, targetRow, record) {
+  const values = [[
+    record["작성일시"],
+    record["작업기준일또는CSV식별값"],
+    record["상품명"],
+    record["상품코드"],
+    record["센터명"],
+    record["협력사명"],
+    record["발주수량"],
+    record["행사명"],
+    record["행사여부"],
+    record["처리유형"],
+    record["회송수량"],
+    record["교환수량"],
+    record["비고"],
+    record["사진개수"],
+    record["총 발주 수량"],
+    record["수정일시"],
+    record["수정자"],
+    record["버전"],
+    record["수주수량"] || 0,
+  ]];
+
+  if (targetRow > 0) {
+    sheet.getRange(targetRow, 1, 1, values[0].length).setValues(values);
+  } else {
+    sheet.appendRow(values[0]);
+  }
+}
+
+// ── Find / read ────────────────────────────────────────────
+function findMovementRow_(sheet, jobKey, productCode, partnerName, centerName, typeName) {
+  if (!sheet || sheet.getLastRow() < 2) return 0;
+
+  const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues();
+  const normalizedJobKey = String(jobKey || "").trim();
+  const normalizedCode = normalizeCode_(productCode || "");
+  const normalizedCenter = String(centerName || "").trim();
+  const normalizedPartner = String(partnerName || "").trim();
+  const normalizedType = String(typeName || "").trim();
+  var fallbackRow = 0;
+
+  for (var i = values.length - 1; i >= 0; i -= 1) {
+    const rowJobKey = String(values[i][1] || "").trim();
+    const rowCode = normalizeCode_(values[i][3] || "");
+    const rowCenter = String(values[i][4] || "").trim();
+    const rowPartner = String(values[i][5] || "").trim();
+    const rowType = String(values[i][9] || "").trim();
+
+    if (
+      rowJobKey === normalizedJobKey &&
+      rowCode === normalizedCode &&
+      rowCenter === normalizedCenter &&
+      rowPartner === normalizedPartner &&
+      rowType === normalizedType
+    ) {
+      return i + 2;
+    }
+
+    if (
+      !fallbackRow &&
+      rowCode === normalizedCode &&
+      rowCenter === normalizedCenter &&
+      rowPartner === normalizedPartner &&
+      rowType === normalizedType
+    ) {
+      fallbackRow = i + 2;
+    }
+  }
+
+  return fallbackRow;
+}
+
+function readMovementRow_(sheet, rowNumber) {
+  const values = sheet.getRange(rowNumber, 1, 1, sheet.getLastColumn()).getValues()[0];
+  const headers = recordHeaders_();
+  const row = {};
+
+  for (var i = 0; i < headers.length; i += 1) {
+    row[headers[i]] = values[i];
+  }
+
+  return row;
+}
+
+// ── Totals / delete ────────────────────────────────────────
+function buildMovementTotalsMap_(recordsSheet) {
+  const totalsMap = {};
+  if (!recordsSheet || recordsSheet.getLastRow() < 2) {
+    return totalsMap;
+  }
+
+  const values = recordsSheet.getDataRange().getValues();
+  const headers = values[0].map(function (header) {
+    return String(header || "").trim();
+  });
+
+  for (var r = 1; r < values.length; r += 1) {
+    const row = {};
+    for (var c = 0; c < headers.length; c += 1) {
+      const header = headers[c];
+      if (!header) continue;
+      row[header] = values[r][c];
+    }
+
+    const key = makeEntityKey_(row["작업기준일또는CSV식별값"], row["상품코드"], row["협력사명"]);
+    if (!totalsMap[key]) {
+      totalsMap[key] = { returnQty: 0, exchangeQty: 0 };
+    }
+
+    totalsMap[key].returnQty += parseNumber_(row["회송수량"] || 0);
+    totalsMap[key].exchangeQty += parseNumber_(row["교환수량"] || 0);
+  }
+
+  return totalsMap;
+}
+
+function shouldDeleteMovementRow_(row) {
+  if (!row) return false;
+  var returnQty = parseNumber_(row["회송수량"] || 0);
+  var exchangeQty = parseNumber_(row["교환수량"] || 0);
+  var memo = String(row["비고"] || "").trim();
+  var hasPhoto =
+    parseNumber_(row["사진개수"] || 0) > 0 ||
+    !!String(row["사진링크"] || row["사진링크목록"] || row["사진파일ID목록"] || "").trim();
+  return returnQty <= 0 && exchangeQty <= 0 && !memo && !hasPhoto;
+}
+
+function deleteRecordRowsByJobKey_(recordsSheet, jobKey) {
+  if (!recordsSheet || recordsSheet.getLastRow() < 2) return 0;
+
+  var rowNumbers = [];
+  var values = recordsSheet
+    .getRange(2, 1, recordsSheet.getLastRow() - 1, recordsSheet.getLastColumn())
+    .getValues();
+
+  for (var i = 0; i < values.length; i += 1) {
+    if (String(values[i][1] || "").trim() === jobKey) {
+      rowNumbers.push(i + 2);
+    }
+  }
+
+  rowNumbers.sort(function (a, b) {
+    return b - a;
+  });
+
+  rowNumbers.forEach(function (rowNumber) {
+    recordsSheet.deleteRow(rowNumber);
+  });
+
+  return rowNumbers.length;
+}
+
+// ── Return sheet sync ──────────────────────────────────────
 function syncReturnSheets_(ss) {
   var centerSheet = getOrCreateSheet_(ss, SHEET_NAMES.returnCenter);
   var summarySheet = getOrCreateSheet_(ss, SHEET_NAMES.returnSummary);
@@ -4968,6 +3770,451 @@ function sortRecordSheetForCurrentJob_(ss, currentJobKey, productMetaMap) {
   range.setValues(values);
 }
 
+// ============================================================
+// SECTION 7: PHOTO ASSET HELPERS
+// ============================================================
+
+// ── Photo asset sheet ──────────────────────────────────────
+function photoAssetHeaders_() {
+  return [
+    "키",
+    "사진파일ID목록",
+    "사진개수",
+    "수정일시",
+    "photoCategoriesJSON",  // per-category photo IDs — added for type-specific hydration
+  ];
+}
+
+function getPhotoAssetSheet_(ss) {
+  var sheet = getOrCreateSheet_(ss, SHEET_NAMES.photoAssets);
+  ensureHeaderRow_(sheet, photoAssetHeaders_());
+  if (!sheet.isSheetHidden()) {
+    sheet.hideSheet();
+  }
+  return sheet;
+}
+
+function makePhotoAssetKeyFromRecord_(record, kind) {
+  if (kind === "inspection") {
+    return makeInspectionPhotoAssetKey_(
+      record["작업기준일또는CSV식별값"],
+      record["상품코드"],
+      record["협력사명"]
+    );
+  }
+
+  return makeMovementPhotoAssetKey_(
+    record["작업기준일또는CSV식별값"],
+    record["상품코드"],
+    record["협력사명"],
+    record["센터명"],
+    record["처리유형"]
+  );
+}
+
+function upsertPhotoAsset_(assetKey, fileIdsText, preloadedMap, categoriesJSON) {
+  var key = String(assetKey || "").trim();
+  if (!key) return;
+
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var normalizedFileIds = splitPhotoSourceText_(fileIdsText).join("\n");
+  if (!normalizedFileIds) {
+    deletePhotoAsset_(key);
+    return;
+  }
+
+  var sheet = getPhotoAssetSheet_(ss);
+  var map = preloadedMap !== undefined ? preloadedMap : loadPhotoAssetMap_(ss);
+  var photoCount = splitPhotoSourceText_(normalizedFileIds).length;
+  var rowValues = [[key, normalizedFileIds, photoCount, new Date().toISOString(), categoriesJSON || ""]];
+  var existing = map[key];
+
+  if (existing && existing.rowNumber) {
+    sheet.getRange(existing.rowNumber, 1, 1, rowValues[0].length).setValues(rowValues);
+  } else {
+    sheet.appendRow(rowValues[0]);
+  }
+}
+
+function deletePhotoAsset_(assetKey) {
+  var key = String(assetKey || "").trim();
+  if (!key) return;
+
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var map = loadPhotoAssetMap_(ss);
+  var existing = map[key];
+  if (!existing || !existing.rowNumber) return;
+
+  getPhotoAssetSheet_(ss).deleteRow(existing.rowNumber);
+}
+
+function buildDriveViewUrl_(fileId) {
+  var id = extractGoogleDriveId_(fileId);
+  return id ? "https://drive.google.com/uc?export=view&id=" + id : "";
+}
+
+// ── Drive upload ───────────────────────────────────────────
+function savePhotosToDrive_(photos, baseName, existingFileIdsText) {
+  const list = Array.isArray(photos) ? photos : [];
+  const saved = [];
+  const existingNames = getExistingPhotoNameMap_(existingFileIdsText);
+  const incomingNames = {};
+
+  list.forEach(function (photo, index) {
+    if (photo && photo.imageBase64) {
+      var preferredFileName = buildPreferredPhotoFileName_(photo, baseName, saved.length);
+      var dedupeKey = String(preferredFileName || "").trim().toLowerCase();
+      if (!dedupeKey || existingNames[dedupeKey] || incomingNames[dedupeKey]) {
+        return;
+      }
+
+      incomingNames[dedupeKey] = true;
+      saved.push(savePhotoToDrive_(photo, baseName, saved.length, preferredFileName));
+    }
+  });
+
+  return saved;
+}
+
+function getOrCreatePhotoFolder_() {
+  var props = PropertiesService.getScriptProperties();
+  var folderId = props.getProperty("PHOTO_FOLDER_ID");
+  if (folderId) {
+    try {
+      DriveApp.getFolderById(folderId);
+      return folderId;
+    } catch (_) {
+      // Folder was deleted or inaccessible — recreate below.
+    }
+  }
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var folderName = "GS25검품_사진_" + ss.getId().slice(0, 8);
+  var newFolder = DriveApp.createFolder(folderName);
+  folderId = newFolder.getId();
+  props.setProperty("PHOTO_FOLDER_ID", folderId);
+  return folderId;
+}
+
+function savePhotoToDrive_(photo, baseName, index, preferredFileName) {
+  const folderId = getOrCreatePhotoFolder_();
+
+  const folder = DriveApp.getFolderById(folderId);
+  const safeBaseName = sanitizeFileName_(baseName || "상품");
+  const extension = getExtensionFromMimeType_(photo.mimeType || "") || getExtensionFromFileName_(photo.fileName || "") || "jpg";
+  const fileName =
+    sanitizeFileName_(preferredFileName || "") ||
+    (safeBaseName + (index > 0 ? "_" + (index + 1) : "") + "." + extension);
+  const blob = Utilities.newBlob(
+    Utilities.base64Decode(photo.imageBase64),
+    photo.mimeType || "application/octet-stream",
+    fileName
+  );
+
+  const file = folder.createFile(blob);
+  file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+
+  const fileId = file.getId();
+  const viewUrl = "https://drive.google.com/uc?export=view&id=" + fileId;
+  const previewUrl = "https://drive.google.com/thumbnail?id=" + fileId + "&sz=w1200";
+
+  return {
+    fileId: fileId,
+    viewUrl: viewUrl,
+    previewUrl: previewUrl,
+    driveUrl: file.getUrl(),
+    fileName: file.getName(),
+  };
+}
+
+function buildPreferredPhotoFileName_(photo, baseName, index) {
+  var rawName = sanitizeFileName_(String((photo && photo.fileName) || "").trim());
+  if (rawName) {
+    return rawName;
+  }
+
+  var safeBaseName = sanitizeFileName_(baseName || "상품");
+  var extension =
+    getExtensionFromMimeType_((photo && photo.mimeType) || "") ||
+    getExtensionFromFileName_((photo && photo.fileName) || "") ||
+    "jpg";
+
+  return safeBaseName + (index > 0 ? "_" + (index + 1) : "") + "." + extension;
+}
+
+function getExistingPhotoNameMap_(fileIdsText) {
+  var map = {};
+
+  splitPhotoSourceText_(fileIdsText).forEach(function (item) {
+    var driveId = extractGoogleDriveId_(item);
+    if (!driveId) return;
+
+    try {
+      var fileName = String(DriveApp.getFileById(driveId).getName() || "").trim();
+      if (!fileName) return;
+      map[fileName.toLowerCase()] = true;
+    } catch (_) {
+      // Ignore unreadable existing files.
+    }
+  });
+
+  return map;
+}
+
+// ── Product image assets ───────────────────────────────────
+function productImageHeaders_() {
+  return [
+    "맵키",
+    "상품코드",
+    "협력사명",
+    "상품명",
+    "이미지URL",
+    "파일ID",
+    "파일명",
+    "생성일시",
+    "수정일시",
+  ];
+}
+
+function getProductImageSheet_(ss) {
+  var sheet = getOrCreateSheet_(ss, SHEET_NAMES.productImages);
+  ensureHeaderRow_(sheet, productImageHeaders_());
+  return sheet;
+}
+
+function saveProductImageAssetToDrive_(photo, baseName, index) {
+  var folderId =
+    PropertiesService.getScriptProperties().getProperty("PRODUCT_IMAGE_FOLDER_ID") ||
+    PropertiesService.getScriptProperties().getProperty("PHOTO_FOLDER_ID");
+
+  if (!folderId) {
+    throw new Error("이미지 업로드 실패: PRODUCT_IMAGE_FOLDER_ID 또는 PHOTO_FOLDER_ID가 설정되지 않았습니다.");
+  }
+
+  var folder = DriveApp.getFolderById(folderId);
+  var safeBaseName = sanitizeFileName_(baseName || "product_image");
+  var extension =
+    getExtensionFromMimeType_(photo.mimeType || "") ||
+    getExtensionFromFileName_(photo.fileName || "") ||
+    "jpg";
+  var blob = Utilities.newBlob(
+    Utilities.base64Decode(photo.imageBase64),
+    photo.mimeType || "application/octet-stream",
+    safeBaseName + (index > 0 ? "_" + (index + 1) : "") + "." + extension
+  );
+
+  var file = folder.createFile(blob);
+  file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+
+  return {
+    fileId: file.getId(),
+    fileName: file.getName(),
+    viewUrl: "https://drive.google.com/uc?export=view&id=" + file.getId(),
+  };
+}
+
+// ============================================================
+// SECTION 8: SUMMARY / SYNC HELPERS
+// ============================================================
+
+// ── Dashboard update ───────────────────────────────────────
+function buildDashboardSourceRows_(latestRows, reservationRows) {
+  var merged = Array.isArray(latestRows) ? latestRows.slice() : [];
+
+  (Array.isArray(reservationRows) ? reservationRows : []).forEach(function (row, index) {
+    var productCode = normalizeCode_(
+      getRowFieldValue_(row, ["상품코드", "상품 코드", "코드", "바코드"])
+    );
+    var partnerName = normalizeText_(
+      getRowFieldValue_(row, ["협력사명", "협력사", "거래처명"])
+    );
+    var productName = String(
+      getRowFieldValue_(row, ["상품명", "상품 명", "품목명", "품명"])
+    ).trim();
+    var centerName = String(getRowFieldValue_(row, ["센터", "센터명"])).trim();
+    var qty = parseNumber_(getRowFieldValue_(row, ["발주수량", "입고수량", "수량"]));
+    var cost = parseNumber_(getRowFieldValue_(row, ["상품원가", "입고원가", "원가"]));
+
+    if (!productCode && !partnerName && !productName) {
+      return;
+    }
+
+    merged.push({
+      __id: "reservation-dashboard-" + index,
+      __reservationRow: true,
+      __productCode: productCode,
+      __productName: productName,
+      __partner: partnerName,
+      __center: centerName,
+      __qty: qty,
+      __incomingCost: cost,
+      상품코드: productCode,
+      상품명: productName,
+      협력사명: partnerName,
+      센터명: centerName,
+      발주수량: qty,
+      상품원가: cost,
+      입고원가: cost,
+    });
+  });
+
+  return merged;
+}
+
+function updateInspectionDashboard_(ss) {
+  var inspectionSheet = getInspectionSheet_(ss);
+  var summarySheet = getInspectionSummarySheet_(ss);
+  if (!inspectionSheet || !summarySheet) return;
+
+  var latestJob = loadLatestJob_();
+  var currentJobKey = latestJob && latestJob.job_key ? String(latestJob.job_key).trim() : "";
+  var latestRows = latestJob && Array.isArray(latestJob.rows) ? latestJob.rows : [];
+  var reservationRows = readReservationRows_();
+  var sourceRows = buildDashboardSourceRows_(latestRows, reservationRows);
+  var inspectionRows = loadInspectionRows_().filter(function (row) {
+    return String(row["작업기준일또는CSV식별값"] || "").trim() === currentJobKey;
+  });
+  var recordRows = loadRecords_().filter(function (row) {
+    return String(row["작업기준일또는CSV식별값"] || "").trim() === currentJobKey;
+  });
+  var eventRows = readObjectsSheet_(SHEET_NAMES.event);
+  var exclusionIdx = buildExclusionIndex_();
+  var excludedCodes = exclusionIdx.excludedCodes;
+  var excludedPairs = exclusionIdx.excludedPairs;
+  var excludedPartners = exclusionIdx.excludedPartners;
+
+  var totalInboundAmount = 0;
+  var totalInboundQty = 0;
+  var targetInboundAmount = 0;
+  var targetInboundQty = 0;
+  var totalSkuMap = {};
+  var targetSkuMap = {};
+  var inspectedSkuMap = {};
+  var eventSkuMap = {};
+  var returnQtyTotal = 0;
+  var exchangeQtyTotal = 0;
+  var eventCodeMap = {};
+
+  eventRows.forEach(function (row) {
+    var code = normalizeCode_(row["상품코드"] || row["상품 코드"] || row["코드"] || row["바코드"]);
+    if (code) {
+      eventCodeMap[code] = true;
+    }
+  });
+
+  sourceRows.forEach(function (row) {
+    var code = normalizeCode_(row.__productCode || getRowFieldValue_(row, ["상품코드", "상품 코드", "코드", "바코드"]));
+    var partner = normalizeText_(row.__partner || getRowFieldValue_(row, ["거래처명(구매조건명)", "거래처명", "협력사", "협력사명"]) || "");
+    var qty = parseNumber_(row.__qty || getRowFieldValue_(row, ["총 발주수량", "발주수량", "입고수량", "수량"]));
+    var cost = parseNumber_(row.__incomingCost || getRowFieldValue_(row, ["상품원가", "입고원가", "원가"]));
+    var skuKey = getRowSkuKey_(row);
+    var excluded = isExcludedByRules_(code, partner, excludedCodes, excludedPairs, excludedPartners);
+
+    totalInboundQty += qty;
+    totalInboundAmount += qty * cost;
+
+    if (skuKey) {
+      totalSkuMap[skuKey] = true;
+    }
+
+    if (eventCodeMap[code] && skuKey) {
+      eventSkuMap[skuKey || code] = true;
+    }
+
+    if (excluded) return;
+
+    targetInboundQty += qty;
+    targetInboundAmount += qty * cost;
+
+    if (skuKey) {
+      targetSkuMap[skuKey] = true;
+    }
+  });
+
+  var inspectionQtyTotal = 0;
+  var inspectionPhotoCount = 0;
+  inspectionRows.forEach(function (row) {
+    var code = normalizeCode_(row["상품코드"]);
+    var partner = normalizeText_(row["협력사명"] || "");
+    var excluded = isExcludedByRules_(code, partner, excludedCodes, excludedPairs, excludedPartners);
+    if (excluded) return;
+
+    var inspectionQty = parseNumber_(row["검품수량"] || 0);
+    var returnQty = parseNumber_(row["회송수량"] || 0);
+    var exchangeQty = parseNumber_(row["교환수량"] || 0);
+    inspectionQtyTotal += inspectionQty;
+    returnQtyTotal += returnQty;
+    exchangeQtyTotal += exchangeQty;
+
+    var skuKey = makeSkuKey_(row["상품코드"], row["협력사명"]) || String(row["상품명"] || "").trim();
+    if (inspectionQty > 0 && skuKey) {
+      inspectedSkuMap[skuKey] = true;
+    }
+
+    if (getPhotoSourcesFromRecord_(row).length > 0) {
+      inspectionPhotoCount += 1;
+    }
+  });
+
+  var photoRecordCount = 0;
+  recordRows.forEach(function (row) {
+    if (getPhotoSourcesFromRecord_(row).length > 0) {
+      photoRecordCount += 1;
+    }
+  });
+
+  var targetSkuCount = Object.keys(targetSkuMap).length;
+  var totalSkuCount = Object.keys(totalSkuMap).length;
+  var inspectedSkuCount = Object.keys(inspectedSkuMap).length;
+  var eventSkuCount = Object.keys(eventSkuMap).length;
+  var values = [
+    ["총 입고금액", "총 입고수량", "검품 수량", "검품률", "실검품률", "최근 갱신"],
+    [
+      totalInboundAmount,
+      totalInboundQty,
+      inspectionQtyTotal,
+      totalInboundQty > 0 ? inspectionQtyTotal / totalInboundQty : 0,
+      targetInboundQty > 0 ? inspectionQtyTotal / targetInboundQty : 0,
+      Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm"),
+    ],
+    ["검품 입고금액", "입고 SKU", "검품 SKU", "SKU 커버리지", "검품입고 SKU", "실제 SKU 커버리지"],
+    [
+      targetInboundAmount,
+      totalSkuCount,
+      inspectedSkuCount,
+      totalSkuCount > 0 ? inspectedSkuCount / totalSkuCount : 0,
+      targetSkuCount,
+      targetSkuCount > 0 ? inspectedSkuCount / targetSkuCount : 0,
+    ],
+    ["행사 SKU", "검품입고 SKU", "검품 입고수량", "회송 수량", "교환 수량", "사진 기록 건수"],
+    [
+      eventSkuCount,
+      targetSkuCount,
+      targetInboundQty,
+      returnQtyTotal,
+      exchangeQtyTotal,
+      photoRecordCount + inspectionPhotoCount,
+    ],
+  ];
+
+  inspectionSheet.getRange("L2:Q7").clearContent().clearFormat();
+
+  summarySheet.getRange("A1:F6").clearContent().clearFormat();
+  summarySheet.getRange("A1:F6").setValues(values);
+  summarySheet.getRange("A1:F1").setBackground("#c6efce").setFontWeight("bold");
+  summarySheet.getRange("A3:F3").setBackground("#fff2cc").setFontWeight("bold");
+  summarySheet.getRange("A5:F5").setBackground("#d9ead3").setFontWeight("bold");
+  summarySheet.getRange("A2:F2").setNumberFormats([["#,##0", "#,##0", "#,##0", "0.0%", "0.0%", "@"]]);
+  summarySheet.getRange("A4:F4").setNumberFormats([["#,##0", "#,##0", "#,##0", "0.0%", "#,##0", "0.0%"]]);
+  summarySheet.getRange("A6:F6").setNumberFormats([["#,##0", "#,##0", "#,##0", "#,##0", "#,##0", "#,##0"]]);
+  summarySheet.autoResizeColumns(1, 6);
+  [1, 2, 3, 4, 5, 6].forEach(function (col) {
+    if (summarySheet.getColumnWidth(col) < 110) {
+      summarySheet.setColumnWidth(col, 110);
+    }
+  });
+}
+
+// ── Sheet formatting helpers ───────────────────────────────
 function clearSheetBody_(sheet, width) {
   if (!sheet || sheet.getLastRow() < 2) return;
   sheet.deleteRows(2, sheet.getLastRow() - 1);
@@ -4987,6 +4234,7 @@ function getActionTypeByDefectRate_(defectRate) {
   return "개선요청";
 }
 
+// ── Backup / reset automation ──────────────────────────────
 function createOperationalBackup_() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sourceSheets = [
@@ -5078,12 +4326,7 @@ function runDailyReset_() {
   autoResetOperationalData_();
 }
 
-function jsonOutput_(obj) {
-  return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(
-    ContentService.MimeType.JSON
-  );
-}
-
+// ── History sync ───────────────────────────────────────────
 // ─── 이력관리 sheet sync ───────────────────────────────────────────────────────
 // Called ONLY by the manual "이력관리 기록" button in the 요약 tab.
 // Never auto-triggered by save actions, photo uploads, or app load.
@@ -5257,35 +4500,7 @@ function syncHistorySheet_(ss) {
   }
 }
 
-// ─── Daily Backup & Reset Automation ─────────────────────────────────────────
-// Backup at 03:00 AM (Asia/Seoul), Reset at 06:00 AM (Asia/Seoul).
-// Installed by setupDailyTriggers_() — never triggered by normal save flows.
-
-var OPERATIONAL_SHEETS_TO_BACKUP_ = [
-  "inspection_data",
-  "return_exchange_records",
-  "검품 회송내역 (센터포함)",
-  "검품 회송내역 (센터미포함)",
-  "inspection_summary",
-  "이력관리",
-];
-
-// Sheets that have header rows to preserve during reset (clear data below row 1)
-var SHEETS_WITH_HEADERS_ = [
-  "inspection_data",
-  "return_exchange_records",
-  "검품 회송내역 (센터포함)",
-  "검품 회송내역 (센터미포함)",
-  "inspection_summary",
-  "이력관리",
-];
-
-// Reference/config sheets that must NEVER be touched
-var PROTECTED_SHEETS_ = [
-  "매핑", "행사표", "제외목록", "사전예약추가", "당도",
-  "jobs", "job_cache", "happycall_data", "product_image_map", "photo_assets",
-];
-
+// ── Daily scheduled jobs ───────────────────────────────────
 /**
  * Runs at 03:00 AM. Creates date-stamped backup copies of all operational sheets.
  * Example backup name: "inspection_data_2026-04-05"
@@ -5423,4 +4638,869 @@ function setupDailyTriggers() {
     .create();
 
   console.log("[setupDailyTriggers] Installed backup trigger at 03:00 and reset trigger at 06:00 in timezone: " + tz);
+}
+
+// ============================================================
+// SECTION 9: ZIP HELPERS
+// ============================================================
+
+// ── Photo ZIP creation ─────────────────────────────────────
+function createPhotoZip_(payload) {
+  var mode = String(payload.mode || "movement").trim();
+  // sugar and weight photos live in inspection rows (photo type columns), not movement records
+  var usesInspectionSheet = mode === "inspection" || mode === "sugar" || mode === "weight";
+  var records = usesInspectionSheet ? loadInspectionRows_() : loadRecords_();
+  var maxZipBytes = 20 * 1024 * 1024;
+  var baseFileName = zipFileName_(mode);
+
+  // ── Phase 1: Pre-compute reference maps ONCE (avoids per-file sheet read) ──
+  var refMaps = readOperationalReferenceMaps_(SpreadsheetApp.getActiveSpreadsheet());
+
+  // ── Phase 2: Collect photo entries without fetching any blobs ──
+  var photoEntries = []; // { record, source, index }
+  records.forEach(function (record) {
+    var photos = getPhotoSourcesFromRecord_(record);
+    if (!photos.length) return;
+
+    if (mode === "inspection") {
+      var hasInspPh =
+        !!String(record["사진링크"] || "").trim() ||
+        !!String(record["사진링크목록"] || "").trim() ||
+        !!String(record["사진파일ID목록"] || "").trim();
+      if (!hasInspPh) return;
+    } else if (mode === "sugar") {
+      var assetMap1 = {};
+      try { assetMap1 = JSON.parse(record["photoAssetMap"] || "{}"); } catch (_) {}
+      if (!assetMap1["sugar"] || !assetMap1["sugar"].length) return;
+      photos = assetMap1["sugar"];
+    } else if (mode === "weight") {
+      var assetMap2 = {};
+      try { assetMap2 = JSON.parse(record["photoAssetMap"] || "{}"); } catch (_) {}
+      if (!assetMap2["weight"] || !assetMap2["weight"].length) return;
+      photos = assetMap2["weight"];
+    } else {
+      var isMov = isMovementRecord_(record);
+      if (mode === "movement" && !isMov) return;
+      if (mode !== "movement" && isMov) return;
+    }
+
+    photos.forEach(function (source, index) {
+      photoEntries.push({ record: record, source: source, index: index });
+    });
+  });
+
+  if (!photoEntries.length) {
+    return {
+      fileName: baseFileName, mimeType: "application/zip",
+      zipBase64: "", downloadUrl: "", fileId: "",
+      addedCount: 0, skippedCount: 0, zipFiles: [],
+    };
+  }
+
+  // ── Phase 3: Collect unique Drive file IDs and batch-fetch blobs in parallel ──
+  // Using UrlFetchApp.fetchAll() + Drive API v3 instead of N sequential DriveApp calls.
+  var blobCache = {}; // fileId → Blob
+  var driveIds = [];
+  var driveIdSet = {};
+  photoEntries.forEach(function (entry) {
+    var text = extractImageFormulaUrl_(entry.source);
+    var id = extractGoogleDriveId_(text);
+    if (id && !driveIdSet[id]) {
+      driveIdSet[id] = true;
+      driveIds.push(id);
+    }
+  });
+
+  if (driveIds.length > 0) {
+    var token = ScriptApp.getOAuthToken();
+    var BATCH_SIZE = 10; // fetchAll concurrency cap per call
+    for (var bi = 0; bi < driveIds.length; bi += BATCH_SIZE) {
+      var chunk = driveIds.slice(bi, bi + BATCH_SIZE);
+      var requests = chunk.map(function (id) {
+        return {
+          url: "https://www.googleapis.com/drive/v3/files/" + id + "?alt=media",
+          headers: { "Authorization": "Bearer " + token },
+          muteHttpExceptions: true,
+        };
+      });
+      var responses = UrlFetchApp.fetchAll(requests);
+      responses.forEach(function (resp, ri) {
+        var code = resp.getResponseCode();
+        if (code >= 200 && code < 300) {
+          blobCache[chunk[ri]] = resp.getBlob();
+        } else {
+          console.warn("[createPhotoZip_] Drive fetch failed id=" + chunk[ri] + " status=" + code);
+        }
+      });
+    }
+  }
+
+  // ── Phase 4: Process entries with cached blobs and build ZIP parts ──
+  var zipParts = [];
+  var currentPart = [];
+  var currentBytes = 0;
+  var usedNames = {};
+  var skippedCount = 0;
+
+  photoEntries.forEach(function (entry) {
+    try {
+      var blob = getPhotoBlob_(entry.source, blobCache);
+      if (!blob) { skippedCount += 1; return; }
+
+      var finalName = buildPhotoZipFileName_(entry.record, entry.index + 1, blob, entry.source, refMaps);
+      var dedupeKey = finalName.toLowerCase();
+      var dupSuffix = 2;
+      while (usedNames[dedupeKey]) {
+        finalName = appendDuplicateSuffixToFileName_(finalName, dupSuffix);
+        dedupeKey = finalName.toLowerCase();
+        dupSuffix += 1;
+      }
+      usedNames[dedupeKey] = true;
+
+      var namedBlob = blob.setName(finalName);
+      var blobBytes = namedBlob.getBytes().length;
+      if (currentPart.length > 0 && currentBytes + blobBytes > maxZipBytes) {
+        zipParts.push(currentPart);
+        currentPart = [];
+        currentBytes = 0;
+      }
+      currentPart.push(namedBlob);
+      currentBytes += blobBytes;
+    } catch (err) {
+      skippedCount += 1;
+      console.error("[createPhotoZip_] " + err.message);
+    }
+  });
+
+  if (currentPart.length > 0) zipParts.push(currentPart);
+
+  if (!zipParts.length) {
+    return {
+      fileName: baseFileName, mimeType: "application/zip",
+      zipBase64: "", downloadUrl: "", fileId: "",
+      addedCount: 0, skippedCount: skippedCount, zipFiles: [],
+    };
+  }
+
+  // ── Phase 5: Build and save ZIP archives ──
+  var savedFiles = zipParts.map(function (partBlobs, index) {
+    var partName = zipParts.length > 1 ? appendZipPartSuffix_(baseFileName, index + 1) : baseFileName;
+    var zipBlob = Utilities.zip(partBlobs, partName).setName(partName);
+    var saved = saveZipToDrive_(zipBlob, partName);
+    return {
+      fileName: partName,
+      mimeType: zipBlob.getContentType() || "application/zip",
+      downloadUrl: saved.downloadUrl,
+      fileId: saved.fileId,
+      driveUrl: saved.driveUrl,
+      addedCount: partBlobs.length,
+    };
+  });
+
+  var primaryFile = savedFiles[0];
+  return {
+    fileName: primaryFile.fileName,
+    mimeType: primaryFile.mimeType,
+    zipBase64: "",
+    downloadUrl: primaryFile.downloadUrl,
+    fileId: primaryFile.fileId,
+    driveUrl: primaryFile.driveUrl,
+    addedCount: savedFiles.reduce(function (sum, f) { return sum + f.addedCount; }, 0),
+    skippedCount: skippedCount,
+    zipFiles: savedFiles,
+  };
+}
+
+// ── Blob fetching ──────────────────────────────────────────
+// Returns the Blob for a photo source using the pre-built blob cache.
+// Falls back to a live URL fetch for non-Drive HTTP sources (rare).
+function getPhotoBlob_(source, blobCache) {
+  var text = extractImageFormulaUrl_(source);
+  var driveId = extractGoogleDriveId_(text);
+  if (driveId) return blobCache[driveId] || null;
+  if (/^https?:\/\//i.test(text)) {
+    var resp = UrlFetchApp.fetch(text, { muteHttpExceptions: true, followRedirects: true });
+    if (resp.getResponseCode() >= 200 && resp.getResponseCode() < 300) return resp.getBlob();
+  }
+  return null;
+}
+
+function getPhotoBlobFromSource_(source) {
+  var asset = getPhotoAssetFromSource_(source);
+  return asset ? asset.blob : null;
+}
+
+function getPhotoAssetFromSource_(source) {
+  var text = extractImageFormulaUrl_(source);
+  var driveId = extractGoogleDriveId_(text);
+
+  if (driveId) {
+    var driveFile = DriveApp.getFileById(driveId);
+    return {
+      blob: driveFile.getBlob(),
+      fileName: driveFile.getName(),
+    };
+  }
+
+  if (/^https?:\/\//i.test(text)) {
+    var response = UrlFetchApp.fetch(text, {
+      muteHttpExceptions: true,
+      followRedirects: true,
+    });
+
+    if (response.getResponseCode() >= 200 && response.getResponseCode() < 300) {
+      return {
+        blob: response.getBlob(),
+        fileName: getFileNameFromUrl_(text),
+      };
+    }
+  }
+
+  return null;
+}
+
+function getFileNameFromUrl_(value) {
+  var text = String(value || "").trim();
+  var match = text.match(/\/([^\/?#]+)(?:[?#].*)?$/);
+  return match ? match[1] : "";
+}
+
+function getBlobExtension_(blob, source) {
+  var contentType = String((blob && blob.getContentType && blob.getContentType()) || "").toLowerCase();
+  if (contentType.indexOf("png") >= 0) return "png";
+  if (contentType.indexOf("gif") >= 0) return "gif";
+  if (contentType.indexOf("webp") >= 0) return "webp";
+  if (contentType.indexOf("bmp") >= 0) return "bmp";
+  if (contentType.indexOf("heic") >= 0) return "heic";
+
+  var text = String(source || "").toLowerCase();
+  if (text.indexOf(".png") >= 0) return "png";
+  if (text.indexOf(".gif") >= 0) return "gif";
+  if (text.indexOf(".webp") >= 0) return "webp";
+  return "jpg";
+}
+
+// ── ZIP naming helpers ─────────────────────────────────────
+// Build the output ZIP file name for a given mode.
+function zipFileName_(mode) {
+  var dateStr = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyyMMdd");
+  if (mode === "movement")   return "불량_"  + dateStr + ".zip";
+  if (mode === "inspection") return "검품_"  + dateStr + ".zip";
+  if (mode === "sugar")      return "당도_"  + dateStr + ".zip";
+  if (mode === "weight")     return "중량_"  + dateStr + ".zip";
+  return "사진_" + dateStr + ".zip";
+}
+
+// maps is now pre-computed by the caller (avoids a sheet read per photo file).
+function buildPhotoZipFileName_(record, sequence, blob, source, maps) {
+  if (!maps) maps = readOperationalReferenceMaps_(SpreadsheetApp.getActiveSpreadsheet());
+  var typeLabel = getPhotoZipTypeLabel_(record, source);
+  var rawPartner = String(record["협력사명"] || record["파트너사"] || "협력사").trim();
+  var partnerKey = normalizeOperationalLookupText_(rawPartner);
+  var partnerName = sanitizeFileName_((maps.partnerToStandard && maps.partnerToStandard[partnerKey]) || rawPartner);
+  var productName = sanitizeFileName_(record["상품명"] || record["상품코드"] || "상품");
+  var extension = getBlobExtension_(blob, source);
+  // 중량사진 omits productName/partnerName per naming convention
+  if (typeLabel === "중량") {
+    return typeLabel + "_" + sequence + "." + extension;
+  }
+  return typeLabel + "_" + productName + "_" + partnerName + "_" + sequence + "." + extension;
+}
+
+function getPhotoZipTypeLabel_(record, source) {
+  var sourceText = String(source || "").toLowerCase();
+  if (sourceText.indexOf("sugar") >= 0) return "당도";
+  if (sourceText.indexOf("weight") >= 0) return "중량";
+  if (sourceText.indexOf("exchange") >= 0) return "불량";
+  if (sourceText.indexOf("return") >= 0) return "불량";
+  var type = String(getRecordType_(record) || "").trim();
+  if (type === "회송" || type === "교환") return "불량";
+  if (type) return sanitizeFileName_(type);
+  return "검품";
+}
+
+function appendZipPartSuffix_(fileName, partNumber) {
+  var text = String(fileName || "photos.zip");
+  var match = text.match(/^(.*?)(\.[a-zA-Z0-9]+)?$/);
+  var base = match ? match[1] : text;
+  var extension = match && match[2] ? match[2] : ".zip";
+  var padded = partNumber < 10 ? "0" + partNumber : String(partNumber);
+  return base + "_" + padded + extension;
+}
+
+function appendDuplicateSuffixToFileName_(fileName, suffix) {
+  var text = String(fileName || "image.jpg");
+  var match = text.match(/^(.*?)(\.[a-zA-Z0-9]+)?$/);
+  var base = match ? match[1] : text;
+  var extension = match && match[2] ? match[2] : "";
+  return base + "_" + suffix + extension;
+}
+
+// ── Photo source iteration ─────────────────────────────────
+function getPhotoSourcesFromRecord_(record) {
+  var rawItems = []
+    .concat([record["사진URL"], record["사진링크"]])
+    .concat(splitPhotoSourceText_(record["사진링크목록"]))
+    .concat(splitPhotoSourceText_(record["사진파일ID목록"]));
+
+  var seen = {};
+  var sources = [];
+
+  rawItems.forEach(function (item) {
+    var normalized = extractImageFormulaUrl_(item);
+    var text = String(normalized || "").trim();
+    if (!text || seen[text]) return;
+    seen[text] = true;
+    sources.push(text);
+  });
+
+  return sources;
+}
+
+// ── ZIP Drive save ─────────────────────────────────────────
+function saveZipToDrive_(zipBlob, fileName) {
+  var folderId =
+    PropertiesService.getScriptProperties().getProperty("ZIP_FOLDER_ID") ||
+    PropertiesService.getScriptProperties().getProperty("PHOTO_FOLDER_ID");
+  var folder = folderId ? DriveApp.getFolderById(folderId) : DriveApp.getRootFolder();
+  var file = folder.createFile(zipBlob.setName(fileName));
+  file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+
+  return {
+    fileId: file.getId(),
+    downloadUrl: "https://drive.google.com/uc?export=download&id=" + file.getId(),
+    driveUrl: file.getUrl(),
+  };
+}
+
+// ============================================================
+// SECTION 10: UTILITY HELPERS
+// ============================================================
+
+// ── Write-conflict diagnostics ─────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// DIAGNOSTIC HELPERS  (write-conflict detection)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Returns (or creates) the diagnostic log sheet.
+ * Adds a header row on first creation.
+ */
+function getWriteConflictLogSheet_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(SHEET_NAMES.writeConflictLog);
+  if (!sheet) {
+    sheet = ss.insertSheet(SHEET_NAMES.writeConflictLog);
+    sheet.appendRow([
+      "기록시각(KST)", "action", "rowKey",
+      "clientId", "jobKey", "상품코드", "협력사명",
+      "검품수량", "회송수량", "교환수량",
+      "version", "expectedVersion",
+      "hasPhotos", "payloadKeys",
+      "기존clientId", "기존version", "기존수정일시",
+      "충돌여부",
+    ]);
+    sheet.setFrozenRows(1);
+    try { sheet.getRange(1, 1, 1, 18).setFontWeight("bold"); } catch (_) {}
+  }
+  return sheet;
+}
+
+/**
+ * Build a short human-readable row key for a save payload.
+ */
+function makeWriteConflictKey_(payload) {
+  var jobKey   = String(payload["작업기준일또는CSV식별값"] || payload["jobKey"] || "").trim();
+  var code     = normalizeCode_(payload["상품코드"] || payload["productCode"] || "");
+  var partner  = String(payload["협력사명"] || payload["partnerName"] || "").trim();
+  var center   = String(payload["센터명"]   || payload["centerName"]  || "").trim();
+  var type     = String(payload["처리유형"] || payload["movementType"]|| "").trim();
+  return [jobKey, code, partner, center, type].filter(Boolean).join(" | ");
+}
+
+/**
+ * Write one diagnostic log row.
+ * existingRecord = the row that was in the sheet BEFORE this save (may be null).
+ * conflictFlag   = "" | "⚠ 다른 clientId 덮어쓰기" | "⚠ 버전 불일치" | "⚠ 동시 저장"
+ */
+function logWriteConflict_(action, payload, existingRecord, conflictFlag) {
+  if (!DEBUG_WRITE_CONFLICTS) return;
+  try {
+    var sheet = getWriteConflictLogSheet_();
+    var now   = new Date();
+    var kst   = new Date(now.getTime() + 9 * 60 * 60 * 1000);
+    var ts    = Utilities.formatDate(kst, "Asia/Seoul", "yyyy-MM-dd HH:mm:ss");
+
+    var clientId        = String(payload["clientId"] || "").trim() || "(없음-구버전)";
+    var jobKey          = String(payload["작업기준일또는CSV식별값"] || payload["jobKey"] || "").trim();
+    var code            = normalizeCode_(payload["상품코드"] || payload["productCode"] || "");
+    var partner         = String(payload["협력사명"] || payload["partnerName"] || "").trim();
+    var inspQty         = parseNumber_(payload["검품수량"] || payload["inspectionQty"] || 0);
+    var returnQty       = parseNumber_(payload["회송수량"] || 0);
+    var exchangeQty     = parseNumber_(payload["교환수량"] || 0);
+    var version         = parseNumber_(payload["버전"] || 0);
+    var expectedVersion = parseNumber_(payload["expectedVersion"] || 0);
+    var hasPhotos       = !!(String(payload["사진파일ID목록"] || "").trim());
+    var payloadKeys     = Object.keys(payload || {}).sort().join(",");
+
+    var existingClientId  = existingRecord ? String(existingRecord["clientId"]  || "(없음)").trim() : "";
+    var existingVersion   = existingRecord ? parseNumber_(existingRecord["버전"] || 0) : "";
+    var existingUpdatedAt = existingRecord ? String(existingRecord["수정일시"]   || "").trim() : "";
+    var rowKey = makeWriteConflictKey_(payload);
+
+    sheet.appendRow([
+      ts, action, rowKey,
+      clientId, jobKey, code, partner,
+      inspQty, returnQty, exchangeQty,
+      version, expectedVersion,
+      hasPhotos ? "Y" : "", payloadKeys,
+      existingClientId, existingVersion, existingUpdatedAt,
+      conflictFlag || "",
+    ]);
+
+    // Also log to Cloud Logging (visible in GAS Executions > Logs)
+    console.log("[WRITE_LOG] action=" + action
+      + " key=" + rowKey
+      + " clientId=" + clientId
+      + " v=" + version + "/expected=" + expectedVersion
+      + " conflict=" + (conflictFlag || "none"));
+  } catch (logErr) {
+    console.error("[logWriteConflict_] failed: " + logErr.message);
+  }
+}
+
+/**
+ * Determine if two save payloads look like different app versions.
+ * Returns a description string or "" if no version difference detected.
+ */
+function detectVersionDifference_(payload, existingRecord) {
+  if (!existingRecord) return "";
+
+  var payloadClientId  = String(payload["clientId"] || "").trim();
+  var existingClientId = String(existingRecord["clientId"] || "").trim();
+
+  // Old app sends no clientId at all
+  if (!payloadClientId && existingClientId) {
+    return "⚠ 구버전 앱이 신버전 행을 덮어씀 (clientId 없음)";
+  }
+  if (payloadClientId && !existingClientId) {
+    return "⚠ 신버전 앱이 구버전 행을 덮어씀";
+  }
+  if (payloadClientId && existingClientId && payloadClientId !== existingClientId) {
+    // Different clientIds = different browser sessions (possibly different users/versions)
+    var expectedVersion  = parseNumber_(payload["expectedVersion"] || 0);
+    var existingVersion  = parseNumber_(existingRecord["버전"] || 0);
+    if (expectedVersion > 0 && existingVersion > expectedVersion) {
+      return "⚠ 다른 clientId + 버전 충돌 (다른 사용자가 먼저 저장함)";
+    }
+    return "⚠ 다른 clientId 덮어쓰기";
+  }
+  // Same clientId but version mismatch (same user, stale page)
+  var expected  = parseNumber_(payload["expectedVersion"] || 0);
+  var current   = parseNumber_(existingRecord["버전"] || 0);
+  if (expected > 0 && current !== expected) {
+    return "⚠ 버전 불일치 (동일 clientId, 페이지 새로고침 필요)";
+  }
+  return "";
+}
+
+
+// ── Core normalizers ───────────────────────────────────────
+function normalizeCode_(value) {
+  if (value == null) return "";
+
+  var text = String(value).replace(/\uFEFF/g, "").trim();
+  var match = text.match(/^=T\("(.+)"\)$/i);
+
+  if (match) {
+    text = match[1];
+  }
+
+  text = text.replace(/^"+|"+$/g, "").trim();
+
+  var numericText = text.replace(/,/g, "").trim();
+  if (/^\d+(\.0+)?$/.test(numericText)) {
+    return numericText.replace(/\.0+$/, "");
+  }
+
+  return text;
+}
+
+function parseNumber_(value) {
+  var num = Number(String(value == null ? "" : value).replace(/,/g, "").trim());
+  return Number.isNaN(num) ? 0 : num;
+}
+
+function formatWrittenAtKst_(value) {
+  var date = value ? new Date(value) : new Date();
+  if (String(date) === "Invalid Date") {
+    date = new Date();
+  }
+
+  var timezone = "Asia/Seoul";
+  var weekdayMap = {
+    "1": "월",
+    "2": "화",
+    "3": "수",
+    "4": "목",
+    "5": "금",
+    "6": "토",
+    "7": "일",
+  };
+  var weekdayNumber = Utilities.formatDate(date, timezone, "u");
+  var weekdayLabel = weekdayMap[weekdayNumber] || "월";
+
+  return Utilities.formatDate(date, timezone, "MM.dd") + "(" + weekdayLabel + ") " +
+    Utilities.formatDate(date, timezone, "HH:mm:ss");
+}
+
+function normalizeText_(value) {
+  return String(value == null ? "" : value).replace(/\uFEFF/g, "").trim();
+}
+
+function makeEntityKey_(jobKey, productCode, partnerName) {
+  return [String(jobKey || "").trim(), normalizeCode_(productCode || ""), String(partnerName || "").trim()].join("||");
+}
+
+function makeSkuKey_(productCode, partnerName) {
+  return [normalizeCode_(productCode || ""), normalizeText_(partnerName || "")].join("||");
+}
+
+function normalizeImageLookupText_(value) {
+  return String(value || "")
+    .replace(/\uFEFF/g, "")
+    .toLowerCase()
+    .replace(/\s+/g, "")
+    .replace(/[^\u3131-\uD79Da-z0-9]/gi, "")
+    .trim();
+}
+
+function makeProductImageMapKey_(productCode, partnerName, productName) {
+  var code = normalizeCode_(productCode || "");
+  var partner = normalizeText_(partnerName || "");
+  if (code || partner) {
+    return "sku::" + makeSkuKey_(code, partner);
+  }
+  return "name::" + normalizeImageLookupText_(productName || "") + "||" + normalizeImageLookupText_(partnerName || "");
+}
+
+function isExcludedByRules_(productCode, partnerName, excludedCodes, excludedPairs, excludedPartners) {
+  var code = normalizeCode_(productCode || "");
+  var partner = normalizeText_(partnerName || "");
+  if (!code && !partner) return false;
+  return !!excludedCodes[code] || !!excludedPairs[code + "||" + partner] || !!excludedPartners[partner];
+}
+
+function isExclusionRowActive_(row) {
+  var val = String(row["사용여부"] || "").trim().toLowerCase();
+  if (!val) return true; // treat blank as active (backward compat)
+  return val === "y" || val === "yes" || val === "사용" || val === "활성" || val === "1" || val === "true";
+}
+
+function buildExclusionIndex_() {
+  var excludeRows = readObjectsSheet_(SHEET_NAMES.exclude);
+  var excludedCodes = {};
+  var excludedPairs = {};
+  var excludedPartners = {};
+  excludeRows.forEach(function (row) {
+    if (!isExclusionRowActive_(row)) return;
+    var code = normalizeCode_(row["상품코드"] || row["상품 코드"] || row["코드"] || row["바코드"]);
+    var partner = normalizeText_(row["협력사"] || row["협력사명"] || "");
+    if (!code && !partner) return;
+    if (partner) {
+      if (code) {
+        excludedPairs[code + "||" + partner] = true;
+      } else {
+        excludedPartners[partner] = true;
+      }
+    } else {
+      excludedCodes[code] = true;
+    }
+  });
+  return { excludedCodes: excludedCodes, excludedPairs: excludedPairs, excludedPartners: excludedPartners };
+}
+
+// ── Row / record utilities ─────────────────────────────────
+function getEditorLabel_(payload) {
+  var explicitLabel = String(
+    (payload && (payload.updatedBy || payload["수정자"] || payload.editorName || payload.userName || payload.userEmail)) || ""
+  ).trim();
+  if (explicitLabel) return explicitLabel;
+
+  try {
+    var email = String(Session.getActiveUser().getEmail() || "").trim();
+    if (email) return email;
+  } catch (err) {}
+
+  try {
+    var tempKey = String(Session.getTemporaryActiveUserKey() || "").trim();
+    if (tempKey) return "user:" + tempKey.slice(0, 8);
+  } catch (err2) {}
+
+  return "unknown";
+}
+
+function mergeTextValue_(a, b) {
+  const left = String(a || "").trim();
+  const right = String(b || "").trim();
+  if (left && right && left !== right) return left + "\n" + right;
+  return right || left;
+}
+
+function getRowVersion_(row) {
+  return parseNumber_(row && row["버전"] ? row["버전"] : 0);
+}
+
+function getRowUpdatedAt_(row) {
+  return String((row && row["수정일시"]) || "").trim();
+}
+
+function mergePhotoLinks_(existingLinksText, newLinksText, newPrimaryLink) {
+  const map = {};
+  String(existingLinksText || "")
+    .split(/\n+/)
+    .map(function (item) {
+      return String(item || "").trim();
+    })
+    .filter(Boolean)
+    .forEach(function (item) {
+      map[item] = true;
+    });
+
+  String(newLinksText || "")
+    .split(/\n+/)
+    .map(function (item) {
+      return String(item || "").trim();
+    })
+    .filter(Boolean)
+    .forEach(function (item) {
+      map[item] = true;
+    });
+
+  if (newPrimaryLink) {
+    map[String(newPrimaryLink).trim()] = true;
+  }
+
+  return Object.keys(map).join("\n");
+}
+
+function isLikelyPhotoLinkText_(value) {
+  var lines = String(value || "")
+    .split(/\n+/)
+    .map(function (item) {
+      return String(item || "").trim();
+    })
+    .filter(Boolean);
+
+  if (!lines.length) return false;
+
+  return lines.every(function (line) {
+    return /^https?:\/\/.+/i.test(line) || !!extractGoogleDriveId_(line);
+  });
+}
+
+function getRecordType_(record) {
+  var type = String(record["처리유형"] || "").trim();
+  if (type) return type;
+  if (parseNumber_(record["회송수량"]) > 0) return "회송";
+  if (parseNumber_(record["교환수량"]) > 0) return "교환";
+  return "기타";
+}
+
+function isMovementRecord_(record) {
+  var type = String(getRecordType_(record) || "").trim().toUpperCase();
+  if (["회송", "교환", "RETURN", "EXCHANGE"].indexOf(type) >= 0) return true;
+  return parseNumber_(record["회송수량"]) > 0 || parseNumber_(record["교환수량"]) > 0;
+}
+
+function trashPhotosForJob_(recordsSheet, jobKey) {
+  if (!recordsSheet || recordsSheet.getLastRow() < 2) return 0;
+
+  var values = recordsSheet.getDataRange().getValues();
+  var headers = values[0].map(function (header) {
+    return String(header || "").trim();
+  });
+  var seenIds = {};
+  var deletedCount = 0;
+
+  for (var r = 1; r < values.length; r += 1) {
+    var row = {};
+    for (var c = 0; c < headers.length; c += 1) {
+      if (!headers[c]) continue;
+      row[headers[c]] = values[r][c];
+    }
+
+    if (String(row["작업기준일또는CSV식별값"] || "").trim() !== jobKey) continue;
+
+    getPhotoSourcesFromRecord_(row).forEach(function (source) {
+      var driveId = extractGoogleDriveId_(source);
+      if (!driveId || seenIds[driveId]) return;
+      seenIds[driveId] = true;
+
+      try {
+        DriveApp.getFileById(driveId).setTrashed(true);
+        deletedCount += 1;
+      } catch (_) {
+        // Ignore photo deletion failures and continue.
+      }
+    });
+  }
+
+  return deletedCount;
+}
+
+function trashPhotosInSheet_(sheet) {
+  if (!sheet || sheet.getLastRow() < 2) return 0;
+
+  var values = sheet.getDataRange().getValues();
+  var headers = values[0].map(function (header) {
+    return String(header || "").trim();
+  });
+  var seenIds = {};
+  var deletedCount = 0;
+
+  for (var r = 1; r < values.length; r += 1) {
+    var row = {};
+    for (var c = 0; c < headers.length; c += 1) {
+      if (!headers[c]) continue;
+      row[headers[c]] = values[r][c];
+    }
+
+    getPhotoSourcesFromRecord_(row).forEach(function (source) {
+      var driveId = extractGoogleDriveId_(source);
+      if (!driveId || seenIds[driveId]) return;
+      seenIds[driveId] = true;
+
+      try {
+        DriveApp.getFileById(driveId).setTrashed(true);
+        deletedCount += 1;
+      } catch (_) {
+        // Ignore deletion failures during bulk cleanup.
+      }
+    });
+  }
+
+  return deletedCount;
+}
+
+function getRowFieldValue_(row, candidates) {
+  for (var i = 0; i < candidates.length; i += 1) {
+    var key = candidates[i];
+    if (row[key] !== undefined && row[key] !== null && row[key] !== "") {
+      return row[key];
+    }
+  }
+  return "";
+}
+
+function getRowSkuKey_(row) {
+  var code = normalizeCode_(getRowFieldValue_(row, ["상품코드", "상품 코드", "코드", "바코드"]));
+  var partner = normalizeText_(
+    getRowFieldValue_(row, ["협력사명", "협력사", "거래처명(구매조건명)", "거래처명"])
+  );
+  if (code || partner) return makeSkuKey_(code, partner);
+  return String(getRowFieldValue_(row, ["상품명", "상품 명", "품목명", "품명"]) || "").trim();
+}
+
+// ── String / file utilities ────────────────────────────────
+function splitPhotoSourceText_(value) {
+  return String(value || "")
+    .split(/\r?\n|[,;]+/)
+    .map(function (item) {
+      return String(item || "").trim();
+    })
+    .filter(Boolean);
+}
+
+function extractImageFormulaUrl_(value) {
+  var text = String(value || "").trim();
+  var match = text.match(/^=IMAGE\("(.+)"\)$/i);
+  return match ? match[1] : text;
+}
+
+function extractGoogleDriveId_(value) {
+  var text = String(value || "").trim();
+  if (!text) return "";
+
+  var directId = text.match(/^[a-zA-Z0-9_-]{20,}$/);
+  if (directId) return directId[0];
+
+  var fileMatch = text.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+  if (fileMatch) return fileMatch[1];
+
+  var openMatch = text.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  if (openMatch) return openMatch[1];
+
+  var ucMatch = text.match(/\/d\/([a-zA-Z0-9_-]+)/);
+  if (ucMatch) return ucMatch[1];
+
+  return "";
+}
+
+function getExtensionFromMimeType_(mimeType) {
+  var text = String(mimeType || "").toLowerCase();
+  if (text.indexOf("png") >= 0) return "png";
+  if (text.indexOf("gif") >= 0) return "gif";
+  if (text.indexOf("webp") >= 0) return "webp";
+  if (text.indexOf("bmp") >= 0) return "bmp";
+  if (text.indexOf("heic") >= 0) return "heic";
+  if (text.indexOf("jpeg") >= 0 || text.indexOf("jpg") >= 0) return "jpg";
+  return "";
+}
+
+function getExtensionFromFileName_(fileName) {
+  var text = String(fileName || "");
+  var match = text.match(/\.([a-zA-Z0-9]+)$/);
+  return match ? match[1].toLowerCase() : "";
+}
+
+function sanitizeFileName_(name) {
+  var text = String(name || "상품")
+    .replace(/[\\\/:*?"<>|]/g, "")
+    .replace(/\s+/g, "_")
+    .trim();
+
+  return text || "상품";
+}
+
+// ── Sheet utilities ────────────────────────────────────────
+function getOrCreateSheet_(ss, name) {
+  var sheet = ss.getSheetByName(name);
+  if (!sheet) {
+    try {
+      sheet = ss.insertSheet(name);
+    } catch (err) {
+      var message = String((err && err.message) || err || "");
+      if (message.indexOf("already exists") >= 0 || message.indexOf("이미 있습니다") >= 0) {
+        sheet = ss.getSheetByName(name);
+      } else {
+        throw err;
+      }
+    }
+  }
+  if (!sheet) {
+    throw new Error("시트를 찾을 수 없습니다: " + name);
+  }
+  return sheet;
+}
+
+function ensureHeaderRow_(sheet, headers) {
+  if (!sheet || !headers || !headers.length) return;
+
+  const width = headers.length;
+  const existing = sheet.getRange(1, 1, 1, width).getValues()[0].map(function (value) {
+    return String(value || "").trim();
+  });
+
+  var changed = false;
+  for (var i = 0; i < width; i += 1) {
+    if (existing[i] !== headers[i]) {
+      changed = true;
+      break;
+    }
+  }
+
+  if (sheet.getLastRow() === 0 || changed) {
+    sheet.getRange(1, 1, 1, width).setValues([headers]);
+  }
 }
