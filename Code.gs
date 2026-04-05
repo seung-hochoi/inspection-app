@@ -584,6 +584,14 @@ function doPost(e) {
 
     if (action === "saveBatch") {
       var batchData = saveBatch_(body.rows || []);
+      // Auto-sync return sheets when movement rows were saved.
+      if (batchData.hasMovement) {
+        try {
+          syncReturnSheets_(SpreadsheetApp.getActiveSpreadsheet());
+        } catch (syncErr) {
+          console.error("[doPost] syncReturnSheets_ failed after saveBatch: " + syncErr.message);
+        }
+      }
       return jsonOutput_({
         ok: true,
         data: batchData,
@@ -1152,7 +1160,7 @@ function loadPhotoAssetMap_(ss) {
   return map;
 }
 
-function upsertPhotoAsset_(assetKey, fileIdsText) {
+function upsertPhotoAsset_(assetKey, fileIdsText, preloadedMap) {
   var key = String(assetKey || "").trim();
   if (!key) return;
 
@@ -1164,7 +1172,7 @@ function upsertPhotoAsset_(assetKey, fileIdsText) {
   }
 
   var sheet = getPhotoAssetSheet_(ss);
-  var map = loadPhotoAssetMap_(ss);
+  var map = preloadedMap !== undefined ? preloadedMap : loadPhotoAssetMap_(ss);
   var photoCount = splitPhotoSourceText_(normalizedFileIds).length;
   var rowValues = [[key, normalizedFileIds, photoCount, new Date().toISOString()]];
   var existing = map[key];
@@ -1495,7 +1503,7 @@ function saveBatch_(rows) {
     }
 
     if (type === "movement" || type === "return" || type === "exchange") {
-      var savedMovement = upsertMovementRow_(recordsSheet, row);
+      var savedMovement = upsertMovementRow_(recordsSheet, row, photoAssetMap);
       if (savedMovement && savedMovement.__conflict) {
         conflicts.push(savedMovement);
       }
@@ -1570,7 +1578,7 @@ function upsertInspectionRow_(sheet, payload, photoAssetMap, preloadedValues) {
     return row;
   }
   writeInspectionRow_(sheet, targetRow, row);
-  upsertPhotoAsset_(makeInspectionPhotoAssetKey_(row["작업기준일또는CSV식별값"], row["상품코드"], row["협력사명"]), row["사진파일ID목록"]);
+  upsertPhotoAsset_(makeInspectionPhotoAssetKey_(row["작업기준일또는CSV식별값"], row["상품코드"], row["협력사명"]), row["사진파일ID목록"], photoAssetMap);
   console.log("[upsertInspectionRow_] written row=" + JSON.stringify({
     rowNumber: targetRow > 0 ? targetRow : sheet.getLastRow(),
     productCode: row["상품코드"],
@@ -1583,7 +1591,7 @@ function upsertInspectionRow_(sheet, payload, photoAssetMap, preloadedValues) {
   return row;
 }
 
-function upsertMovementRow_(sheet, payload) {
+function upsertMovementRow_(sheet, payload, photoAssetMap) {
   const rawPayload = payload || {};
   const targetRow = findMovementRow_(
     sheet,
@@ -1614,12 +1622,10 @@ function upsertMovementRow_(sheet, payload) {
     orderedQty: row["발주수량"],
     totalOrderedQty: row["총 발주 수량"]
   }));
-  if (shouldDeleteMovementRow_(row)) {
-    if (targetRow > 0) {
-      deletePhotoAsset_(makeMovementPhotoAssetKey_(row["작업기준일또는CSV식별값"], row["상품코드"], row["협력사명"], row["센터명"], row["처리유형"]));
-      sheet.deleteRow(targetRow);
-      row.__rowNumber = 0;
-    }
+
+  // Only skip/delete for brand-new rows with no data.
+  // For existing rows, merge first then check — so we never delete accumulated data.
+  if (targetRow === 0 && shouldDeleteMovementRow_(row)) {
     return row;
   }
 
@@ -1643,8 +1649,17 @@ function upsertMovementRow_(sheet, payload) {
       exchangeQty: row["교환수량"],
       totalOrderedQty: row["총 발주 수량"]
     }));
+
+    // After merge, delete only if merged result is completely empty.
+    if (shouldDeleteMovementRow_(row)) {
+      deletePhotoAsset_(makeMovementPhotoAssetKey_(row["작업기준일또는CSV식별값"], row["상품코드"], row["협력사명"], row["센터명"], row["처리유형"]));
+      sheet.deleteRow(targetRow);
+      row.__rowNumber = 0;
+      return row;
+    }
+
     writeRecordRow_(sheet, targetRow, row);
-    upsertPhotoAsset_(makeMovementPhotoAssetKey_(row["작업기준일또는CSV식별값"], row["상품코드"], row["협력사명"], row["센터명"], row["처리유형"]), row["사진파일ID목록"]);
+    upsertPhotoAsset_(makeMovementPhotoAssetKey_(row["작업기준일또는CSV식별값"], row["상품코드"], row["협력사명"], row["센터명"], row["처리유형"]), row["사진파일ID목록"], photoAssetMap);
     row.__rowNumber = targetRow;
     return row;
   }
@@ -1656,7 +1671,7 @@ function upsertMovementRow_(sheet, payload) {
     totalOrderedQty: row["총 발주 수량"]
   }));
   writeRecordRow_(sheet, 0, row);
-  upsertPhotoAsset_(makeMovementPhotoAssetKey_(row["작업기준일또는CSV식별값"], row["상품코드"], row["협력사명"], row["센터명"], row["처리유형"]), row["사진파일ID목록"]);
+  upsertPhotoAsset_(makeMovementPhotoAssetKey_(row["작업기준일또는CSV식별값"], row["상품코드"], row["협력사명"], row["센터명"], row["처리유형"]), row["사진파일ID목록"], photoAssetMap);
   row.__rowNumber = sheet.getLastRow();
   return row;
 }
@@ -2147,16 +2162,26 @@ function syncInspectionMovementTotals_(inspectionSheet, recordsSheet) {
 function purgeEmptyInspectionRows_(inspectionSheet) {
   if (!inspectionSheet || inspectionSheet.getLastRow() < 2) return 0;
 
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const photoAssetMap = loadPhotoAssetMap_(ss);
+
   const values = inspectionSheet
     .getRange(2, 1, inspectionSheet.getLastRow() - 1, inspectionSheet.getLastColumn())
     .getValues();
   const rowsToDelete = [];
 
   for (var i = 0; i < values.length; i += 1) {
+    const jobKey = String(values[i][1] || "").trim();
+    const productCode = normalizeCode_(values[i][2] || "");
+    const partnerName = String(values[i][4] || "").trim();
+    const assetKey = makeInspectionPhotoAssetKey_(jobKey, productCode, partnerName);
+    const photoEntry = photoAssetMap[assetKey];
+    const photoFileIds = photoEntry ? String(photoEntry.fileIdsText || "").trim() : "";
     const row = {
       "검품수량": values[i][6],
       "회송수량": values[i][7],
       "교환수량": values[i][8],
+      "사진파일ID목록": photoFileIds,
     };
     if (shouldDeleteInspectionRow_(row)) {
       rowsToDelete.push(i + 2);
@@ -3552,7 +3577,7 @@ function savePhotoMeta_(payload) {
 
 function getOrCreatePhotoFolder_() {
   var props = PropertiesService.getScriptProperties();
-  var folderId = props.getProperty("1q2ZCBXNACyCGtPXdl3rr-qVRKc2VHl-F");
+  var folderId = props.getProperty("PHOTO_FOLDER_ID");
   if (folderId) {
     try {
       DriveApp.getFolderById(folderId);
