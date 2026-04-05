@@ -139,7 +139,7 @@ export const withRetry = async (task) => {
 
 // ── Auth API calls ────────────────────────────────────────────────────────────
 export const login = (id, password) =>
-  post({ action: "login", payload: { id, password } });
+  post({ action: "login", payload: { id, password, userAgent: navigator.userAgent } });
 
 export const validateSession = (token) =>
   post({ action: "validateSession", sessionToken: token });

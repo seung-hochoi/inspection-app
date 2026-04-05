@@ -557,6 +557,21 @@ function ActiveSessionsModal({ onClose, showToast }) {
     }
   };
 
+  // Shorten UA string for display (keep browser + OS readable)
+  const shortUa = (ua) => {
+    if (!ua) return '-';
+    // Try to extract a recognisable fragment: "Chrome/NNN", "Firefox/NNN", "Safari/NNN", etc.
+    const m = ua.match(/(Chrome|Firefox|Safari|Edge|OPR|SamsungBrowser)\/[\d.]+/);
+    const browser = m ? m[0] : null;
+    const os = ua.includes('Windows') ? 'Windows'
+             : ua.includes('Mac')     ? 'Mac'
+             : ua.includes('Android') ? 'Android'
+             : ua.includes('iPhone') || ua.includes('iPad') ? 'iOS'
+             : ua.includes('Linux')   ? 'Linux' : null;
+    if (browser || os) return [browser, os].filter(Boolean).join(' / ');
+    return ua.length > 38 ? ua.slice(0, 38) + '…' : ua;
+  };
+
   return (
     <Modal title="접속중인 사용자" onClose={onClose}>
       {loading ? (
@@ -565,10 +580,10 @@ function ActiveSessionsModal({ onClose, showToast }) {
         <div style={S.emptyBox}>활성 세션이 없습니다.</div>
       ) : (
         <div style={{ overflowX: 'auto' }}>
-          <table style={{ ...S.table, fontSize: 12, minWidth: 560 }}>
+          <table style={{ ...S.table, fontSize: 12, minWidth: 760 }}>
             <thead>
               <tr>
-                {['USER_ID', 'USER_NAME', 'ROLE', 'CREATED_AT', 'LAST_SEEN_AT', 'EXPIRES_AT', ''].map((h) => (
+                {['USER_ID', 'USER_NAME', 'ROLE', 'IP', 'BROWSER / OS', 'CREATED_AT', 'LAST_SEEN_AT', 'EXPIRES_AT', ''].map((h) => (
                   <th key={h} style={S.th}>{h}</th>
                 ))}
               </tr>
@@ -579,6 +594,12 @@ function ActiveSessionsModal({ onClose, showToast }) {
                   <td style={S.td}>{s.USER_ID}</td>
                   <td style={S.td}>{s.USER_NAME}</td>
                   <td style={S.td}>{s.ROLE}</td>
+                  <td style={{ ...S.td, fontFamily: "'SF Mono','Menlo','Consolas',monospace", fontSize: 11 }}>
+                    {s.IP_ADDRESS || '-'}
+                  </td>
+                  <td style={{ ...S.td, maxWidth: 160 }} title={s.USER_AGENT || ''}>
+                    {shortUa(s.USER_AGENT)}
+                  </td>
                   <td style={S.td}>{s.CREATED_AT}</td>
                   <td style={S.td}>{s.LAST_SEEN_AT}</td>
                   <td style={S.td}>{s.EXPIRES_AT}</td>
@@ -1651,6 +1672,9 @@ function App() {
   const [showSessionsModal, setShowSessionsModal] = useState(false);
   const canManageUsers = !!(authUser && (authUser.permissions || []).includes('MANAGE_USERS'));
 
+  // ── Login note (e.g. forced-logout message to show on the login screen) ──────
+  const [loginNote, setLoginNote] = useState('');
+
   // ── Action handlers (SECTION 7) ───────────────────────────────
   const showToast = useCallback((message, type = "info") => {
     setToast({ message, type });
@@ -1733,6 +1757,27 @@ function App() {
     localStorage.removeItem(AUTH_TOKEN_KEY);
     localStorage.removeItem(AUTH_USER_KEY);
   }, []);
+
+  // ── Session-validity polling: detect forced logout every 30 s ─────────────
+  useEffect(() => {
+    if (!authUser) return;
+    const interval = setInterval(async () => {
+      const token = localStorage.getItem(AUTH_TOKEN_KEY);
+      if (!token) return;
+      try {
+        const res = await validateSession(token);
+        if (!res.ok) {
+          clearInterval(interval);
+          setSessionToken(null);
+          setAuthUser(null);
+          localStorage.removeItem(AUTH_TOKEN_KEY);
+          localStorage.removeItem(AUTH_USER_KEY);
+          setLoginNote('관리자에 의해 로그아웃되었습니다.');
+        }
+      } catch (_) { /* network hiccup — skip tick */ }
+    }, 30_000);
+    return () => clearInterval(interval);
+  }, [authUser]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Build a fast productCode -> image item lookup used by ProductRow thumbnails
   const productImageMap = useMemo(() => {
@@ -1905,7 +1950,7 @@ function App() {
   }
 
   if (!authUser) {
-    return <LoginPage onLogin={handleLogin} />;
+    return <LoginPage onLogin={handleLogin} note={loginNote} onClearNote={() => setLoginNote('')} />;
   }
 
   return (
@@ -1916,6 +1961,7 @@ function App() {
         input[type=number]::-webkit-inner-spin-button,
         input[type=number]::-webkit-outer-spin-button { opacity: 1; }
         .action-strip::-webkit-scrollbar { display: none; }
+        .header-right-cluster::-webkit-scrollbar { display: none; }
       `}</style>
 
       {/* ── Header (two rows: brand + action strip) ── */}
@@ -1928,9 +1974,17 @@ function App() {
             <img src={gs25Logo} alt="GS25" style={{ height: 28, flexShrink: 0, display: 'block' }} />
             <div style={{ width: 1, height: 22, background: C.borderLight, flexShrink: 0 }} />
             <div style={{ lineHeight: 1 }}>
-              <p style={{ fontSize: 14, fontWeight: 800, color: C.text, margin: 0, letterSpacing: '-0.025em' }}>
-                GS25 신선 검품시스템
-              </p>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <p style={{ fontSize: 14, fontWeight: 800, color: C.text, margin: 0, letterSpacing: '-0.025em' }}>
+                  GS25 신선 검품시스템
+                </p>
+                <span style={{
+                  fontSize: 9, fontWeight: 600, letterSpacing: '0.07em',
+                  color: 'rgba(15,23,42,0.30)',
+                  fontFamily: "'SF Mono','Menlo','Consolas',monospace",
+                  textTransform: 'uppercase', whiteSpace: 'nowrap',
+                }}>MADE BY. SEUNG-HO</span>
+              </div>
               {currentFileName && (
                 <p style={{ fontSize: 10, color: C.textSecondary, margin: '2px 0 0', letterSpacing: 0 }}>
                   {currentFileName.length > 32 ? currentFileName.slice(0, 32) + '…' : currentFileName}
@@ -1978,7 +2032,15 @@ function App() {
           </div>
 
           {/* ── RIGHT: sheet link · user badge · admin button · logout ── */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0, marginLeft: 8 }}>
+          <div
+            className="header-right-cluster"
+            style={{
+            display: 'flex', alignItems: 'center', gap: 6,
+            flexShrink: 0, marginLeft: 8,
+            maxWidth: 'calc(100% - 210px)',
+            overflowX: 'auto',
+            scrollbarWidth: 'none', msOverflowStyle: 'none',
+          }}>
             {worksheetUrl && (
               <a
                 href={worksheetUrl} target="_blank" rel="noreferrer"

@@ -19,7 +19,7 @@ const C = {
   inputBg: "#f0f4fb",
 };
 
-export default function LoginPage({ onLogin, loading: externalLoading }) {
+export default function LoginPage({ onLogin, loading: externalLoading, note = '', onClearNote }) {
   const [id, setId] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -76,6 +76,24 @@ export default function LoginPage({ onLogin, loading: externalLoading }) {
             로그인 후 이용 가능합니다
           </p>
         </div>
+
+        {/* Forced-logout / system note */}
+        {note && (
+          <div style={{
+            padding: '10px 14px', marginBottom: 16,
+            background: '#fff7ed', borderRadius: 8,
+            border: '1px solid #fed7aa',
+            fontSize: 13, color: '#c2410c', fontWeight: 600,
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+          }}>
+            <span>⚠️ {note}</span>
+            <button
+              onClick={onClearNote}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#c2410c', fontSize: 14, lineHeight: 1, padding: 0, flexShrink: 0 }}
+              aria-label="닫기"
+            >✕</button>
+          </div>
+        )}
 
         {/* Form */}
         <form onSubmit={handleSubmit} autoComplete="on">

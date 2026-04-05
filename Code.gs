@@ -106,6 +106,26 @@ function createSessionToken_() {
   return Utilities.getUuid().replace(/-/g, "") + Utilities.getUuid().replace(/-/g, "");
 }
 
+/**
+ * Ensures IP_ADDRESS and USER_AGENT columns exist in the user_sessions sheet.
+ * Adds any missing columns to the header row (safe for existing data).
+ * Mutates the headers array in place.
+ * Returns { ipIdx, uaIdx } as 0-based indices.
+ */
+function ensureSessionIpUaColumns_(sessSheet, headers) {
+  var needed = ["IP_ADDRESS", "USER_AGENT"];
+  needed.forEach(function(col) {
+    if (headers.indexOf(col) < 0) {
+      sessSheet.getRange(1, headers.length + 1).setValue(col);
+      headers.push(col);
+    }
+  });
+  return {
+    ipIdx: headers.indexOf("IP_ADDRESS"),
+    uaIdx: headers.indexOf("USER_AGENT"),
+  };
+}
+
 function nowKst_() {
   return Utilities.formatDate(new Date(), "Asia/Seoul", "yyyy-MM-dd HH:mm:ss");
 }
@@ -189,8 +209,11 @@ function requirePermission_(sessionToken, permission) {
 }
 
 function login_(payload) {
-  var userId   = String(payload.id       || "").trim();
-  var password = String(payload.password || "").trim();
+  var userId    = String(payload.id        || "").trim();
+  var password  = String(payload.password  || "").trim();
+  var userAgent = String(payload.userAgent || "").trim();
+  // IP is not reliably available in GAS web apps; left blank intentionally.
+  var ipAddress = "";
 
   var sheet = getUsersSheet_();
   if (!sheet || sheet.getLastRow() < 2) {
@@ -223,26 +246,44 @@ function login_(payload) {
       return { ok: false, error: "INVALID_CREDENTIALS", message: "INVALID_CREDENTIALS" };
     }
 
-    var role       = String(row[roleIdx] || "VIEWER").trim().toUpperCase();
-    var userName   = String(row[nameIdx] || userId);
+    var role        = String(row[roleIdx] || "VIEWER").trim().toUpperCase();
+    var userName    = String(row[nameIdx] || userId);
     var permissions = getRolePermissions_(role);
-    var now        = nowKst_();
+    var now         = nowKst_();
 
     if (lastLoginIdx >= 0) sheet.getRange(i + 1, lastLoginIdx + 1).setValue(now);
     if (updatedIdx   >= 0) sheet.getRange(i + 1, updatedIdx   + 1).setValue(now);
     if (permsIdx     >= 0) sheet.getRange(i + 1, permsIdx     + 1).setValue(permissions.join(","));
 
-    var token     = createSessionToken_();
-    var expDate   = new Date();
+    var token   = createSessionToken_();
+    var expDate = new Date();
     expDate.setHours(expDate.getHours() + SESSION_EXPIRY_HOURS_);
     var expiresAt = Utilities.formatDate(expDate, "Asia/Seoul", "yyyy-MM-dd HH:mm:ss");
 
     var sessSheet = getUserSessionsSheet_();
     if (sessSheet) {
-      sessSheet.appendRow([token, userId, userName, role, permissions.join(","), now, expiresAt, "TRUE", now]);
+      // Read (or initialise) the session sheet's header row, then ensure IP/UA columns exist.
+      var sessLastCol  = sessSheet.getLastColumn();
+      var sessHeaders  = sessLastCol >= 1
+        ? sessSheet.getRange(1, 1, 1, sessLastCol).getValues()[0].map(function(h) { return String(h).trim(); })
+        : ["SESSION_TOKEN","USER_ID","USER_NAME","ROLE","PERMISSIONS","CREATED_AT","EXPIRES_AT","ACTIVE","LAST_SEEN_AT"];
+      var colInfo = ensureSessionIpUaColumns_(sessSheet, sessHeaders);
+
+      // Build a correctly-sized row aligned to the live header.
+      var BASE_COLS = ["SESSION_TOKEN","USER_ID","USER_NAME","ROLE","PERMISSIONS","CREATED_AT","EXPIRES_AT","ACTIVE","LAST_SEEN_AT"];
+      var BASE_VALS = [token, userId, userName, role, permissions.join(","), now, expiresAt, "TRUE", now];
+      var sessRow   = new Array(sessHeaders.length).fill("");
+      BASE_COLS.forEach(function(col, bi) {
+        var idx = sessHeaders.indexOf(col);
+        if (idx >= 0) sessRow[idx] = BASE_VALS[bi]; else sessRow[bi] = BASE_VALS[bi];
+      });
+      if (colInfo.ipIdx >= 0) sessRow[colInfo.ipIdx] = ipAddress;
+      if (colInfo.uaIdx >= 0) sessRow[colInfo.uaIdx] = userAgent;
+      sessSheet.appendRow(sessRow);
     }
 
-    appendAuditLog_({ action: "LOGIN_SUCCESS", userId: userId, userName: userName, role: role, result: "SUCCESS" });
+    var uaSnippet = userAgent ? " UA:" + userAgent.substring(0, 80) : "";
+    appendAuditLog_({ action: "LOGIN_SUCCESS", userId: userId, userName: userName, role: role, result: "SUCCESS", message: uaSnippet });
     return {
       ok: true,
       sessionToken: token,
@@ -304,6 +345,8 @@ function getActiveSessions_(sessionToken) {
   var lastSeenIdx = headers.indexOf("LAST_SEEN_AT");
   var expiresIdx  = headers.indexOf("EXPIRES_AT");
   var activeIdx   = headers.indexOf("ACTIVE");
+  var ipIdx       = headers.indexOf("IP_ADDRESS");
+  var uaIdx       = headers.indexOf("USER_AGENT");
 
   var now = new Date();
   var sessions = [];
@@ -326,6 +369,8 @@ function getActiveSessions_(sessionToken) {
       CREATED_AT:    String(row[createdIdx]  || ""),
       LAST_SEEN_AT:  String(row[lastSeenIdx] || ""),
       EXPIRES_AT:    String(row[expiresIdx]  || ""),
+      IP_ADDRESS:    ipIdx  >= 0 ? String(row[ipIdx]  || "") : "",
+      USER_AGENT:    uaIdx  >= 0 ? String(row[uaIdx]  || "") : "",
     });
   }
 
@@ -342,22 +387,29 @@ function forceLogout_(sessionToken, targetSessionToken) {
 
   var data    = sheet.getDataRange().getValues();
   var headers = data[0].map(function(h) { return String(h).trim(); });
-  var tokenIdx  = headers.indexOf("SESSION_TOKEN");
-  var activeIdx = headers.indexOf("ACTIVE");
+  var tokenIdx   = headers.indexOf("SESSION_TOKEN");
+  var activeIdx  = headers.indexOf("ACTIVE");
+  var userIdIdx  = headers.indexOf("USER_ID");
+  var uaIdx      = headers.indexOf("USER_AGENT");
 
   for (var i = 1; i < data.length; i++) {
     if (String(data[i][tokenIdx] || "").trim() !== targetSessionToken) continue;
 
     if (activeIdx >= 0) sheet.getRange(i + 1, activeIdx + 1).setValue("FALSE");
 
+    var targetUserId = userIdIdx >= 0 ? String(data[i][userIdIdx] || "") : "";
+    var targetUa     = uaIdx     >= 0 ? String(data[i][uaIdx]     || "") : "";
+    var uaNote       = targetUa ? " target_ua:" + targetUa.substring(0, 60) : "";
+
     appendAuditLog_({
-      action:    "FORCE_LOGOUT",
-      userId:    admin.id,
-      userName:  admin.name,
-      role:      admin.role,
+      action:     "FORCE_LOGOUT",
+      userId:     admin.id,
+      userName:   admin.name,
+      role:       admin.role,
       targetType: "SESSION",
-      targetKey: targetSessionToken,
-      result:    "SUCCESS",
+      targetKey:  targetSessionToken,
+      result:     "SUCCESS",
+      message:    "target_user:" + targetUserId + uaNote,
     });
 
     return { ok: true };
