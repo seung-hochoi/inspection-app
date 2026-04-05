@@ -15,11 +15,152 @@
   photoAssets: "photo_assets",
   dangjdo: "당도",
   history: "이력관리",
+  writeConflictLog: "_write_conflict_log",  // diagnostic sheet (temporary)
 };
 const ADMIN_RESET_PASSWORD = "0000";
 const JOB_CACHE_MAX_DATA_ROWS = 30000;
 const JOB_CACHE_RETENTION_DAYS = 1;
 var operationalReferenceCache_ = null;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DIAGNOSTIC WRITE-CONFLICT LOGGING
+// Set DEBUG_WRITE_CONFLICTS = true to enable.
+// Every save is recorded in the "_write_conflict_log" sheet with:
+//   timestamp, action, clientId, jobKey, productCode, partnerName,
+//   inspQty, returnQty, exchangeQty, version, expectedVersion, payload hash
+// When two different clientIds write to the same row key within 10 seconds,
+// a "⚠ CONFLICT" flag is written so you can spot the overwrite instantly.
+// Set back to false (or delete the sheet) when diagnosis is complete.
+// ─────────────────────────────────────────────────────────────────────────────
+var DEBUG_WRITE_CONFLICTS = true;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DIAGNOSTIC HELPERS  (write-conflict detection)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Returns (or creates) the diagnostic log sheet.
+ * Adds a header row on first creation.
+ */
+function getWriteConflictLogSheet_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(SHEET_NAMES.writeConflictLog);
+  if (!sheet) {
+    sheet = ss.insertSheet(SHEET_NAMES.writeConflictLog);
+    sheet.appendRow([
+      "기록시각(KST)", "action", "rowKey",
+      "clientId", "jobKey", "상품코드", "협력사명",
+      "검품수량", "회송수량", "교환수량",
+      "version", "expectedVersion",
+      "hasPhotos", "payloadKeys",
+      "기존clientId", "기존version", "기존수정일시",
+      "충돌여부",
+    ]);
+    sheet.setFrozenRows(1);
+    try { sheet.getRange(1, 1, 1, 18).setFontWeight("bold"); } catch (_) {}
+  }
+  return sheet;
+}
+
+/**
+ * Build a short human-readable row key for a save payload.
+ */
+function makeWriteConflictKey_(payload) {
+  var jobKey   = String(payload["작업기준일또는CSV식별값"] || payload["jobKey"] || "").trim();
+  var code     = normalizeCode_(payload["상품코드"] || payload["productCode"] || "");
+  var partner  = String(payload["협력사명"] || payload["partnerName"] || "").trim();
+  var center   = String(payload["센터명"]   || payload["centerName"]  || "").trim();
+  var type     = String(payload["처리유형"] || payload["movementType"]|| "").trim();
+  return [jobKey, code, partner, center, type].filter(Boolean).join(" | ");
+}
+
+/**
+ * Write one diagnostic log row.
+ * existingRecord = the row that was in the sheet BEFORE this save (may be null).
+ * conflictFlag   = "" | "⚠ 다른 clientId 덮어쓰기" | "⚠ 버전 불일치" | "⚠ 동시 저장"
+ */
+function logWriteConflict_(action, payload, existingRecord, conflictFlag) {
+  if (!DEBUG_WRITE_CONFLICTS) return;
+  try {
+    var sheet = getWriteConflictLogSheet_();
+    var now   = new Date();
+    var kst   = new Date(now.getTime() + 9 * 60 * 60 * 1000);
+    var ts    = Utilities.formatDate(kst, "Asia/Seoul", "yyyy-MM-dd HH:mm:ss");
+
+    var clientId        = String(payload["clientId"] || "").trim() || "(없음-구버전)";
+    var jobKey          = String(payload["작업기준일또는CSV식별값"] || payload["jobKey"] || "").trim();
+    var code            = normalizeCode_(payload["상품코드"] || payload["productCode"] || "");
+    var partner         = String(payload["협력사명"] || payload["partnerName"] || "").trim();
+    var inspQty         = parseNumber_(payload["검품수량"] || payload["inspectionQty"] || 0);
+    var returnQty       = parseNumber_(payload["회송수량"] || 0);
+    var exchangeQty     = parseNumber_(payload["교환수량"] || 0);
+    var version         = parseNumber_(payload["버전"] || 0);
+    var expectedVersion = parseNumber_(payload["expectedVersion"] || 0);
+    var hasPhotos       = !!(String(payload["사진파일ID목록"] || "").trim());
+    var payloadKeys     = Object.keys(payload || {}).sort().join(",");
+
+    var existingClientId  = existingRecord ? String(existingRecord["clientId"]  || "(없음)").trim() : "";
+    var existingVersion   = existingRecord ? parseNumber_(existingRecord["버전"] || 0) : "";
+    var existingUpdatedAt = existingRecord ? String(existingRecord["수정일시"]   || "").trim() : "";
+    var rowKey = makeWriteConflictKey_(payload);
+
+    sheet.appendRow([
+      ts, action, rowKey,
+      clientId, jobKey, code, partner,
+      inspQty, returnQty, exchangeQty,
+      version, expectedVersion,
+      hasPhotos ? "Y" : "", payloadKeys,
+      existingClientId, existingVersion, existingUpdatedAt,
+      conflictFlag || "",
+    ]);
+
+    // Also log to Cloud Logging (visible in GAS Executions > Logs)
+    console.log("[WRITE_LOG] action=" + action
+      + " key=" + rowKey
+      + " clientId=" + clientId
+      + " v=" + version + "/expected=" + expectedVersion
+      + " conflict=" + (conflictFlag || "none"));
+  } catch (logErr) {
+    console.error("[logWriteConflict_] failed: " + logErr.message);
+  }
+}
+
+/**
+ * Determine if two save payloads look like different app versions.
+ * Returns a description string or "" if no version difference detected.
+ */
+function detectVersionDifference_(payload, existingRecord) {
+  if (!existingRecord) return "";
+
+  var payloadClientId  = String(payload["clientId"] || "").trim();
+  var existingClientId = String(existingRecord["clientId"] || "").trim();
+
+  // Old app sends no clientId at all
+  if (!payloadClientId && existingClientId) {
+    return "⚠ 구버전 앱이 신버전 행을 덮어씀 (clientId 없음)";
+  }
+  if (payloadClientId && !existingClientId) {
+    return "⚠ 신버전 앱이 구버전 행을 덮어씀";
+  }
+  if (payloadClientId && existingClientId && payloadClientId !== existingClientId) {
+    // Different clientIds = different browser sessions (possibly different users/versions)
+    var expectedVersion  = parseNumber_(payload["expectedVersion"] || 0);
+    var existingVersion  = parseNumber_(existingRecord["버전"] || 0);
+    if (expectedVersion > 0 && existingVersion > expectedVersion) {
+      return "⚠ 다른 clientId + 버전 충돌 (다른 사용자가 먼저 저장함)";
+    }
+    return "⚠ 다른 clientId 덮어쓰기";
+  }
+  // Same clientId but version mismatch (same user, stale page)
+  var expected  = parseNumber_(payload["expectedVersion"] || 0);
+  var current   = parseNumber_(existingRecord["버전"] || 0);
+  if (expected > 0 && current !== expected) {
+    return "⚠ 버전 불일치 (동일 clientId, 페이지 새로고침 필요)";
+  }
+  return "";
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 function getOperationalMappingSheet_(ss) {
   var direct =
@@ -371,6 +512,28 @@ function doPost(e) {
     const raw = e && e.postData && e.postData.contents ? e.postData.contents : "{}";
     const body = JSON.parse(raw);
     const action = body.action || "";
+
+    // ── Diagnostic entry-point log ──────────────────────────────────────────
+    if (DEBUG_WRITE_CONFLICTS) {
+      var _rows = (body.rows || [body.payload]).filter(Boolean);
+      _rows.forEach(function(_p) {
+        var _clientId  = String(_p["clientId"]  || _p["clientId"]  || "").trim() || "(없음-구버전)";
+        var _jobKey    = String(_p["작업기준일또는CSV식별값"] || _p["jobKey"]    || "").trim();
+        var _code      = String(_p["상품코드"]   || _p["productCode"] || "").trim();
+        var _partner   = String(_p["협력사명"]   || _p["partnerName"] || "").trim();
+        var _type      = String(_p["type"]       || "").trim();
+        var _version   = String(_p["버전"]       || _p["expectedVersion"] || "").trim();
+        console.log("[doPost] action=" + action
+          + " rowType=" + _type
+          + " clientId=" + _clientId
+          + " jobKey=" + _jobKey
+          + " code=" + _code
+          + " partner=" + _partner
+          + " expectedV=" + _version
+          + " payloadKeys=" + Object.keys(_p).sort().join(","));
+      });
+    }
+    // ────────────────────────────────────────────────────────────────────────
 
     if (action === "cacheCsv") {
       var cachedJob = cacheCsvJob_(body.payload || {});
@@ -1379,6 +1542,11 @@ function upsertInspectionRow_(sheet, payload, photoAssetMap, preloadedValues) {
         ? readInspectionRowByValues_(preloadedValues, targetRow - 2, photoAssetMap)
         : readInspectionRow_(sheet, targetRow, photoAssetMap))
     : null;
+
+  // ── Diagnostic: log every write attempt with conflict detection ──
+  var conflictFlag = detectVersionDifference_(rawPayload, existingRecord);
+  logWriteConflict_("saveInspection", rawPayload, existingRecord, conflictFlag);
+
   if (hasRowConflict_(rawPayload, existingRecord)) {
     return buildConflictResult_("inspection", rawPayload, existingRecord);
   }
@@ -1426,6 +1594,11 @@ function upsertMovementRow_(sheet, payload) {
     rawPayload["처리유형"] || (String(rawPayload["movementType"] || "").trim().toUpperCase() === "RETURN" ? "회송" : String(rawPayload["movementType"] || "").trim().toUpperCase() === "EXCHANGE" ? "교환" : "")
   );
   const existingRecord = targetRow > 0 ? readMovementRow_(sheet, targetRow) : null;
+
+  // ── Diagnostic: log every movement write attempt with conflict detection ──
+  var conflictFlag = detectVersionDifference_(rawPayload, existingRecord);
+  logWriteConflict_("saveMovement", rawPayload, existingRecord, conflictFlag);
+
   if (hasRowConflict_(rawPayload, existingRecord)) {
     return buildConflictResult_("movement", rawPayload, existingRecord);
   }
