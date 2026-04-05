@@ -7,6 +7,13 @@ const RETRY_DELAYS_MS = [800, 2000, 4000];
 
 export { SCRIPT_URL };
 
+// ── Auth session token (set after login) ──────────────────────────────────────
+let _sessionToken = null;
+
+export const setSessionToken = (token) => {
+  _sessionToken = token || null;
+};
+
 // Throw a clear error if the Apps Script URL is not configured
 const requireUrl = () => {
   if (!SCRIPT_URL) {
@@ -20,12 +27,16 @@ const requireUrl = () => {
 
 const post = async (body) => {
   requireUrl();
+  // Inject current session token unless the body already specifies one explicitly
+  const bodyWithAuth = _sessionToken && !body.sessionToken
+    ? { ...body, sessionToken: _sessionToken }
+    : body;
   let text;
   try {
     const response = await fetch(SCRIPT_URL, {
       method: "POST",
       headers: { "Content-Type": "text/plain;charset=utf-8" },
-      body: JSON.stringify(body),
+      body: JSON.stringify(bodyWithAuth),
     });
     text = await response.text();
     const result = JSON.parse(text);
@@ -125,3 +136,13 @@ export const withRetry = async (task) => {
   }
   throw lastError || new Error("request failed");
 };
+
+// ── Auth API calls ────────────────────────────────────────────────────────────
+export const login = (id, password) =>
+  post({ action: "login", payload: { id, password } });
+
+export const validateSession = (token) =>
+  post({ action: "validateSession", sessionToken: token });
+
+export const logout = (token) =>
+  post({ action: "logout", sessionToken: token || _sessionToken || "" });

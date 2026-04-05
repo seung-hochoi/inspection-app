@@ -22,6 +22,9 @@ const SHEET_NAMES = {
   dangjdo: "당도",
   history: "이력관리",
   writeConflictLog: "_write_conflict_log",  // diagnostic sheet (temporary)
+  users: "USERS",
+  userSessions: "user_sessions",
+  auditLog: "audit_log",
 };
 const ADMIN_RESET_PASSWORD = "0000";
 const JOB_CACHE_MAX_DATA_ROWS = 30000;
@@ -69,6 +72,221 @@ var PROTECTED_SHEETS_ = [
   "매핑", "행사표", "제외목록", "사전예약추가", "당도",
   "jobs", "job_cache", "happycall_data", "product_image_map", "photo_assets",
 ];
+
+// ============================================================
+// SECTION 1.5: AUTH / SESSION / AUDIT
+// ============================================================
+
+var ROLE_PERMISSIONS_ = {
+  ADMIN:     ["VIEW","EDIT_INSPECTION","EDIT_RETURN_EXCHANGE","UPLOAD_PHOTO","DOWNLOAD_ZIP","VIEW_LOG","MANAGE_USERS"],
+  MANAGER:   ["VIEW","EDIT_INSPECTION","EDIT_RETURN_EXCHANGE","UPLOAD_PHOTO","DOWNLOAD_ZIP"],
+  INSPECTOR: ["VIEW","EDIT_INSPECTION","UPLOAD_PHOTO"],
+  VIEWER:    ["VIEW"],
+};
+
+var SESSION_EXPIRY_HOURS_ = 8;
+
+function getRolePermissions_(role) {
+  return ROLE_PERMISSIONS_[String(role || "").toUpperCase()] || ["VIEW"];
+}
+
+function getUsersSheet_() {
+  return SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_NAMES.users);
+}
+
+function getUserSessionsSheet_() {
+  return SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_NAMES.userSessions);
+}
+
+function getAuditLogSheet_() {
+  return SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_NAMES.auditLog);
+}
+
+function createSessionToken_() {
+  return Utilities.getUuid().replace(/-/g, "") + Utilities.getUuid().replace(/-/g, "");
+}
+
+function nowKst_() {
+  return Utilities.formatDate(new Date(), "Asia/Seoul", "yyyy-MM-dd HH:mm:ss");
+}
+
+function appendAuditLog_(params) {
+  try {
+    var sheet = getAuditLogSheet_();
+    if (!sheet) return;
+    sheet.appendRow([
+      params.loggedAt    || nowKst_(),
+      params.userId      || "",
+      params.userName    || "",
+      params.role        || "",
+      params.action      || "",
+      params.targetType  || "",
+      params.targetKey   || "",
+      params.jobKey      || "",
+      params.productCode || "",
+      params.productName || "",
+      params.supplier    || "",
+      params.beforeValue || "",
+      params.afterValue  || "",
+      params.result      || "",
+      params.message     || "",
+      params.clientId    || "",
+    ]);
+  } catch (err) {
+    console.error("[appendAuditLog_] " + err.message);
+  }
+}
+
+function getSessionUser_(sessionToken) {
+  if (!sessionToken) return null;
+  var sheet = getUserSessionsSheet_();
+  if (!sheet || sheet.getLastRow() < 2) return null;
+
+  var data    = sheet.getDataRange().getValues();
+  var headers = data[0].map(function(h) { return String(h).trim(); });
+  var tokenIdx    = headers.indexOf("SESSION_TOKEN");
+  var userIdIdx   = headers.indexOf("USER_ID");
+  var userNameIdx = headers.indexOf("USER_NAME");
+  var roleIdx     = headers.indexOf("ROLE");
+  var expiresIdx  = headers.indexOf("EXPIRES_AT");
+  var activeIdx   = headers.indexOf("ACTIVE");
+  var lastSeenIdx = headers.indexOf("LAST_SEEN_AT");
+
+  var now = new Date();
+  for (var i = 1; i < data.length; i++) {
+    var row = data[i];
+    if (String(row[tokenIdx] || "").trim() !== sessionToken) continue;
+    if (String(row[activeIdx] || "").toUpperCase() !== "TRUE") continue;
+
+    var expiresAt = row[expiresIdx];
+    if (expiresAt) {
+      var expDate = new Date(expiresAt);
+      if (!isNaN(expDate.getTime()) && expDate < now) return null;
+    }
+
+    if (lastSeenIdx >= 0) {
+      sheet.getRange(i + 1, lastSeenIdx + 1).setValue(nowKst_());
+    }
+
+    var role = String(row[roleIdx] || "VIEWER").trim().toUpperCase();
+    return {
+      id:          String(row[userIdIdx]   || ""),
+      name:        String(row[userNameIdx] || ""),
+      role:        role,
+      permissions: getRolePermissions_(role),
+    };
+  }
+  return null;
+}
+
+function requirePermission_(sessionToken, permission) {
+  var user = getSessionUser_(sessionToken);
+  if (!user) throw new Error("인증이 필요합니다. 다시 로그인해 주세요.");
+  if (permission && user.permissions.indexOf(permission) < 0) {
+    throw new Error("권한이 없습니다. (" + permission + ")");
+  }
+  return user;
+}
+
+function login_(payload) {
+  var userId   = String(payload.id       || "").trim();
+  var password = String(payload.password || "").trim();
+
+  var sheet = getUsersSheet_();
+  if (!sheet || sheet.getLastRow() < 2) {
+    appendAuditLog_({ action: "LOGIN_FAIL", userId: userId, result: "FAIL", message: "USERS 시트 없음" });
+    return { ok: false, error: "아이디 또는 비밀번호가 올바르지 않습니다" };
+  }
+
+  var data    = sheet.getDataRange().getValues();
+  var headers = data[0].map(function(h) { return String(h).trim(); });
+  var idIdx        = headers.indexOf("ID");
+  var passIdx      = headers.indexOf("PASSWORD");
+  var nameIdx      = headers.indexOf("NAME");
+  var activeIdx    = headers.indexOf("ACTIVE");
+  var roleIdx      = headers.indexOf("ROLE");
+  var permsIdx     = headers.indexOf("PERMISSIONS");
+  var updatedIdx   = headers.indexOf("UPDATED_AT");
+  var lastLoginIdx = headers.indexOf("LAST_LOGIN_AT");
+
+  for (var i = 1; i < data.length; i++) {
+    var row = data[i];
+    if (String(row[idIdx] || "").trim() !== userId) continue;
+
+    if (String(row[activeIdx] || "").toUpperCase() !== "TRUE") {
+      appendAuditLog_({ action: "LOGIN_FAIL", userId: userId, result: "FAIL", message: "비활성 계정" });
+      return { ok: false, error: "아이디 또는 비밀번호가 올바르지 않습니다" };
+    }
+
+    if (String(row[passIdx] || "").trim() !== password) {
+      appendAuditLog_({ action: "LOGIN_FAIL", userId: userId, result: "FAIL", message: "비밀번호 불일치" });
+      return { ok: false, error: "아이디 또는 비밀번호가 올바르지 않습니다" };
+    }
+
+    var role       = String(row[roleIdx] || "VIEWER").trim().toUpperCase();
+    var userName   = String(row[nameIdx] || userId);
+    var permissions = getRolePermissions_(role);
+    var now        = nowKst_();
+
+    if (lastLoginIdx >= 0) sheet.getRange(i + 1, lastLoginIdx + 1).setValue(now);
+    if (updatedIdx   >= 0) sheet.getRange(i + 1, updatedIdx   + 1).setValue(now);
+    if (permsIdx     >= 0) sheet.getRange(i + 1, permsIdx     + 1).setValue(permissions.join(","));
+
+    var token     = createSessionToken_();
+    var expDate   = new Date();
+    expDate.setHours(expDate.getHours() + SESSION_EXPIRY_HOURS_);
+    var expiresAt = Utilities.formatDate(expDate, "Asia/Seoul", "yyyy-MM-dd HH:mm:ss");
+
+    var sessSheet = getUserSessionsSheet_();
+    if (sessSheet) {
+      sessSheet.appendRow([token, userId, userName, role, permissions.join(","), now, expiresAt, "TRUE", now]);
+    }
+
+    appendAuditLog_({ action: "LOGIN_SUCCESS", userId: userId, userName: userName, role: role, result: "SUCCESS" });
+    return {
+      ok: true,
+      sessionToken: token,
+      user: { id: userId, name: userName, role: role, permissions: permissions },
+    };
+  }
+
+  appendAuditLog_({ action: "LOGIN_FAIL", userId: userId, result: "FAIL", message: "사용자 없음" });
+  return { ok: false, error: "아이디 또는 비밀번호가 올바르지 않습니다" };
+}
+
+function validateSession_(sessionToken) {
+  var user = getSessionUser_(sessionToken);
+  if (!user) return { ok: false, error: "세션이 만료되었거나 유효하지 않습니다" };
+  return { ok: true, user: user };
+}
+
+function logout_(sessionToken) {
+  if (!sessionToken) return { ok: false, error: "토큰이 없습니다" };
+  var sheet = getUserSessionsSheet_();
+  if (!sheet || sheet.getLastRow() < 2) return { ok: true };
+
+  var data    = sheet.getDataRange().getValues();
+  var headers = data[0].map(function(h) { return String(h).trim(); });
+  var tokenIdx    = headers.indexOf("SESSION_TOKEN");
+  var activeIdx   = headers.indexOf("ACTIVE");
+  var userIdIdx   = headers.indexOf("USER_ID");
+  var userNameIdx = headers.indexOf("USER_NAME");
+  var roleIdx     = headers.indexOf("ROLE");
+
+  for (var i = 1; i < data.length; i++) {
+    if (String(data[i][tokenIdx] || "").trim() !== sessionToken) continue;
+    if (activeIdx >= 0) sheet.getRange(i + 1, activeIdx + 1).setValue("FALSE");
+    appendAuditLog_({
+      action: "LOGOUT",
+      userId:   String(data[i][userIdIdx]   || ""),
+      userName: String(data[i][userNameIdx] || ""),
+      role:     String(data[i][roleIdx]     || ""),
+      result:   "SUCCESS",
+    });
+    break;
+  }
+  return { ok: true };
+}
 
 // ============================================================
 // SECTION 2: ENTRY POINTS (doGet / doPost)
@@ -184,6 +402,18 @@ function doPost(e) {
     }
     // ────────────────────────────────────────────────────────────────────────
 
+    if (action === "login") {
+      return jsonOutput_(login_(body.payload || {}));
+    }
+
+    if (action === "validateSession") {
+      return jsonOutput_(validateSession_(body.sessionToken || ""));
+    }
+
+    if (action === "logout") {
+      return jsonOutput_(logout_(body.sessionToken || ""));
+    }
+
     if (action === "cacheCsv") {
       var cachedJob = cacheCsvJob_(body.payload || {});
       return jsonOutput_({
@@ -194,7 +424,12 @@ function doPost(e) {
     }
 
     if (action === "saveRecord") {
+      var _authR = requirePermission_(body.sessionToken, "EDIT_RETURN_EXCHANGE");
       var savedRecord = appendRecord_(body.payload || {});
+      var _rp = body.payload || {};
+      appendAuditLog_({ action: "SAVE_RETURN_EXCHANGE", userId: _authR.id, userName: _authR.name, role: _authR.role,
+        jobKey: _rp["작업기준일또는CSV식별값"] || "", productCode: _rp["상품코드"] || "",
+        productName: _rp["상품명"] || "", supplier: _rp["협력사명"] || "", result: "SUCCESS" });
       return jsonOutput_({
         ok: true,
         record: savedRecord,
@@ -204,7 +439,10 @@ function doPost(e) {
     }
 
     if (action === "deleteRecord") {
+      var _authD = requirePermission_(body.sessionToken, "EDIT_RETURN_EXCHANGE");
       var deletedRecord = deleteRecord_(body.payload || {});
+      appendAuditLog_({ action: "SAVE_RETURN_EXCHANGE", userId: _authD.id, userName: _authD.name, role: _authD.role,
+        message: "delete rowNumber=" + ((body.payload || {}).rowNumber || ""), result: "SUCCESS" });
       return jsonOutput_({
         ok: true,
         deleted: deletedRecord,
@@ -214,7 +452,12 @@ function doPost(e) {
     }
 
     if (action === "saveInspectionQty") {
+      var _authU = requirePermission_(body.sessionToken, "EDIT_INSPECTION");
       var savedInspectionRow = saveInspectionQty_(body.payload || {});
+      var _p = body.payload || {};
+      appendAuditLog_({ action: "SAVE_INSPECTION", userId: _authU.id, userName: _authU.name, role: _authU.role,
+        jobKey: _p["작업기준일또는CSV식별값"] || _p.jobKey || "", productCode: _p["상품코드"] || "",
+        productName: _p["상품명"] || "", supplier: _p["협력사명"] || "", clientId: _p.clientId || "", result: "SUCCESS" });
       return jsonOutput_({
         ok: true,
         row: savedInspectionRow,
@@ -223,7 +466,10 @@ function doPost(e) {
     }
 
     if (action === "saveInspectionBatch") {
+      var _authU2 = requirePermission_(body.sessionToken, "EDIT_INSPECTION");
       var savedInspectionBatch = saveInspectionBatch_(body.rows || []);
+      appendAuditLog_({ action: "SAVE_INSPECTION", userId: _authU2.id, userName: _authU2.name, role: _authU2.role,
+        message: "batch rows=" + (body.rows || []).length, result: "SUCCESS" });
       return jsonOutput_({
         ok: true,
         data: savedInspectionBatch,
@@ -232,6 +478,7 @@ function doPost(e) {
     }
 
     if (action === "saveBatch") {
+      var _authU3 = requirePermission_(body.sessionToken, "EDIT_RETURN_EXCHANGE");
       var batchData = saveBatch_(body.rows || []);
       // Auto-sync return sheets when movement rows were saved.
       if (batchData.hasMovement) {
@@ -248,6 +495,8 @@ function doPost(e) {
           console.error("[doPost] loadRecords_ for freshRecords failed: " + e.message);
         }
       }
+      appendAuditLog_({ action: "SAVE_RETURN_EXCHANGE", userId: _authU3.id, userName: _authU3.name, role: _authU3.role,
+        message: "batch rows=" + (body.rows || []).length, result: "SUCCESS" });
       return jsonOutput_({
         ok: true,
         data: batchData,
@@ -280,7 +529,11 @@ function doPost(e) {
     }
 
     if (action === "downloadPhotoZip") {
-      return jsonOutput_(Object.assign({ ok: true }, createPhotoZip_(body.payload || {})));
+      var _authZ = requirePermission_(body.sessionToken, "DOWNLOAD_ZIP");
+      var _zipResult = createPhotoZip_(body.payload || {});
+      appendAuditLog_({ action: "DOWNLOAD_ZIP", userId: _authZ.id, userName: _authZ.name, role: _authZ.role,
+        message: "mode=" + ((body.payload || {}).mode || ""), result: "SUCCESS" });
+      return jsonOutput_(Object.assign({ ok: true }, _zipResult));
     }
 
     if (action === "resetCurrentJobInputData") {
@@ -312,13 +565,22 @@ function doPost(e) {
     }
 
     if (action === "uploadPhotos") {
+      var _authPh = requirePermission_(body.sessionToken, "UPLOAD_PHOTO");
+      var _phResult = uploadPhotos_(body.payload || {});
+      var _php = body.payload || {};
+      appendAuditLog_({ action: "UPLOAD_PHOTO", userId: _authPh.id, userName: _authPh.name, role: _authPh.role,
+        jobKey: _php.jobKey || "", productCode: _php.productCode || "",
+        productName: _php.productName || "", supplier: _php.partnerName || "",
+        message: "photoType=" + (_php.photoType || "") + " count=" + ((_php.photos || []).length),
+        result: "SUCCESS" });
       return jsonOutput_({
         ok: true,
-        data: uploadPhotos_(body.payload || {}),
+        data: _phResult,
       });
     }
 
     if (action === "savePhotoMeta") {
+      var _authPm = requirePermission_(body.sessionToken, "UPLOAD_PHOTO");
       return jsonOutput_({
         ok: true,
         data: savePhotoMeta_(body.payload || {}),
@@ -4827,7 +5089,7 @@ function createPhotoZip_(payload) {
       }
       usedNames[dedupeKey] = true;
 
-      var namedBlob = blob.setName(finalName);
+      var namedBlob = blob.copyBlob().setName(finalName);
       var blobBytes = namedBlob.getBytes().length;
       if (currentPart.length > 0 && currentBytes + blobBytes > maxZipBytes) {
         zipParts.push(currentPart);

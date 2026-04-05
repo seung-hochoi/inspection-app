@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import Papa from 'papaparse';
-import { ClipboardCheck, FileText, BarChart3, RefreshCw, Database, AlertTriangle, Lock, Download, FolderDown } from 'lucide-react';
+import { ClipboardCheck, FileText, BarChart3, RefreshCw, Database, AlertTriangle, Lock, Download, FolderDown, LogOut } from 'lucide-react';
 import gs25Logo from './gs25-logo.svg';
 import InspectionPage from './components/InspectionPage';
 import RecordsPage from './components/RecordsPage';
 import SummaryPage from './components/SummaryPage';
-import { manualRecalc, syncHistory, resetCurrentJobInputData, fetchHistoryData } from './api'; // eslint-disable-line no-unused-vars
+import LoginPage from './components/LoginPage';
+import { manualRecalc, syncHistory, resetCurrentJobInputData, fetchHistoryData, login as apiLogin, validateSession, logout as apiLogout, setSessionToken } from './api'; // eslint-disable-line no-unused-vars
 import { buildAndDownloadPhotoZips } from './utils/photoZipBuilder';
 
 // ============================================================
@@ -1376,8 +1377,12 @@ function ActionStrip({
   showReset, resetPw,
   onResetPwChange, onToggleReset,
   onDownloadZip, onDownloadAll, onSyncHistory, onReset,
+  authUser,
 }) {
   const busy = !!downloading;
+  const perms = (authUser && authUser.permissions) || [];
+  const canDownload = perms.includes('DOWNLOAD_ZIP');
+  const canManage   = perms.includes('MANAGE_USERS');
   const BTN = {
     height: 30, padding: "0 10px", border: "none", borderRadius: 8,
     fontSize: 11.5, fontWeight: 600, cursor: "pointer", flexShrink: 0,
@@ -1401,7 +1406,7 @@ function ActionStrip({
         }}
       >
         {/* ZIP downloads */}
-        {ZIPS.map(({ mode, label, color, bg }) => {
+        {canDownload && ZIPS.map(({ mode, label, color, bg }) => {
           const active = downloading === mode;
           return (
             <button
@@ -1423,9 +1428,10 @@ function ActionStrip({
         })}
 
         {/* Separator */}
-        <div style={{ width: 1, height: 20, background: C.borderLight, flexShrink: 0 }} />
+        {canDownload && <div style={{ width: 1, height: 20, background: C.borderLight, flexShrink: 0 }} />}
 
         {/* All download */}
+        {canDownload && (
         <button
           onClick={onDownloadAll}
           disabled={busy}
@@ -1440,6 +1446,7 @@ function ActionStrip({
           <FolderDown size={10} strokeWidth={2.5} />
           {downloading === "all" ? (dlProgress.text || "처리중") : "전체↓"}
         </button>
+        )}
 
         {/* Separator */}
         <div style={{ width: 1, height: 20, background: C.borderLight, flexShrink: 0 }} />
@@ -1459,7 +1466,8 @@ function ActionStrip({
           {syncing ? "기록중" : "이력관리 기록"}
         </button>
 
-        {/* Reset */}
+        {/* Reset — admin only */}
+        {canManage && (
         <button
           onClick={onToggleReset}
           style={{
@@ -1472,10 +1480,11 @@ function ActionStrip({
           <AlertTriangle size={10} strokeWidth={2.5} />
           초기화
         </button>
+        )}
       </div>
 
       {/* Reset password panel */}
-      {showReset && (
+      {canManage && showReset && (
         <div style={{
           display: "flex", alignItems: "center", gap: 8, padding: "8px 14px",
           background: C.redBg, borderTop: `1px solid ${C.red + "30"}`,
@@ -1530,7 +1539,14 @@ function ActionStrip({
 }
 
 // ── Main App component ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+const AUTH_TOKEN_KEY = "insp_session_token";
+const AUTH_USER_KEY  = "insp_session_user";
+
 function App() {
+  // ── Auth state ────────────────────────────────────────────────────────────
+  const [authUser,    setAuthUser]    = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
+
   const [tab, setTab] = useState("inspection");
   const [loading, setLoading] = useState(true);
   const [initialLoadDone, setInitialLoadDone] = useState(false);
@@ -1596,6 +1612,48 @@ function App() {
   }, []);
 
   useEffect(() => { loadBootstrap(); }, [loadBootstrap]);
+
+  // ── Auth: restore session from localStorage on first mount ────────────────
+  useEffect(() => {
+    const storedToken = localStorage.getItem(AUTH_TOKEN_KEY);
+    if (!storedToken) {
+      setAuthLoading(false);
+      return;
+    }
+    validateSession(storedToken)
+      .then((res) => {
+        if (res.ok && res.user) {
+          setSessionToken(storedToken);
+          setAuthUser(res.user);
+        } else {
+          localStorage.removeItem(AUTH_TOKEN_KEY);
+          localStorage.removeItem(AUTH_USER_KEY);
+        }
+      })
+      .catch(() => {
+        localStorage.removeItem(AUTH_TOKEN_KEY);
+        localStorage.removeItem(AUTH_USER_KEY);
+      })
+      .finally(() => setAuthLoading(false));
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleLogin = useCallback(async (id, password) => {
+    const res = await apiLogin(id, password);
+    if (!res.ok) throw new Error(res.error || '로그인 실패');
+    localStorage.setItem(AUTH_TOKEN_KEY, res.sessionToken);
+    localStorage.setItem(AUTH_USER_KEY, JSON.stringify(res.user));
+    setSessionToken(res.sessionToken);
+    setAuthUser(res.user);
+  }, []);
+
+  const handleLogout = useCallback(async () => {
+    const token = localStorage.getItem(AUTH_TOKEN_KEY);
+    try { await apiLogout(token); } catch (_) {}
+    setSessionToken(null);
+    setAuthUser(null);
+    localStorage.removeItem(AUTH_TOKEN_KEY);
+    localStorage.removeItem(AUTH_USER_KEY);
+  }, []);
 
   // Build a fast productCode -> image item lookup used by ProductRow thumbnails
   const productImageMap = useMemo(() => {
@@ -1732,6 +1790,21 @@ function App() {
     [showToast]
   );
 
+  // ── Auth guard ───────────────────────────────────────────────────────────────
+  if (authLoading) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: '#dce3ed', fontFamily: "'Apple SD Gothic Neo','Pretendard',system-ui,sans-serif",
+        fontSize: 15, color: '#6878a0' }}>
+        ⏳ 세션 확인 중...
+      </div>
+    );
+  }
+
+  if (!authUser) {
+    return <LoginPage onLogin={handleLogin} />;
+  }
+
   return (
     <div style={S.app}>
       <style>{`
@@ -1773,6 +1846,27 @@ function App() {
                   padding: "6px 10px", background: C.accentBg, borderRadius: 8 }}
               >시트↗</a>
             )}
+            {/* User info + logout */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 4 }}>
+              <span style={{
+                fontSize: 11, color: C.textSoft, fontWeight: 600,
+                padding: '3px 8px', background: C.accentBg, borderRadius: 6,
+                maxWidth: 80, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              }}>
+                {authUser.name || authUser.id}
+              </span>
+              <button
+                onClick={handleLogout}
+                title="로그아웃"
+                style={{
+                  background: 'transparent', border: `1px solid ${C.borderLight}`,
+                  borderRadius: 7, padding: '5px 7px', cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', color: C.textSecondary,
+                }}
+              >
+                <LogOut size={13} strokeWidth={2} />
+              </button>
+            </div>
           </div>
         </div>
 
@@ -1790,6 +1884,7 @@ function App() {
           onDownloadAll={handleDownloadAll}
           onSyncHistory={handleSyncHistory}
           onReset={handleReset}
+          authUser={authUser}
         />
       </header>
 
