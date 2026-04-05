@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import Papa from 'papaparse';
 import { ClipboardCheck, FileText, BarChart3 } from 'lucide-react';
+import gs25Logo from './gs25-logo.svg';
 import InspectionPage from './components/InspectionPage';
 import RecordsPage from './components/RecordsPage';
 import SummaryPage from './components/SummaryPage';
@@ -1478,9 +1479,7 @@ function App() {
 
       {/* Header */}
       <header style={S.header}>
-        <div style={S.headerIcon}>
-          <ClipboardCheck size={17} strokeWidth={2.3} color="#fff" />
-        </div>
+        <img src={gs25Logo} alt="GS25" style={{ height: 26, flexShrink: 0, verticalAlign: "middle" }} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <p style={S.headerTitle}>
             검품 시스템
