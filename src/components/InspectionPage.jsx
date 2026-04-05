@@ -174,9 +174,11 @@ export default function InspectionPage({
   // happycall.productRanks keyed by code:: / name:: etc.
   const happycallRanks = happycall?.productRanks || {};
 
-  // Accumulated return+exchange qty per partner||code key, from existing records
-  const accumulatedMovement = useMemo(() => {
-    const map = {};
+  // Accumulated return+exchange qty per partner||code key, from existing records.
+  // Also builds movementCounts: per-product entry counts (회송 N건 / 교환 N건).
+  const { accumulatedMovement, movementCounts } = useMemo(() => {
+    const acc    = {};
+    const counts = {}; // key → { returnCount, exchangeCount }
     for (const r of records) {
       const code    = normalizeCode(String(r['상품코드'] || ''));
       const partner = String(r['협력사명'] || '').trim();
@@ -184,9 +186,12 @@ export default function InspectionPage({
       const key = `${partner}||${code}`;
       const ret = parseInt(r['회송수량'], 10) || 0;
       const exc = parseInt(r['교환수량'], 10) || 0;
-      if (ret > 0 || exc > 0) map[key] = (map[key] || 0) + ret + exc;
+      if (ret > 0 || exc > 0) acc[key] = (acc[key] || 0) + ret + exc;
+      if (!counts[key]) counts[key] = { returnCount: 0, exchangeCount: 0 };
+      if (ret > 0) counts[key].returnCount  += 1;
+      if (exc > 0) counts[key].exchangeCount += 1;
     }
-    return map;
+    return { accumulatedMovement: acc, movementCounts: counts };
   }, [records]);
 
   // ── Filtered rows (apply exclusion) ──────────────────────────────────────
@@ -497,6 +502,7 @@ export default function InspectionPage({
                 eventMap={eventMap}
                 productImageMap={productImageMap}
                 accumulatedMovement={accumulatedMovement}
+                movementCounts={movementCounts}
                 onProductImageUploaded={onProductImageUploaded}
                 onDraftChange={handleDraftChange}
                 onSaved={handleSaved}

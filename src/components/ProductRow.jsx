@@ -17,6 +17,7 @@ const ProductRow = React.memo(function ProductRow({
   row, jobKey, draft = {}, onDraftChange, onSaved, onMovementSaved, onError, onSaveError,
   saveStatus, highlight, centers = [], happycallRanks = null, eventName = '',
   productImageMap = {}, onProductImageUploaded, accumulatedQty = 0,
+  returnCount = 0, exchangeCount = 0,
 }) {
   // 'insp' = 검품사진, 'defect' = 불량사진 (return+exchange combined)
   const [showPhotoType, setShowPhotoType] = useState(null);
@@ -408,11 +409,13 @@ const ProductRow = React.memo(function ProductRow({
               <MovBtn
                 icon={<Truck size={11} strokeWidth={2} />} label="회송"
                 color={C.red} bg={C.redLight} border={C.redMid}
+                count={returnCount}
                 onClick={() => { setMovementType('RETURN'); setShowMovement(true); }}
               />
               <MovBtn
                 icon={<ArrowLeftRight size={11} strokeWidth={2} />} label="교환"
                 color={C.orange} bg={C.orangeLight} border={C.orangeMid}
+                count={exchangeCount}
                 onClick={() => { setMovementType('EXCHANGE'); setShowMovement(true); }}
               />
             </div>
@@ -552,9 +555,9 @@ function StepperBtn({ onClick, children, 'aria-label': ariaLabel, primary }) {
   );
 }
 
-// PhotoSlot: button with inline Drive thumbnails, per-photo delete, and compact mode.
-// compact=true → smaller height, 1 thumb max (used for 중량/당도).
-// compact=false (default) → full size, up to 3 thumbs (used for 검품/불량).
+// PhotoSlot: button with inline Drive thumbnails, per-photo delete, compact mode, and always-visible count badge.
+// compact=true → smaller height, 1 thumb max (중량/당도).
+// compact=false (default) → full size, up to 3 thumbs (검품/불량).
 function PhotoSlot({ label, fileIds = [], color, bg, border, onClick, onDeletePhoto, compact = false }) {
   const MAX_THUMBS = compact ? 1 : 3;
   const thumbs   = fileIds.slice(0, MAX_THUMBS);
@@ -563,6 +566,7 @@ function PhotoSlot({ label, fileIds = [], color, bg, border, onClick, onDeletePh
   const height    = compact ? 28 : 30;
   const fontSize  = compact ? 9.5 : 10.5;
   const thumbSize = compact ? 15 : 18;
+  const count     = fileIds.length;
 
   return (
     <button
@@ -582,6 +586,20 @@ function PhotoSlot({ label, fileIds = [], color, bg, border, onClick, onDeletePh
     >
       <ImagePlus size={compact ? 10 : 11} strokeWidth={2} style={{ flexShrink: 0 }} />
       <span>{label}</span>
+      {/* Always-visible count badge — immediately reflects local + server state */}
+      <span style={{
+        fontSize: 9, fontWeight: 800,
+        padding: '0 4px',
+        borderRadius: radius.full,
+        background: hasPhotos ? color  : C.border,
+        color: hasPhotos ? '#fff' : C.muted2,
+        minWidth: 16, height: 14,
+        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+        flexShrink: 0,
+        letterSpacing: '-0.01em',
+      }}>
+        {count}
+      </span>
       {thumbs.map((id) => (
         <span key={id} style={{ position: 'relative', flexShrink: 0, display: 'inline-flex' }}>
           <img
@@ -632,7 +650,7 @@ function PhotoSlot({ label, fileIds = [], color, bg, border, onClick, onDeletePh
   );
 }
 
-function MovBtn({ icon, label, color, bg, border, onClick }) {
+function MovBtn({ icon, label, color, bg, border, onClick, count = 0 }) {
   return (
     <button
       type="button"
@@ -640,7 +658,9 @@ function MovBtn({ icon, label, color, bg, border, onClick }) {
       className="action-btn"
       style={{
         height: 30, padding: '0 10px',
-        background: bg, color, border: `1px solid ${border}`,
+        background: count > 0 ? bg : C.bgAlt,
+        color: count > 0 ? color : C.muted2,
+        border: `1px solid ${count > 0 ? border : C.border}`,
         borderRadius: radius.sm, fontSize: 11, fontWeight: 600,
         cursor: 'pointer', fontFamily: font.base,
         display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 4,
@@ -648,6 +668,18 @@ function MovBtn({ icon, label, color, bg, border, onClick }) {
       }}
     >
       {icon}{label}
+      {/* Entry count badge — shows how many records are already saved */}
+      {count > 0 && (
+        <span style={{
+          fontSize: 9, fontWeight: 800,
+          background: color, color: '#fff',
+          borderRadius: radius.full, minWidth: 14, height: 14, padding: '0 2px',
+          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+          flexShrink: 0,
+        }}>
+          {count}
+        </span>
+      )}
     </button>
   );
 }

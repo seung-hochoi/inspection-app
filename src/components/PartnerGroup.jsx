@@ -12,6 +12,7 @@ function PartnerGroupBase({
   centers = [], happycallRanks = {}, eventMap = {},
   productImageMap = {}, onProductImageUploaded,
   accumulatedMovement = {},
+  movementCounts = {},
   onDraftChange, onSaved, onMovementSaved, onError, onSaveError,
   expanded = false, onToggle,
 }) {
@@ -140,6 +141,8 @@ function PartnerGroupBase({
                   normalizeCode(r['상품코드']).toLowerCase().includes(q) ||
                   (r['상품코드'] || '').toLowerCase().includes(q)
                 : false;
+              const movKey = `${r['협력사명'] || ''}||${normalizeCode(r['상품코드'])}`;
+              const mc     = movementCounts[movKey] || {};
               return (
                 <ProductRow
                   key={key} row={r} jobKey={jobKey}
@@ -150,7 +153,9 @@ function PartnerGroupBase({
                   happycallRanks={happycallRanks[`code::${normalizeCode(r['상품코드'])}`] || null}
                   eventName={eventMap[normalizeCode(r['상품코드'])] || ''}
                   productImageMap={productImageMap}
-                  accumulatedQty={accumulatedMovement[`${r['협력사명'] || ''}||${normalizeCode(r['상품코드'])}`] || 0}
+                  accumulatedQty={accumulatedMovement[movKey] || 0}
+                  returnCount={mc.returnCount || 0}
+                  exchangeCount={mc.exchangeCount || 0}
                   onProductImageUploaded={onProductImageUploaded}
                   onDraftChange={onDraftChange}
                   onSaved={onSaved}
@@ -190,6 +195,7 @@ function arePartnerGroupPropsEqual(prev, next) {
   if (prev.happycallRanks   !== next.happycallRanks)   return false;
   if (prev.eventMap         !== next.eventMap)         return false;
   if (prev.accumulatedMovement !== next.accumulatedMovement) return false;
+  if (prev.movementCounts      !== next.movementCounts)      return false;
   if (prev.expanded         !== next.expanded)         return false;
   if (prev.onToggle         !== next.onToggle)         return false;
   if (prev.onDraftChange    !== next.onDraftChange)    return false;
