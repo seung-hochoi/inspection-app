@@ -4446,7 +4446,10 @@ function syncHistorySheet_(ss) {
   // Use today's date in Asia/Seoul timezone (the day the recalc button was pressed).
   var dateStr = Utilities.formatDate(new Date(), "Asia/Seoul", "MM/dd");
 
-  // ── 9. Upsert row in 이력관리 sheet ──────────────────────────────────────
+  // ── 9. Write to 이력관리 sheet ──────────────────────────────────────────────
+  // Keep exactly: Row 1 = header, Row 2 = latest result.
+  // Every recalculation clears old data rows and rewrites a single fresh row so
+  // the sheet never accumulates duplicate or stale history rows.
   var HIST_HEADERS = [
     "일자",
     "총 입고금액",
@@ -4465,9 +4468,10 @@ function syncHistorySheet_(ss) {
 
   var histSheet = getOrCreateSheet_(ss, SHEET_NAMES.history);
 
-  // Ensure header row exists
-  if (histSheet.getLastRow() < 1 ||
-      String(histSheet.getRange(1, 1).getValue()).trim() !== "일자") {
+  // Ensure header row exists in row 1.
+  var needsHeader = histSheet.getLastRow() < 1 ||
+      String(histSheet.getRange(1, 1).getValue()).trim() !== "일자";
+  if (needsHeader) {
     if (histSheet.getLastRow() >= 1 &&
         String(histSheet.getRange(1, 1).getValue()).trim() !== "일자") {
       histSheet.insertRowBefore(1);
@@ -4492,26 +4496,16 @@ function syncHistorySheet_(ss) {
     skuCovNonExcl,
   ];
 
-  // Find existing row with today's date (column A), update in place; else append
-  var lastRow   = histSheet.getLastRow();
-  var targetRow = -1;
+  // Delete any existing data rows (rows 2 onward) so the sheet never accumulates
+  // stale or duplicate entries across repeated calculation runs.
+  var lastRow = histSheet.getLastRow();
   if (lastRow >= 2) {
-    var dateCol = histSheet.getRange(2, 1, lastRow - 1, 1).getValues();
-    for (var i = 0; i < dateCol.length; i += 1) {
-      if (String(dateCol[i][0]).trim() === dateStr) {
-        targetRow = i + 2;
-        break;
-      }
-    }
+    histSheet.deleteRows(2, lastRow - 1);
   }
 
-  if (targetRow > 0) {
-    histSheet.getRange(targetRow, 1, 1, rowValues.length).setValues([rowValues]);
-    console.log("[syncHistorySheet_] updated existing row for date=" + dateStr + " at row=" + targetRow);
-  } else {
-    histSheet.appendRow(rowValues);
-    console.log("[syncHistorySheet_] appended new row for date=" + dateStr);
-  }
+  // Write the single latest result into row 2.
+  histSheet.appendRow(rowValues);
+  console.log("[syncHistorySheet_] wrote single latest row for date=" + dateStr);
 }
 
 // ── Daily scheduled jobs ───────────────────────────────────
