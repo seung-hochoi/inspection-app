@@ -19,8 +19,8 @@ export default function SummaryPage({ summary = {}, happycall = {}, onToast, onR
     setRecalcing(true);
     try {
       await manualRecalc();
+      await onRefresh?.();
       onToast?.('재계산 완료', 'success');
-      onRefresh?.();
     } catch (err) {
       onToast?.(err.message || '재계산 실패', 'error');
     } finally { setRecalcing(false); }
@@ -106,16 +106,24 @@ export default function SummaryPage({ summary = {}, happycall = {}, onToast, onR
   const totalInspected  = s['총검품수량'] || s.totalInspected || 0;
   const totalReturn     = s['총회송수량'] || s.totalReturn    || 0;
   const totalExchange   = s['총교환수량'] || s.totalExchange  || 0;
-  const inspectionRate  = s['검품률']     || s.inspectionRate || '-';
   const partnerSummaries = s['협력사별']  || s.partners       || [];
+
+  // Format raw decimal ratio (e.g. 0.0284) as percentage string (e.g. "2.8%")
+  const inspectionRate = (() => {
+    const raw = s['검품률'] ?? s.inspectionRate;
+    if (raw === undefined || raw === null || raw === '' || raw === '-') return '0%';
+    const n = parseFloat(raw);
+    if (isNaN(n)) return String(raw);
+    return (n < 2 ? n * 100 : n).toFixed(1) + '%';
+  })();
 
   const kpis = [
     { label: '총 상품수',   value: totalProducts,  color: C.primary, bg: C.primaryLight, border: C.primaryMid,  icon: <Package size={16} strokeWidth={2} />    },
     { label: '총 발주수량', value: totalOrdered,   color: C.textSec, bg: C.bgAlt,        border: C.border,     icon: <BarChart3 size={16} strokeWidth={2} />  },
     { label: '검품수량',    value: totalInspected, color: C.green,   bg: C.greenLight,   border: C.greenMid,   icon: <TrendingUp size={16} strokeWidth={2} /> },
+    { label: '검품률',      value: inspectionRate, color: C.primary, bg: C.primaryLight, border: C.primaryMid, icon: <TrendingUp size={16} strokeWidth={2} />  },
     { label: '회송수량',    value: totalReturn,    color: C.red,     bg: C.redLight,     border: C.redMid,     icon: <ArrowDownLeft size={16} strokeWidth={2} /> },
     { label: '교환수량',    value: totalExchange,  color: C.orange,  bg: C.orangeLight,  border: C.orangeMid,  icon: <ArrowLeftRight size={16} strokeWidth={2} /> },
-    { label: '검품률',      value: inspectionRate, color: C.primary, bg: C.primaryLight, border: C.primaryMid, icon: <TrendingUp size={16} strokeWidth={2} />  },
   ];
 
   return (
@@ -125,8 +133,8 @@ export default function SummaryPage({ summary = {}, happycall = {}, onToast, onR
       transition={{ duration: 0.2 }}
       style={{ padding: '14px 12px 80px' }}
     >
-      {/* KPI grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 9, marginBottom: 18 }}>
+      {/* KPI grid — 2 columns, 3 rows */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 9, marginBottom: 18 }}>
         {kpis.map((k, i) => (
           <motion.div
             key={k.label}
@@ -138,6 +146,7 @@ export default function SummaryPage({ summary = {}, happycall = {}, onToast, onR
               border: `1px solid ${k.border}`,
               padding: '13px 12px 11px',
               boxShadow: shadow.xs,
+              display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
             }}
           >
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>

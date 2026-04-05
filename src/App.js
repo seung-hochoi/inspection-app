@@ -1357,6 +1357,7 @@ function PartnerGroup({ partnerName, products, jobKey, inspectionRows, onSaved, 
 function App() {
   const [tab, setTab] = useState("inspection");
   const [loading, setLoading] = useState(true);
+  const [initialLoadDone, setInitialLoadDone] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [jobKey, setJobKey] = useState("");
   const [jobRows, setJobRows] = useState([]);
@@ -1401,6 +1402,7 @@ function App() {
       setWorksheetUrl(d.worksheet_url || "");
       setCurrentFileName(job.source_file_name || "");
       setProductImages(Array.isArray(d.product_images) ? d.product_images : []);
+      setInitialLoadDone(true);
     } catch (e) {
       setLoadError(e.message || "초기 데이터 로드 실패");
     } finally {
@@ -1510,7 +1512,7 @@ function App() {
 
       {/* Content */}
       <main style={S.content}>
-        {loading && <div style={S.infoBox}>⏳ 초기 데이터를 불러오는 중...</div>}
+        {loading && !initialLoadDone && <div style={S.infoBox}>⏳ 초기 데이터를 불러오는 중...</div>}
         {loadError && <div style={S.errorBox}>⚠️ {loadError}</div>}
 
         {tab === "inspection" && (
