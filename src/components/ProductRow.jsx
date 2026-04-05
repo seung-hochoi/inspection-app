@@ -34,6 +34,13 @@ const ProductRow = React.memo(function ProductRow({
   // Fingerprint of the last value that was successfully persisted to the server.
   // If the current draft matches it exactly, the scheduled save is skipped.
   const lastSavedFingerprintRef = useRef(null);
+  // Rate limiter: track the wall-clock time of the last save attempt to prevent
+  // saves firing faster than once per 2 seconds regardless of other guards.
+  const lastSaveAttemptTimeRef = useRef(0);
+  // Count consecutive versionConflict responses for this row.
+  // If it exceeds the threshold, we stop retrying silently and surface an error
+  // instead of looping indefinitely.
+  const versionConflictCountRef = useRef(0);
   latestDraftRef.current = draft;  // always up-to-date even in stale closures
 
   const cleanCode    = normalizeProductCode(row['상품코드']) || '';
@@ -83,11 +90,22 @@ const ProductRow = React.memo(function ProductRow({
       pendingSaveRef.current = true;
       return;
     }
+
+    // Rate limiter: never fire more than once per 2 s for the same row, regardless
+    // of other guards.  Prevents timer-collision loops from versionConflict retries.
+    const now = Date.now();
+    if (now - lastSaveAttemptTimeRef.current < 2000) {
+      pendingSaveRef.current = true;
+      return;
+    }
+
     const draftSnapshot = latestDraftRef.current;
     // Duplicate-save guard: skip if value matches last successfully saved state
     const fingerprint = buildDraftFingerprint(draftSnapshot);
     if (fingerprint === lastSavedFingerprintRef.current) return;
+
     inFlightRef.current = true;
+    lastSaveAttemptTimeRef.current = now;
     try {
       const result = await saveBatch([buildInspPayload(row, jobKey, draftSnapshot)]);
       const conflicts = result?.data?.conflicts;
@@ -97,23 +115,49 @@ const ProductRow = React.memo(function ProductRow({
         if (conflict.conflictType === 'editorConflict' || conflict.conflictType === 'legacyConflict') {
           // A different user/session has the most recent save — genuine conflict
           // legacyConflict: an old-app client tried to overwrite this new-app row
+          versionConflictCountRef.current = 0;
           setIsConflict(true);
           onError?.('충돌: 다른 사용자가 이미 저장했습니다. 🔄 새로고침 후 다시 입력해 주세요.');
           onSaveError?.(productKey);
         } else {
-          // versionConflict — stale expected version (e.g. after page refresh).
-          // Clear the stale server version and schedule a clean retry — no error shown.
-          onDraftChange?.(productKey, {
-            ...latestDraftRef.current,
-            serverVersion: undefined,
-            serverUpdatedAt: undefined,
-          });
-          saveTimerRef.current = setTimeout(() => runSaveRef.current?.(), 400);
+          // versionConflict — stale expected version (e.g. after page refresh or
+          // first save on a row previously written by an older app version).
+          // Clear the stale tokens and schedule ONE clean retry after 500 ms.
+          //
+          // IMPORTANT: clear pendingSaveRef BEFORE returning so the finally block
+          // does not schedule a competing second timer that causes an infinite loop
+          // when the two timers keep setting pendingSaveRef on each other.
+          versionConflictCountRef.current += 1;
+          if (versionConflictCountRef.current > 3) {
+            // Too many consecutive versionConflicts — surface the error instead of
+            // silently retrying forever.
+            versionConflictCountRef.current = 0;
+            setIsConflict(true);
+            onError?.('버전 충돌이 반복됩니다. 🔄 새로고침 후 다시 시도해 주세요.');
+            onSaveError?.(productKey);
+          } else {
+            pendingSaveRef.current = false; // ← prevents finally from adding a 2nd timer
+            onDraftChange?.(productKey, {
+              ...latestDraftRef.current,
+              serverVersion: undefined,
+              serverUpdatedAt: undefined,
+            }, { silent: true });
+            saveTimerRef.current = setTimeout(() => runSaveRef.current?.(), 500);
+          }
         }
         return;
       }
 
-      // Persist server version/updatedAt so next save can detect concurrent conflicts
+      // ── Save succeeded ────────────────────────────────────────────────────
+      versionConflictCountRef.current = 0;
+
+      // Set the fingerprint FIRST so any pending follow-up save that fires
+      // before the React state update propagates will hit the duplicate guard.
+      lastSavedFingerprintRef.current = fingerprint;
+
+      // Persist server version/updatedAt so next save can detect concurrent conflicts.
+      // Use { silent: true } so handleDraftChange does NOT set saveStatuses='saving'
+      // — that spurious transition triggers unnecessary PartnerGroup re-renders.
       const savedRow = result?.data?.inspectionRows?.[0];
       if (savedRow && !savedRow.__conflict) {
         const serverVersion   = Number(savedRow['버전']    || 0);
@@ -123,18 +167,19 @@ const ProductRow = React.memo(function ProductRow({
             ...latestDraftRef.current, // use ref, not stale draftSnapshot
             serverVersion,
             serverUpdatedAt,
-          });
+          }, { silent: true });
         }
       }
 
       onSaved?.(productKey);
-      lastSavedFingerprintRef.current = fingerprint;
     } catch (err) {
       onError?.(err.message || '저장 실패');
       onSaveError?.(productKey);
     } finally {
       inFlightRef.current = false;
-      // Fire one follow-up save if the draft changed while this request was in-flight
+      // Fire one follow-up save if the draft changed while this request was in-flight.
+      // NOTE: the versionConflict branch clears pendingSaveRef before returning so
+      // this block does NOT fire a competing timer alongside the retry timer.
       if (pendingSaveRef.current) {
         pendingSaveRef.current = false;
         saveTimerRef.current = setTimeout(() => runSaveRef.current?.(), 300);

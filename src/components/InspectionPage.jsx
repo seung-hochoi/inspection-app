@@ -237,9 +237,14 @@ export default function InspectionPage({
     return Array.from(map.values());
   }, [activeRows]);
 
-  const handleDraftChange = useCallback((productKey, draft) => {
+  const handleDraftChange = useCallback((productKey, draft, options = {}) => {
     setDrafts((prev) => ({ ...prev, [productKey]: draft }));
-    setSaveStatuses((prev) => ({ ...prev, [productKey]: 'saving' }));
+    // Only mark 'saving' for real user-triggered changes.
+    // Version-token-only updates (post-save) pass { silent: true } so they don't
+    // cause a spurious 'saving' flash or unnecessary PartnerGroup re-renders.
+    if (!options.silent) {
+      setSaveStatuses((prev) => ({ ...prev, [productKey]: 'saving' }));
+    }
   }, []);
 
   const handleSaved = useCallback((productKey) => {

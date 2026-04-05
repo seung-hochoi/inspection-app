@@ -2513,8 +2513,22 @@ function hasRowConflict_(payload, existingRecord) {
 
   // Same browser session re-saving: bypass version/timestamp gating entirely.
   // This eliminates false "another user is editing" for sequential edits by the same user.
+  //
+  // FIX: also bypass when the existing row has NO clientId (written by old app) but
+  // the new app carries a valid clientId.  Without this, any new-app save on a row
+  // originally written by the old app produces a versionConflict because the same-client
+  // check requires BOTH sides to have a clientId and match. The old-app rows always
+  // have clientId="" so the check was skipped, and the version comparison (expectedVersion=1
+  // vs. old-app row version=0 or 1) fired indefinitely — the root cause of the
+  // repeated saveInspection loop observed in write_conflict_log.
   var existingClientId = String(existingRecord["clientId"] || "").trim();
-  if (payloadClientId && existingClientId && payloadClientId === existingClientId) {
+  if (payloadClientId && payloadClientId === existingClientId) {
+    // Exact match (both non-empty and equal)
+    return false;
+  }
+  if (payloadClientId && !existingClientId) {
+    // New-app client is re-saving a row that was written by the old app (no clientId).
+    // Treat as same session: allow the overwrite and let the new app claim the row.
     return false;
   }
 
