@@ -2,8 +2,9 @@ import React, { useState, useCallback, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Search, FileX, ChevronDown, Camera, XCircle, Pencil, Download, ImagePlus, CheckCircle2, AlertCircle } from 'lucide-react';
 import { C, radius, font, shadow, trans } from './styles';
-import { cancelMovementEvent, saveBatch, uploadPhotos, downloadPhotoZip, savePhotoMeta } from '../api';
+import { cancelMovementEvent, saveBatch, uploadPhotos, savePhotoMeta } from '../api';
 import { fileToBase64 } from '../utils';
+import { buildAndDownloadPhotoZips } from '../utils/photoZipBuilder';
 
 export default function RecordsPage({ records = [], jobKey, onToast, onRefresh, inspectionRows = [], config = {} }) {
   const [filter, setFilter]       = useState('all');
@@ -12,6 +13,7 @@ export default function RecordsPage({ records = [], jobKey, onToast, onRefresh, 
   const [canceling, setCanceling] = useState(null);
   const [editTarget, setEditTarget] = useState(null); // record being edited
   const [downloading, setDownloading] = useState('');
+  const [dlProgress, setDlProgress] = useState({ stage: '', percent: 0, text: '' });
 
   const filtered = useMemo(() => {
     let list = records;
@@ -47,26 +49,22 @@ export default function RecordsPage({ records = [], jobKey, onToast, onRefresh, 
 
   const handleDownloadZip = async (mode) => {
     setDownloading(mode);
+    setDlProgress({ stage: 'generating', percent: 10, text: 'ZIP 생성 중...' });
     try {
-      const result = await downloadPhotoZip({ mode });
-      if (result.downloadUrl) {
-        window.open(result.downloadUrl, '_blank');
-      } else if (result.zipBase64) {
-        const byteChars = atob(result.zipBase64);
-        const bytes = new Uint8Array(byteChars.length);
-        for (let i = 0; i < byteChars.length; i++) bytes[i] = byteChars.charCodeAt(i);
-        const blob = new Blob([bytes], { type: 'application/zip' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url; a.download = result.fileName || 'photos.zip'; a.click();
-        URL.revokeObjectURL(url);
-      } else {
+      const { count, parts } = await buildAndDownloadPhotoZips(mode, {
+        onProgress: setDlProgress,
+      });
+      if (count === 0) {
         onToast?.('다운로드할 사진이 없습니다.', 'info');
+      } else {
+        const partsNote = parts > 1 ? ` (${parts}개 파일)` : '';
+        onToast?.(`총 ${count}장 다운로드 시작${partsNote}`, 'success');
       }
     } catch (err) {
       onToast?.(err.message || 'ZIP 생성 실패', 'error');
     } finally {
       setDownloading('');
+      setDlProgress({ stage: '', percent: 0, text: '' });
     }
   };
 
@@ -144,7 +142,9 @@ export default function RecordsPage({ records = [], jobKey, onToast, onRefresh, 
           }}
         >
           <Download size={13} strokeWidth={2} />
-          {downloading === 'inspection' ? '처리 중...' : '검품사진 저장'}
+          {downloading === 'inspection'
+            ? (dlProgress.text || '처리 중...')
+            : '검품사진 저장'}
         </button>
         <button
           onClick={() => handleDownloadZip('movement')}
@@ -158,9 +158,22 @@ export default function RecordsPage({ records = [], jobKey, onToast, onRefresh, 
           }}
         >
           <Download size={13} strokeWidth={2} />
-          {downloading === 'movement' ? '처리 중...' : '불량사진 저장'}
+          {downloading === 'movement'
+            ? (dlProgress.text || '처리 중...')
+            : '불량사진 저장'}
         </button>
       </div>
+      {/* Progress bar — visible only while ZIP is being generated/downloaded */}
+      {!!downloading && dlProgress.percent > 0 && (
+        <div style={{ marginBottom: 10, borderRadius: radius.sm, overflow: 'hidden', background: C.border, height: 4 }}>
+          <div style={{
+            height: '100%',
+            width: `${dlProgress.percent}%`,
+            background: downloading === 'inspection' ? C.primary : C.red,
+            transition: 'width 0.4s ease',
+          }} />
+        </div>
+      )}
       {filtered.length === 0 ? (
         <div style={{
           padding: '56px 24px', textAlign: 'center', color: C.muted,

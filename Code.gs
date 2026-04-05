@@ -3759,132 +3759,196 @@ function createPhotoZip_(payload) {
   var usesInspectionSheet = mode === "inspection" || mode === "sugar" || mode === "weight";
   var records = usesInspectionSheet ? loadInspectionRows_() : loadRecords_();
   var maxZipBytes = 20 * 1024 * 1024;
-  var zipParts = [];
-  var currentPart = [];
-  var currentBytes = 0;
-  var usedNames = {};
-  var skippedCount = 0;
+  var baseFileName = zipFileName_(mode);
 
+  // ── Phase 1: Pre-compute reference maps ONCE (avoids per-file sheet read) ──
+  var refMaps = readOperationalReferenceMaps_(SpreadsheetApp.getActiveSpreadsheet());
+
+  // ── Phase 2: Collect photo entries without fetching any blobs ──
+  var photoEntries = []; // { record, source, index }
   records.forEach(function (record) {
     var photos = getPhotoSourcesFromRecord_(record);
     if (!photos.length) return;
 
     if (mode === "inspection") {
-      var hasInspectionPhoto =
+      var hasInspPh =
         !!String(record["사진링크"] || "").trim() ||
         !!String(record["사진링크목록"] || "").trim() ||
         !!String(record["사진파일ID목록"] || "").trim();
-      if (!hasInspectionPhoto) return;
+      if (!hasInspPh) return;
     } else if (mode === "sugar") {
-      // Filter to only sugar (당도) photos stored under photoAssetMap key "sugar"
-      var assetMap = {};
-      try { assetMap = JSON.parse(record["photoAssetMap"] || "{}"); } catch (_) {}
-      if (!assetMap["sugar"] || !assetMap["sugar"].length) return;
-      photos = assetMap["sugar"];
+      var assetMap1 = {};
+      try { assetMap1 = JSON.parse(record["photoAssetMap"] || "{}"); } catch (_) {}
+      if (!assetMap1["sugar"] || !assetMap1["sugar"].length) return;
+      photos = assetMap1["sugar"];
     } else if (mode === "weight") {
       var assetMap2 = {};
       try { assetMap2 = JSON.parse(record["photoAssetMap"] || "{}"); } catch (_) {}
       if (!assetMap2["weight"] || !assetMap2["weight"].length) return;
       photos = assetMap2["weight"];
     } else {
-    var hasMovement = isMovementRecord_(record);
-    if (mode === "movement" && !hasMovement) return;
-    if (mode !== "movement" && hasMovement) return;
+      var isMov = isMovementRecord_(record);
+      if (mode === "movement" && !isMov) return;
+      if (mode !== "movement" && isMov) return;
     }
 
     photos.forEach(function (source, index) {
-      try {
-        var asset = getPhotoAssetFromSource_(source);
-        if (!asset || !asset.blob) {
-          skippedCount += 1;
-          return;
-        }
-
-        var finalName = buildPhotoZipFileName_(record, index + 1, asset.blob, source);
-        var dedupeKey = finalName.toLowerCase();
-        var duplicateSuffix = 2;
-        while (usedNames[dedupeKey]) {
-          finalName = appendDuplicateSuffixToFileName_(finalName, duplicateSuffix);
-          dedupeKey = finalName.toLowerCase();
-          duplicateSuffix += 1;
-        }
-        usedNames[dedupeKey] = true;
-
-        var namedBlob = asset.blob.setName(finalName);
-        var blobBytes = namedBlob.getBytes().length;
-        if (currentPart.length > 0 && currentBytes + blobBytes > maxZipBytes) {
-          zipParts.push(currentPart);
-          currentPart = [];
-          currentBytes = 0;
-        }
-
-        currentPart.push(namedBlob);
-        currentBytes += blobBytes;
-      } catch (err) {
-        skippedCount += 1;
-      }
+      photoEntries.push({ record: record, source: source, index: index });
     });
   });
 
-  var dateStr = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyyMMdd");
-  var fileName =
-    mode === "movement"
-      ? "불량_" + dateStr + ".zip"
-      : mode === "inspection"
-      ? "검품_" + dateStr + ".zip"
-      : "사진_" + dateStr + ".zip";
-
-  if (currentPart.length > 0) {
-    zipParts.push(currentPart);
-  }
-
-  if (!zipParts.length) {
+  if (!photoEntries.length) {
     return {
-      fileName: fileName,
-      mimeType: "application/zip",
-      zipBase64: "",
-      downloadUrl: "",
-      fileId: "",
-      addedCount: 0,
-      skippedCount: skippedCount,
-      zipFiles: [],
+      fileName: baseFileName, mimeType: "application/zip",
+      zipBase64: "", downloadUrl: "", fileId: "",
+      addedCount: 0, skippedCount: 0, zipFiles: [],
     };
   }
 
+  // ── Phase 3: Collect unique Drive file IDs and batch-fetch blobs in parallel ──
+  // Using UrlFetchApp.fetchAll() + Drive API v3 instead of N sequential DriveApp calls.
+  var blobCache = {}; // fileId → Blob
+  var driveIds = [];
+  var driveIdSet = {};
+  photoEntries.forEach(function (entry) {
+    var text = extractImageFormulaUrl_(entry.source);
+    var id = extractGoogleDriveId_(text);
+    if (id && !driveIdSet[id]) {
+      driveIdSet[id] = true;
+      driveIds.push(id);
+    }
+  });
+
+  if (driveIds.length > 0) {
+    var token = ScriptApp.getOAuthToken();
+    var BATCH_SIZE = 10; // fetchAll concurrency cap per call
+    for (var bi = 0; bi < driveIds.length; bi += BATCH_SIZE) {
+      var chunk = driveIds.slice(bi, bi + BATCH_SIZE);
+      var requests = chunk.map(function (id) {
+        return {
+          url: "https://www.googleapis.com/drive/v3/files/" + id + "?alt=media",
+          headers: { "Authorization": "Bearer " + token },
+          muteHttpExceptions: true,
+        };
+      });
+      var responses = UrlFetchApp.fetchAll(requests);
+      responses.forEach(function (resp, ri) {
+        var code = resp.getResponseCode();
+        if (code >= 200 && code < 300) {
+          blobCache[chunk[ri]] = resp.getBlob();
+        } else {
+          console.warn("[createPhotoZip_] Drive fetch failed id=" + chunk[ri] + " status=" + code);
+        }
+      });
+    }
+  }
+
+  // ── Phase 4: Process entries with cached blobs and build ZIP parts ──
+  var zipParts = [];
+  var currentPart = [];
+  var currentBytes = 0;
+  var usedNames = {};
+  var skippedCount = 0;
+
+  photoEntries.forEach(function (entry) {
+    try {
+      var blob = getPhotoBlob_(entry.source, blobCache);
+      if (!blob) { skippedCount += 1; return; }
+
+      var finalName = buildPhotoZipFileName_(entry.record, entry.index + 1, blob, entry.source, refMaps);
+      var dedupeKey = finalName.toLowerCase();
+      var dupSuffix = 2;
+      while (usedNames[dedupeKey]) {
+        finalName = appendDuplicateSuffixToFileName_(finalName, dupSuffix);
+        dedupeKey = finalName.toLowerCase();
+        dupSuffix += 1;
+      }
+      usedNames[dedupeKey] = true;
+
+      var namedBlob = blob.setName(finalName);
+      var blobBytes = namedBlob.getBytes().length;
+      if (currentPart.length > 0 && currentBytes + blobBytes > maxZipBytes) {
+        zipParts.push(currentPart);
+        currentPart = [];
+        currentBytes = 0;
+      }
+      currentPart.push(namedBlob);
+      currentBytes += blobBytes;
+    } catch (err) {
+      skippedCount += 1;
+      console.error("[createPhotoZip_] " + err.message);
+    }
+  });
+
+  if (currentPart.length > 0) zipParts.push(currentPart);
+
+  if (!zipParts.length) {
+    return {
+      fileName: baseFileName, mimeType: "application/zip",
+      zipBase64: "", downloadUrl: "", fileId: "",
+      addedCount: 0, skippedCount: skippedCount, zipFiles: [],
+    };
+  }
+
+  // ── Phase 5: Build and save ZIP archives ──
   var savedFiles = zipParts.map(function (partBlobs, index) {
-    var partName = zipParts.length > 1 ? appendZipPartSuffix_(fileName, index + 1) : fileName;
+    var partName = zipParts.length > 1 ? appendZipPartSuffix_(baseFileName, index + 1) : baseFileName;
     var zipBlob = Utilities.zip(partBlobs, partName).setName(partName);
-    var savedZip = saveZipToDrive_(zipBlob, partName);
+    var saved = saveZipToDrive_(zipBlob, partName);
     return {
       fileName: partName,
       mimeType: zipBlob.getContentType() || "application/zip",
-      downloadUrl: savedZip.downloadUrl,
-      fileId: savedZip.fileId,
-      driveUrl: savedZip.driveUrl,
+      downloadUrl: saved.downloadUrl,
+      fileId: saved.fileId,
+      driveUrl: saved.driveUrl,
       addedCount: partBlobs.length,
     };
   });
 
-  var primaryFile = savedFiles[0] || null;
+  var primaryFile = savedFiles[0];
   return {
-    fileName: primaryFile ? primaryFile.fileName : fileName,
-    mimeType: primaryFile ? primaryFile.mimeType : "application/zip",
+    fileName: primaryFile.fileName,
+    mimeType: primaryFile.mimeType,
     zipBase64: "",
-    downloadUrl: primaryFile ? primaryFile.downloadUrl : "",
-    fileId: primaryFile ? primaryFile.fileId : "",
-    driveUrl: primaryFile ? primaryFile.driveUrl : "",
-    addedCount: savedFiles.reduce(function (sum, item) { return sum + item.addedCount; }, 0),
+    downloadUrl: primaryFile.downloadUrl,
+    fileId: primaryFile.fileId,
+    driveUrl: primaryFile.driveUrl,
+    addedCount: savedFiles.reduce(function (sum, f) { return sum + f.addedCount; }, 0),
     skippedCount: skippedCount,
     zipFiles: savedFiles,
   };
 }
 
-function buildPhotoZipFileName_(record, sequence, blob, source) {
-  var maps = readOperationalReferenceMaps_(SpreadsheetApp.getActiveSpreadsheet());
+// Returns the Blob for a photo source using the pre-built blob cache.
+// Falls back to a live URL fetch for non-Drive HTTP sources (rare).
+function getPhotoBlob_(source, blobCache) {
+  var text = extractImageFormulaUrl_(source);
+  var driveId = extractGoogleDriveId_(text);
+  if (driveId) return blobCache[driveId] || null;
+  if (/^https?:\/\//i.test(text)) {
+    var resp = UrlFetchApp.fetch(text, { muteHttpExceptions: true, followRedirects: true });
+    if (resp.getResponseCode() >= 200 && resp.getResponseCode() < 300) return resp.getBlob();
+  }
+  return null;
+}
+
+// Build the output ZIP file name for a given mode.
+function zipFileName_(mode) {
+  var dateStr = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyyMMdd");
+  if (mode === "movement")   return "불량_"  + dateStr + ".zip";
+  if (mode === "inspection") return "검품_"  + dateStr + ".zip";
+  if (mode === "sugar")      return "당도_"  + dateStr + ".zip";
+  if (mode === "weight")     return "중량_"  + dateStr + ".zip";
+  return "사진_" + dateStr + ".zip";
+}
+
+// maps is now pre-computed by the caller (avoids a sheet read per photo file).
+function buildPhotoZipFileName_(record, sequence, blob, source, maps) {
+  if (!maps) maps = readOperationalReferenceMaps_(SpreadsheetApp.getActiveSpreadsheet());
   var typeLabel = getPhotoZipTypeLabel_(record, source);
   var rawPartner = String(record["협력사명"] || record["파트너사"] || "협력사").trim();
   var partnerKey = normalizeOperationalLookupText_(rawPartner);
-  var partnerName = sanitizeFileName_(maps.partnerToStandard[partnerKey] || rawPartner);
+  var partnerName = sanitizeFileName_((maps.partnerToStandard && maps.partnerToStandard[partnerKey]) || rawPartner);
   var productName = sanitizeFileName_(record["상품명"] || record["상품코드"] || "상품");
   var extension = getBlobExtension_(blob, source);
   // 중량사진 omits productName/partnerName per naming convention
