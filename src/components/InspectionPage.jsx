@@ -12,7 +12,7 @@ const DRAFTS_KEY = 'inspection_drafts_v2';
 export default function InspectionPage({
   jobKey, rows = [], config = {}, records = [], happycall = {}, inspectionRows = [],
   productImageMap = {}, onProductImageUploaded,
-  onError, onToast, onCsvUpload, onRefresh,
+  onError, onToast, onCsvUpload, onRefresh, onRecordsUpdate,
 }) {
   const [drafts, setDrafts]             = useState(() => loadDrafts());
   const [saveStatuses, setSaveStatuses] = useState({});
@@ -224,10 +224,16 @@ export default function InspectionPage({
   }, []);
 
   const handleError    = useCallback((msg) => { onError?.(msg); onToast?.(msg, 'error'); }, [onError, onToast]);
-  const handleMovSaved = useCallback(() => {
+  const handleMovSaved = useCallback((freshRecords) => {
     onToast?.('저장되었습니다.', 'success');
-    onRefresh?.();
-  }, [onToast, onRefresh]);
+    // If the backend returned fresh records, update only records state (no loading flash).
+    // Fall back to full reload if fresh records are unavailable (e.g. backend error).
+    if (Array.isArray(freshRecords) && onRecordsUpdate) {
+      onRecordsUpdate(freshRecords);
+    } else {
+      onRefresh?.();
+    }
+  }, [onToast, onRecordsUpdate, onRefresh]);
 
   const handleScan = useCallback((code) => {
     setShowScanner(false);

@@ -1453,6 +1453,7 @@ function App() {
             onToast={showToast}
             onCsvUpload={handleCsvUpload}
             onRefresh={loadBootstrap}
+            onRecordsUpdate={setRecords}
           />
         )}
         {tab === "records" && (

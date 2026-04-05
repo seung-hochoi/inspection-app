@@ -99,6 +99,11 @@ export const downloadPhotoZip = (payload) =>
 export const saveProductImageMapping = (payload) =>
   post({ action: "saveProductImageMapping", payload });
 
+// Request a lightweight server-side sync of return sheets + inspection totals.
+// Use after a save when a full bootstrap reload is too expensive.
+export const postSaveSync = (payload = {}) =>
+  post({ action: "postSaveSync", ...payload });
+
 // Retry wrapper used by save queue
 export const withRetry = async (task) => {
   let lastError = null;

@@ -7,7 +7,8 @@ import { C, radius, font, shadow, trans } from './styles';
 import PhotoUploader from './PhotoUploader';
 import ReturnExchangeModal from './ReturnExchangeModal';
 import { saveBatch, saveProductImageMapping } from '../api';
-import { normalizeProductCode, fileToBase64, getClientId } from '../utils';
+import { normalizeProductCode, fileToBase64 } from '../utils';
+import { buildInspPayload, buildMovPayload, buildDraftFingerprint } from '../savePayload';
 
 // ProductRow is memoized: all callback props are stable useCallbacks; draft and
 // saveStatus are per-key values that only change for the specific product that saved.
@@ -87,7 +88,7 @@ const ProductRow = React.memo(function ProductRow({
     if (fingerprint === lastSavedFingerprintRef.current) return;
     inFlightRef.current = true;
     try {
-      const result = await saveBatch([buildInspRow(row, jobKey, draftSnapshot)]);
+      const result = await saveBatch([buildInspPayload(row, jobKey, draftSnapshot)]);
       const conflicts = result?.data?.conflicts;
 
       if (conflicts && conflicts.length > 0) {
@@ -188,23 +189,15 @@ const ProductRow = React.memo(function ProductRow({
   };
 
   const handleMovementSave = async ({ type, centerName, qty, note }) => {
-    await saveBatch([{
-      type: 'movement',
-      '작업기준일또는CSV식별값': jobKey,
-      '상품코드':  cleanCode || row['상품코드'] || '',
-      '상품명':    row['상품명']    || '',
-      '협력사명':  row['협력사명']  || '',
-      '센터명':    centerName || '',
-      '처리유형':  type === 'RETURN' ? '회송' : '교환',
-      '회송수량':  type === 'RETURN'   ? String(qty) : '0',
-      '교환수량':  type === 'EXCHANGE' ? String(qty) : '0',
-      '발주수량':  String(row['발주수량'] || 0),
-      '전체발주수량': String(row['전체발주수량'] || row['발주수량'] || 0),
-      '수주수량':  String(row.__centerList?.find((c) => c.name === centerName)?.qty ?? 0),
-      '비고': note || '',
-      movementType: type,
-    }]);
-    onMovementSaved?.();
+    const result = await saveBatch([
+      buildMovPayload(row, jobKey, {
+        type, centerName, qty, note,
+        centerList: row.__centerList || [],
+      }),
+    ]);
+    // Pass fresh records back so InspectionPage can update records tab without a full reload.
+    // freshRecords is injected by the backend when movement rows were saved successfully.
+    onMovementSaved?.(result?.data?.freshRecords);
   };
 
   const orderedQty = parseInt(row['발주수량'], 10) || 0;
@@ -481,25 +474,6 @@ const ProductRow = React.memo(function ProductRow({
 
 export default ProductRow;
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-// Produces a cheap string fingerprint of all save-relevant draft fields.
-// Two calls with equal content return the same string, allowing the save guard
-// to skip requests when nothing actually changed since the last successful save.
-function buildDraftFingerprint(d) {
-  return [
-    d.inspQty     || '',
-    d.defectReason || '',
-    d.brixMin     || '',
-    d.brixMax     || '',
-    d.brixAvg     || '',
-    (d.inspPhotoIds   || []).join(','),
-    (d.defectPhotoIds || []).join(','),
-    (d.weightPhotoIds || []).join(','),
-    (d.brixPhotoIds   || []).join(','),
-  ].join('|');
-}
-
 // ─── Sub-components ──────────────────────────────────────────────────────────
 
 // Animated chip showing save state, completion, or defect quality result.
@@ -676,37 +650,6 @@ function MovBtn({ icon, label, color, bg, border, onClick }) {
       {icon}{label}
     </button>
   );
-}
-
-function buildInspRow(row, jobKey, draft) {
-  const cleanCode = normalizeProductCode(row['상품코드']) || '';
-  // Combine inspection + defect photos into one field
-  const inspIds   = (draft.inspPhotoIds || draft.photoFileIds || []).filter(Boolean);
-  const defectIds = (draft.defectPhotoIds ||
-    [...(draft.returnPhotoIds || []), ...(draft.exchangePhotoIds || [])]).filter(Boolean);
-  const weightIds = (draft.weightPhotoIds || []).filter(Boolean);
-  const brixIds   = (draft.brixPhotoIds   || []).filter(Boolean);
-  const allPhotoIds = [...new Set([...inspIds, ...defectIds, ...weightIds, ...brixIds])];
-  const payload = {
-    type: 'inspection',
-    '작업기준일또는CSV식별값': jobKey,
-    '상품코드':  cleanCode,
-    '상품명':    row['상품명']    || '',
-    '협력사명':  row['협력사명']  || '',
-    '발주수량':  String(row['발주수량'] || 0),
-    '검품수량':  String(parseInt(draft.inspQty, 10) || 0),
-    '불량사유':  draft.defectReason || '',
-    '사진파일ID목록': allPhotoIds.join('\n'),
-    'BRIX최저': draft.brixMin || '',
-    'BRIX최고': draft.brixMax || '',
-    'BRIX평균': draft.brixAvg || '',
-  };
-  // Include server version/updatedAt so backend can detect concurrent conflicts
-  if (draft.serverVersion)    payload.expectedVersion    = draft.serverVersion;
-  if (draft.serverUpdatedAt)  payload.expectedUpdatedAt  = draft.serverUpdatedAt;
-  // Stable session ID — backend uses this to allow same-user re-saves without version gating
-  payload.clientId = getClientId();
-  return payload;
 }
 
 // ── EOF ──

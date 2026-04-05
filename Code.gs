@@ -591,6 +591,13 @@ function doPost(e) {
         } catch (syncErr) {
           console.error("[doPost] syncReturnSheets_ failed after saveBatch: " + syncErr.message);
         }
+        // Include fresh records in the response so the client can update the Records tab
+        // without a full bootstrap reload. Falls back gracefully on failure.
+        try {
+          batchData.freshRecords = loadRecords_();
+        } catch (e) {
+          console.error("[doPost] loadRecords_ for freshRecords failed: " + e.message);
+        }
       }
       return jsonOutput_({
         ok: true,
@@ -599,7 +606,7 @@ function doPost(e) {
     }
 
     if (action === "postSaveSync") {
-      return jsonOutput_({ ok: true, data: { hasInspection: false, hasMovement: false } });
+      return jsonOutput_({ ok: true, data: postSaveSync_(body) });
     }
 
     if (action === "manualRecalc") {
@@ -1536,8 +1543,21 @@ function saveBatch_(rows) {
   };
 }
 
+// Runs a targeted post-save sync: syncs return/exchange summary sheets and
+// recalculates inspection+movement totals on the inspection sheet.
+// Called by the "postSaveSync" action so clients can request a lightweight sync
+// without triggering a full bootstrap reload.
 function postSaveSync_(payload) {
-  return { hasInspection: !!payload.hasInspection, hasMovement: !!payload.hasMovement };
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  try { syncReturnSheets_(ss); } catch (e) {
+    console.error("[postSaveSync_] syncReturnSheets_ failed: " + e.message);
+  }
+  try {
+    syncInspectionMovementTotals_(getInspectionSheet_(ss), getRecordSheet_(ss));
+  } catch (e) {
+    console.error("[postSaveSync_] syncInspectionMovementTotals_ failed: " + e.message);
+  }
+  return { synced: true };
 }
 
 function manualRecalc_() {
