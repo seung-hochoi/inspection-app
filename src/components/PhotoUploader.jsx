@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Camera, Image, X, RotateCcw, Loader2 } from 'lucide-react';
 import { C, radius, font, shadow, cardStyle } from './styles';
@@ -29,6 +29,16 @@ export default function PhotoUploader({ jobKey, product, existingFileIds = [], o
   const pendingFilesRef = useRef([]);
   const fileInputRef    = useRef(null);
   const cameraInputRef  = useRef(null);
+  // Track blob URLs that must be revoked — persisted in a ref so cleanup always sees them
+  const blobUrlsRef = useRef([]);
+
+  // Revoke all tracked blob URLs on unmount (prevents memory leaks on close-without-success)
+  useEffect(() => {
+    return () => {
+      blobUrlsRef.current.forEach((u) => { try { URL.revokeObjectURL(u); } catch (_) {} });
+      blobUrlsRef.current = [];
+    };
+  }, []);
 
   // Core upload routine — accepts explicit file list and their matching blob URLs
   const doUpload = useCallback(async (files, urls) => {
@@ -56,8 +66,9 @@ export default function PhotoUploader({ jobKey, product, existingFileIds = [], o
         : Array.isArray(result.data) ? result.data : [];
       const newIds = photosArr.map((item) => String(item.fileId || '').trim()).filter(Boolean);
       const merged = [...new Set([...existingFileIds, ...newIds])];
-      // Revoke blob URLs now that Drive IDs are in hand
-      urls.forEach((u) => URL.revokeObjectURL(u));
+      // Revoke blob URLs now that Drive IDs are in hand — also clear tracking ref
+      urls.forEach((u) => { try { URL.revokeObjectURL(u); } catch (_) {} });
+      blobUrlsRef.current = blobUrlsRef.current.filter((u) => !urls.includes(u));
       onDone(merged);
       onClose();
     } catch (err) {
@@ -72,13 +83,16 @@ export default function PhotoUploader({ jobKey, product, existingFileIds = [], o
     } finally {
       setUploading(false);
     }
-  }, [jobKey, product, existingFileIds, onDone, onClose]);
+  }, [jobKey, product, existingFileIds, onDone, onClose]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Called when the user picks files — creates blob previews immediately then auto-uploads
   const handleFiles = useCallback((files) => {
     const list = Array.from(files || []);
     if (!list.length) return;
+    // Revoke any previously displayed blob URLs before replacing them
+    blobUrlsRef.current.forEach((u) => { try { URL.revokeObjectURL(u); } catch (_) {} });
     const urls = list.map((f) => URL.createObjectURL(f));
+    blobUrlsRef.current = urls;
     // Replace any previous pending batch (each picker interaction is one upload batch)
     pendingFilesRef.current = list;
     setLocalUrls(urls);

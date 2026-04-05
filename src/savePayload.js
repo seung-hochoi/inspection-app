@@ -54,6 +54,12 @@ export function buildInspPayload(row, jobKey, draft) {
     '검품수량':  String(parseInt(draft.inspQty, 10) || 0),
     '불량사유':  draft.defectReason || '',
     '사진파일ID목록': allPhotoIds.join('\n'),
+    // Per-category arrays — consumed by Code.gs to store type-specific photo IDs
+    // in photo_assets so they survive page reload on any device.
+    inspPhotoIds:   inspIds,
+    defectPhotoIds: defectIds,
+    weightPhotoIds: weightIds,
+    brixPhotoIds:   brixIds,
     'BRIX최저': draft.brixMin || '',
     'BRIX최고': draft.brixMax || '',
     'BRIX평균': draft.brixAvg || '',

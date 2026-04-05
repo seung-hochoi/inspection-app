@@ -52,18 +52,50 @@ export default function InspectionPage({
         const existing = next[key] || {};
         const updates  = {};
 
-        const photoIds = String(ir['사진파일ID목록'] || '').split('\n').filter(Boolean);
-        if (photoIds.length > 0) {
-          // Always merge: add any server-side IDs not yet present in the draft.
-          // This covers: initial load, post-save hydration, cross-session photo adds.
-          const existingIds = [...(existing.inspPhotoIds || existing.photoFileIds || [])];
-          const existingSet = new Set(existingIds);
-          const hasNewIds   = photoIds.some((id) => !existingSet.has(id));
-          if (hasNewIds) {
-            updates.inspPhotoIds = [...new Set([...existingIds, ...photoIds])];
+        // ── Photo hydration ────────────────────────────────────────────────
+        // Prefer per-category fields set by applyPhotoAssetFieldsToRow_ when the row
+        // was saved by the new app (photoCategoriesJSON stored in photo_assets col 5).
+        // Fall back to the combined 사진파일ID목록 → inspPhotoIds for older rows.
+        const hasCategories =
+          ir['inspPhotoIds'] !== undefined ||
+          ir['defectPhotoIds'] !== undefined ||
+          ir['weightPhotoIds'] !== undefined ||
+          ir['brixPhotoIds'] !== undefined;
+
+        if (hasCategories) {
+          // Per-category hydration — each type is independent
+          const merge = (draftField, legacyField, serverField) => {
+            const serverIds = String(ir[serverField] || '').split('\n').filter(Boolean);
+            if (!serverIds.length) return {};
+            const existingIds  = [...(existing[draftField] || existing[legacyField] || [])];
+            const existingSet  = new Set(existingIds);
+            const hasNew       = serverIds.some((id) => !existingSet.has(id));
+            if (!hasNew) return {};
+            return { [draftField]: [...new Set([...existingIds, ...serverIds])] };
+          };
+          const pInsp   = merge('inspPhotoIds',   'photoFileIds',  'inspPhotoIds');
+          const pDefect = merge('defectPhotoIds',  null,            'defectPhotoIds');
+          const pWeight = merge('weightPhotoIds',  null,            'weightPhotoIds');
+          const pBrix   = merge('brixPhotoIds',    null,            'brixPhotoIds');
+          const photoUpdates = { ...pInsp, ...pDefect, ...pWeight, ...pBrix };
+          if (Object.keys(photoUpdates).length > 0) {
+            Object.assign(updates, photoUpdates);
             changed = true;
           }
+        } else {
+          // Legacy fallback: combined list → inspPhotoIds only
+          const photoIds = String(ir['사진파일ID목록'] || '').split('\n').filter(Boolean);
+          if (photoIds.length > 0) {
+            const existingIds = [...(existing.inspPhotoIds || existing.photoFileIds || [])];
+            const existingSet = new Set(existingIds);
+            const hasNewIds   = photoIds.some((id) => !existingSet.has(id));
+            if (hasNewIds) {
+              updates.inspPhotoIds = [...new Set([...existingIds, ...photoIds])];
+              changed = true;
+            }
+          }
         }
+
         const inspQty = String(ir['검품수량'] || '');
         if (inspQty && inspQty !== '0' && !existing.inspQty) {
           updates.inspQty = inspQty;

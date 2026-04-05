@@ -1096,6 +1096,7 @@ function photoAssetHeaders_() {
     "사진파일ID목록",
     "사진개수",
     "수정일시",
+    "photoCategoriesJSON",  // per-category photo IDs — added for type-specific hydration
   ];
 }
 
@@ -1156,18 +1157,28 @@ function loadPhotoAssetMap_(ss) {
   for (var r = 1; r < values.length; r += 1) {
     var key = String(values[r][0] || "").trim();
     if (!key) continue;
+    var categoriesRaw = (values[r][4] !== undefined && values[r][4] !== null)
+      ? String(values[r][4]).trim() : "";
+    var categories = null;
+    if (categoriesRaw) {
+      try { categories = JSON.parse(categoriesRaw); } catch (_) {}
+    }
     map[key] = {
       rowNumber: r + 1,
       fileIdsText: String(values[r][1] || "").trim(),
       photoCount: parseNumber_(values[r][2] || 0),
       updatedAt: values[r][3] || "",
+      categories: categories,
     };
   }
 
   return map;
 }
 
-function upsertPhotoAsset_(assetKey, fileIdsText, preloadedMap) {
+// categoriesJSON — optional JSON string with per-type photo IDs:
+//   {"insp":["id1"],"defect":["id2"],"weight":["id3"],"brix":["id4"]}
+// Stored in column 5 of photo_assets for type-specific preview hydration.
+function upsertPhotoAsset_(assetKey, fileIdsText, preloadedMap, categoriesJSON) {
   var key = String(assetKey || "").trim();
   if (!key) return;
 
@@ -1181,7 +1192,7 @@ function upsertPhotoAsset_(assetKey, fileIdsText, preloadedMap) {
   var sheet = getPhotoAssetSheet_(ss);
   var map = preloadedMap !== undefined ? preloadedMap : loadPhotoAssetMap_(ss);
   var photoCount = splitPhotoSourceText_(normalizedFileIds).length;
-  var rowValues = [[key, normalizedFileIds, photoCount, new Date().toISOString()]];
+  var rowValues = [[key, normalizedFileIds, photoCount, new Date().toISOString(), categoriesJSON || ""]];
   var existing = map[key];
 
   if (existing && existing.rowNumber) {
@@ -1242,6 +1253,16 @@ function applyPhotoAssetFieldsToRow_(row, assetMap, kind) {
   row["사진링크"] = photoLinks[0] || "";
   row["사진URL"] = row["사진링크"];
   row["사진개수"] = asset ? parseNumber_(asset.photoCount || fileIds.length) : parseNumber_(row["사진개수"] || 0);
+
+  // Set per-category photo ID fields when category data is available.
+  // These are consumed by InspectionPage.jsx for type-specific preview hydration on reload.
+  if (asset && asset.categories) {
+    row["inspPhotoIds"]   = (asset.categories.insp   || []).join("\n");
+    row["defectPhotoIds"] = (asset.categories.defect || []).join("\n");
+    row["weightPhotoIds"] = (asset.categories.weight || []).join("\n");
+    row["brixPhotoIds"]   = (asset.categories.brix   || []).join("\n");
+  }
+
   return row;
 }
 
@@ -1614,7 +1635,7 @@ function upsertInspectionRow_(sheet, payload, photoAssetMap, preloadedValues) {
     return row;
   }
   writeInspectionRow_(sheet, targetRow, row);
-  upsertPhotoAsset_(makeInspectionPhotoAssetKey_(row["작업기준일또는CSV식별값"], row["상품코드"], row["협력사명"]), row["사진파일ID목록"], photoAssetMap);
+  upsertPhotoAsset_(makeInspectionPhotoAssetKey_(row["작업기준일또는CSV식별값"], row["상품코드"], row["협력사명"]), row["사진파일ID목록"], photoAssetMap, row["photoCategoriesJSON"] || "");
   console.log("[upsertInspectionRow_] written row=" + JSON.stringify({
     rowNumber: targetRow > 0 ? targetRow : sheet.getLastRow(),
     productCode: row["상품코드"],
@@ -1989,6 +2010,23 @@ function buildInspectionPayload_(payload, existingRecord) {
         ""
       ).split(/\n+/).filter(Boolean);
 
+  // ── Per-category photo IDs ──────────────────────────────────────────────────
+  // The new app sends per-category arrays so photo types survive page reload.
+  // Fall back to null so older saves (no category data) leave photo_assets unchanged.
+  var parseCatArr = function (val) {
+    if (Array.isArray(val)) return val.filter(Boolean);
+    var text = String(val || "").trim();
+    return text ? splitPhotoSourceText_(text) : [];
+  };
+  var catInsp   = parseCatArr(payload["inspPhotoIds"]);
+  var catDefect = parseCatArr(payload["defectPhotoIds"]);
+  var catWeight = parseCatArr(payload["weightPhotoIds"]);
+  var catBrix   = parseCatArr(payload["brixPhotoIds"]);
+  var hasCategories = catInsp.length || catDefect.length || catWeight.length || catBrix.length;
+  var photoCategoriesJSON = hasCategories
+    ? JSON.stringify({ insp: catInsp, defect: catDefect, weight: catWeight, brix: catBrix })
+    : "";
+
   return {
     "작성일시": formatWrittenAtKst_(payload["작성일시"] || (existingRecord && existingRecord["작성일시"]) || new Date().toISOString()),
     "작업기준일또는CSV식별값": payload["작업기준일또는CSV식별값"] || "",
@@ -2004,6 +2042,7 @@ function buildInspectionPayload_(payload, existingRecord) {
     "BRIX최고": payload["BRIX최고"] || payload["brixMax"] || "",
     "BRIX평균": payload["BRIX평균"] || payload["brixAvg"] || "",
     "사진파일ID목록": photoFileIds.join("\n"),
+    "photoCategoriesJSON": photoCategoriesJSON,  // passed to upsertPhotoAsset_ below
     "수정일시": new Date().toISOString(),
     "버전": existingRecord ? (parseNumber_(existingRecord["버전"] || 0) + 1) : 1,
     "clientId": String(payload["clientId"] || (existingRecord && existingRecord["clientId"]) || "").trim(),
