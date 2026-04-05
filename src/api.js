@@ -29,13 +29,18 @@ const post = async (body) => {
     text = await response.text();
     const result = JSON.parse(text);
     if (!response.ok || result.ok === false) {
-      throw new Error(result.message || "서버 오류");
+      const err = new Error(result.message || "서버 오류");
+      // Mark server-side logical rejections so withRetry skips them
+      err.isLogicalError = true;
+      throw err;
     }
     return result;
   } catch (err) {
     if (err.message && err.message.includes("REACT_APP_GOOGLE_SCRIPT_URL")) throw err;
     if (text && text.trim().startsWith("<")) {
-      throw new Error("백엔드가 HTML을 반환했습니다. 스크립트 URL을 확인하세요.");
+      const htmlErr = new Error("백엔드가 HTML을 반환했습니다. 스크립트 URL을 확인하세요.");
+      htmlErr.isLogicalError = true;
+      throw htmlErr;
     }
     throw err;
   }
@@ -102,6 +107,9 @@ export const withRetry = async (task) => {
       return await task();
     } catch (err) {
       lastError = err;
+      // Do NOT retry server-side logical rejections (conflict, version mismatch, bad request, etc.)
+      // Only retry transient network/connectivity failures
+      if (err.isLogicalError) throw err;
       if (attempt < RETRY_DELAYS_MS.length - 1) {
         await new Promise((r) => setTimeout(r, RETRY_DELAYS_MS[attempt]));
       }

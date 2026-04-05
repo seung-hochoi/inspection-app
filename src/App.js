@@ -160,7 +160,11 @@ const postApi = async (body) => {
     body: JSON.stringify(body),
   });
   const data = await resp.json();
-  if (!resp.ok || data.ok === false) throw new Error(data.message || "API 오류");
+  if (!resp.ok || data.ok === false) {
+    const err = new Error(data.message || "API 오류");
+    err.isLogicalError = true;
+    throw err;
+  }
   return data;
 };
 
@@ -168,6 +172,8 @@ const retryApi = async (fn, retries = 3, delay = 2000) => {
   for (let i = 0; i < retries; i++) {
     try { return await fn(); }
     catch (err) {
+      // Do NOT retry server-side logical rejections (conflict, version mismatch, etc.)
+      if (err.isLogicalError) throw err;
       if (i < retries - 1) await new Promise((r) => setTimeout(r, delay));
       else throw err;
     }

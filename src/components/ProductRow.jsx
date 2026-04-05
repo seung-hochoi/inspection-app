@@ -92,8 +92,9 @@ const ProductRow = React.memo(function ProductRow({
 
       if (conflicts && conflicts.length > 0) {
         const conflict = conflicts[0];
-        if (conflict.conflictType === 'editorConflict') {
+        if (conflict.conflictType === 'editorConflict' || conflict.conflictType === 'legacyConflict') {
           // A different user/session has the most recent save — genuine conflict
+          // legacyConflict: an old-app client tried to overwrite this new-app row
           setIsConflict(true);
           onError?.('충돌: 다른 사용자가 이미 저장했습니다. 🔄 새로고침 후 다시 입력해 주세요.');
           onSaveError?.(productKey);

@@ -1497,6 +1497,22 @@ function saveBatch_(rows) {
       var savedInspection = upsertInspectionRow_(inspectionSheet, row, photoAssetMap, inspSheetValues);
       if (savedInspection && savedInspection.__conflict) {
         conflicts.push(savedInspection);
+      } else if (savedInspection && inspSheetValues !== null) {
+        // Keep the preloaded in-memory array in sync so later rows in the same
+        // batch see the updated state without re-reading the sheet.
+        var iHeaders = inspectionHeaders_();
+        var updatedRowData = iHeaders.map(function(h) {
+          return (savedInspection[h] !== undefined ? savedInspection[h] : "");
+        });
+        var rowNum = savedInspection.__rowNumber || 0;
+        if (rowNum >= 2) {
+          var rowIdx = rowNum - 2; // 0-based index into values array
+          if (rowIdx < inspSheetValues.length) {
+            inspSheetValues[rowIdx] = updatedRowData; // update existing slot
+          } else if (rowIdx === inspSheetValues.length) {
+            inspSheetValues.push(updatedRowData); // append for new rows
+          }
+        }
       }
       inspectionRows.push(savedInspection);
       return;
@@ -1747,9 +1763,23 @@ function getRowUpdatedAt_(row) {
 
 function hasRowConflict_(payload, existingRecord) {
   var expectedUpdatedAt = String(payload && (payload.expectedUpdatedAt || payload["expectedUpdatedAt"]) || "").trim();
-  var expectedVersion = parseNumber_(payload && (payload.expectedVersion || payload["expectedVersion"]) || 0);
+  var expectedVersion   = parseNumber_(payload && (payload.expectedVersion || payload["expectedVersion"]) || 0);
+  var payloadClientId   = String((payload && (payload.clientId || payload["clientId"])) || "").trim();
 
-  if (!expectedUpdatedAt && !expectedVersion) {
+  // ── Legacy-app guard ──────────────────────────────────────────────────────
+  // Old app sends no clientId and no version info.
+  // If the server row was already written by the new app (has clientId), or
+  // has been saved more than once (version > 1), block the overwrite.
+  // New-app retries after versionConflict resolution still carry clientId,
+  // so they are NOT affected by this path.
+  if (!expectedUpdatedAt && !expectedVersion && !payloadClientId) {
+    if (existingRecord) {
+      var existingClientId_ = String(existingRecord["clientId"] || "").trim();
+      var existingVersion_  = parseNumber_(existingRecord["버전"] || 0);
+      if (existingClientId_ || existingVersion_ > 1) {
+        return true; // legacy overwrite blocked
+      }
+    }
     return false;
   }
 
@@ -1759,14 +1789,13 @@ function hasRowConflict_(payload, existingRecord) {
 
   // Same browser session re-saving: bypass version/timestamp gating entirely.
   // This eliminates false "another user is editing" for sequential edits by the same user.
-  var payloadClientId = String((payload && (payload.clientId || payload["clientId"])) || "").trim();
   var existingClientId = String(existingRecord["clientId"] || "").trim();
   if (payloadClientId && existingClientId && payloadClientId === existingClientId) {
     return false;
   }
 
   var currentUpdatedAt = getRowUpdatedAt_(existingRecord);
-  var currentVersion = getRowVersion_(existingRecord);
+  var currentVersion   = getRowVersion_(existingRecord);
 
   if (expectedUpdatedAt && currentUpdatedAt && expectedUpdatedAt !== currentUpdatedAt) {
     return true;
@@ -1782,9 +1811,13 @@ function hasRowConflict_(payload, existingRecord) {
 function buildConflictResult_(rowType, payload, existingRecord) {
   var payloadClientId = String((payload && (payload.clientId || payload["clientId"])) || "").trim();
   var existingClientId = String((existingRecord && existingRecord["clientId"]) || "").trim();
-  // editorConflict = two distinct identified sessions; versionConflict = stale version, same or unknown session
+  // editorConflict   = two distinct identified sessions both have clientIds
+  // legacyConflict   = old-app payload (no clientId) tried to overwrite a new-app row (has clientId)
+  // versionConflict  = stale version, same or unknown session
   var conflictType = (payloadClientId && existingClientId && payloadClientId !== existingClientId)
     ? "editorConflict"
+    : (!payloadClientId && existingClientId)
+    ? "legacyConflict"
     : "versionConflict";
   return {
     __conflict: true,

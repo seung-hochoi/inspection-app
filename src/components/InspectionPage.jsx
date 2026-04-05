@@ -53,9 +53,16 @@ export default function InspectionPage({
         const updates  = {};
 
         const photoIds = String(ir['사진파일ID목록'] || '').split('\n').filter(Boolean);
-        if (photoIds.length > 0 && !existing.inspPhotoIds?.length && !existing.photoFileIds?.length) {
-          updates.inspPhotoIds = photoIds;
-          changed = true;
+        if (photoIds.length > 0) {
+          // Always merge: add any server-side IDs not yet present in the draft.
+          // This covers: initial load, post-save hydration, cross-session photo adds.
+          const existingIds = [...(existing.inspPhotoIds || existing.photoFileIds || [])];
+          const existingSet = new Set(existingIds);
+          const hasNewIds   = photoIds.some((id) => !existingSet.has(id));
+          if (hasNewIds) {
+            updates.inspPhotoIds = [...new Set([...existingIds, ...photoIds])];
+            changed = true;
+          }
         }
         const inspQty = String(ir['검품수량'] || '');
         if (inspQty && inspQty !== '0' && !existing.inspQty) {
@@ -217,7 +224,10 @@ export default function InspectionPage({
   }, []);
 
   const handleError    = useCallback((msg) => { onError?.(msg); onToast?.(msg, 'error'); }, [onError, onToast]);
-  const handleMovSaved = useCallback(() => onToast?.('저장되었습니다.', 'success'), [onToast]);
+  const handleMovSaved = useCallback(() => {
+    onToast?.('저장되었습니다.', 'success');
+    onRefresh?.();
+  }, [onToast, onRefresh]);
 
   const handleScan = useCallback((code) => {
     setShowScanner(false);
