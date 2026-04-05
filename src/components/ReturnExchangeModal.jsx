@@ -13,7 +13,7 @@ import { C, radius, font, cardStyle } from './styles';
  *   onSave({ type:'RETURN'|'EXCHANGE', centerName, qty, note })
  *   onClose()
  */
-export default function ReturnExchangeModal({ product, jobKey, initialType, centers = [], accumulatedQty = 0, onSave, onClose }) {
+export default function ReturnExchangeModal({ product, jobKey, initialType, centers = [], accumulatedQty = 0, returnQty = 0, exchangeQty = 0, onSave, onClose }) {
   const [type, setType]               = useState(initialType || 'RETURN');
   const [centerName, setCenterName]   = useState('');
   const [customCenter, setCustomCenter] = useState('');
@@ -27,6 +27,11 @@ export default function ReturnExchangeModal({ product, jobKey, initialType, cent
   const hasCenters = centers.length > 0;
   const typeLabel  = isReturn ? '회송' : '교환';
   const typeColor  = isReturn ? C.red : C.orange;
+
+  // Quantity context shown below the qty label: 기존 / 입력 / 누적
+  const existingQty  = isReturn ? returnQty : exchangeQty;
+  const inputQty     = parseInt(qty, 10) || 0;
+  const cumulativeQty = existingQty + inputQty;
 
   const resolvedCenter = hasCenters && !useCustom ? centerName : customCenter;
 
@@ -203,12 +208,24 @@ export default function ReturnExchangeModal({ product, jobKey, initialType, cent
         <div style={{ marginBottom: 14 }}>
           <label style={labelStyle}>
             {typeLabel} 수량 *
-            {accumulatedQty > 0
-              ? <span style={{ fontWeight: 400, color: C.muted, marginLeft: 5 }}>(누적: {accumulatedQty.toLocaleString()}개)</span>
-              : product.orderedQty
+            {product.orderedQty
               ? <span style={{ fontWeight: 400, color: C.muted, marginLeft: 5 }}>(발주: {Number(product.orderedQty).toLocaleString()})</span>
               : null}
           </label>
+          {/* Quantity context: 기존 / 입력 / 누적 — updates live as user types */}
+          <div style={{ display: 'flex', gap: 6, marginBottom: 8, marginTop: -2 }}>
+            <span style={{ fontSize: 12, color: '#6b7280' }}>
+              기존 <strong style={{ color: existingQty > 0 ? typeColor : '#6b7280' }}>{existingQty.toLocaleString()}개</strong>
+            </span>
+            <span style={{ fontSize: 12, color: '#9ca3af' }}>·</span>
+            <span style={{ fontSize: 12, color: '#6b7280' }}>
+              입력 <strong style={{ color: inputQty > 0 ? C.text : '#6b7280' }}>{inputQty.toLocaleString()}개</strong>
+            </span>
+            <span style={{ fontSize: 12, color: '#9ca3af' }}>·</span>
+            <span style={{ fontSize: 12, color: '#6b7280' }}>
+              누적 <strong style={{ color: cumulativeQty > 0 ? typeColor : '#6b7280' }}>{cumulativeQty.toLocaleString()}개</strong>
+            </span>
+          </div>
           <input
             style={fieldStyle}
             type="number" inputMode="numeric" placeholder="0"

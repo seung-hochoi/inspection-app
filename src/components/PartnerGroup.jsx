@@ -156,6 +156,8 @@ function PartnerGroupBase({
                   accumulatedQty={accumulatedMovement[movKey] || 0}
                   returnCount={mc.returnCount || 0}
                   exchangeCount={mc.exchangeCount || 0}
+                  returnQty={mc.returnQty || 0}
+                  exchangeQty={mc.exchangeQty || 0}
                   onProductImageUploaded={onProductImageUploaded}
                   onDraftChange={onDraftChange}
                   onSaved={onSaved}

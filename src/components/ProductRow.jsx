@@ -17,7 +17,7 @@ const ProductRow = React.memo(function ProductRow({
   row, jobKey, draft = {}, onDraftChange, onSaved, onMovementSaved, onError, onSaveError,
   saveStatus, highlight, centers = [], happycallRanks = null, eventName = '',
   productImageMap = {}, onProductImageUploaded, accumulatedQty = 0,
-  returnCount = 0, exchangeCount = 0,
+  returnCount = 0, exchangeCount = 0, returnQty = 0, exchangeQty = 0,
 }) {
   // 'insp' = 검품사진, 'defect' = 불량사진 (return+exchange combined)
   const [showPhotoType, setShowPhotoType] = useState(null);
@@ -511,6 +511,8 @@ const ProductRow = React.memo(function ProductRow({
               : centers.map((c) => ({ name: c, qty: 0 }))
           }
           accumulatedQty={accumulatedQty}
+          returnQty={returnQty}
+          exchangeQty={exchangeQty}
           onSave={handleMovementSave}
           onClose={() => setShowMovement(false)}
         />,
