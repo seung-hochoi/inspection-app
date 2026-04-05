@@ -1,6 +1,7 @@
 // ─── API layer — all calls to Code.gs backend ─────────────────────────────
 
-const SCRIPT_URL = process.env.REACT_APP_GOOGLE_SCRIPT_URL || "";
+// Same hardcoded fallback as App.js so saves/uploads work even without .env.local
+const SCRIPT_URL = process.env.REACT_APP_GOOGLE_SCRIPT_URL || "https://script.google.com/macros/s/AKfycbzIR8srYEDBgHOUKGfs0J3nk2BY4fsDPiw0J5cHfXUU7t77cEPWYw15mdUcW0T7oCw7Xg/exec";
 
 const RETRY_DELAYS_MS = [800, 2000, 4000];
 

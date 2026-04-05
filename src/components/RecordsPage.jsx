@@ -1,11 +1,10 @@
 import React, { useState, useCallback, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Search, FileX, ChevronDown, Camera, XCircle, Pencil, Download, ImagePlus, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Search, FileX, ChevronDown, Camera, XCircle, Pencil, ImagePlus, CheckCircle2, AlertCircle } from 'lucide-react';
 import { C, radius, font, shadow, trans } from './styles';
 import { cancelMovementEvent, saveBatch, uploadPhotos, savePhotoMeta } from '../api';
 import { fileToBase64, getClientId } from '../utils';
 import { v4 as uuidv4 } from 'uuid';
-import { buildAndDownloadPhotoZips } from '../utils/photoZipBuilder';
 
 export default function RecordsPage({ records = [], jobKey, onToast, onRefresh, inspectionRows = [], config = {} }) {
   const [filter, setFilter]       = useState('all');
@@ -13,8 +12,6 @@ export default function RecordsPage({ records = [], jobKey, onToast, onRefresh, 
   const [expanded, setExpanded]   = useState(null);
   const [canceling, setCanceling] = useState(null);
   const [editTarget, setEditTarget] = useState(null); // record being edited
-  const [downloading, setDownloading] = useState('');
-  const [dlProgress, setDlProgress] = useState({ stage: '', percent: 0, text: '' });
 
   const filtered = useMemo(() => {
     let list = records;
@@ -45,27 +42,6 @@ export default function RecordsPage({ records = [], jobKey, onToast, onRefresh, 
       onToast?.(err.message || '취소 실패', 'error');
     } finally {
       setCanceling(null);
-    }
-  };
-
-  const handleDownloadZip = async (mode) => {
-    setDownloading(mode);
-    setDlProgress({ stage: 'generating', percent: 10, text: 'ZIP 생성 중...' });
-    try {
-      const { count, parts } = await buildAndDownloadPhotoZips(mode, {
-        onProgress: setDlProgress,
-      });
-      if (count === 0) {
-        onToast?.('다운로드할 사진이 없습니다.', 'info');
-      } else {
-        const partsNote = parts > 1 ? ` (${parts}개 파일)` : '';
-        onToast?.(`총 ${count}장 다운로드 시작${partsNote}`, 'success');
-      }
-    } catch (err) {
-      onToast?.(err.message || 'ZIP 생성 실패', 'error');
-    } finally {
-      setDownloading('');
-      setDlProgress({ stage: '', percent: 0, text: '' });
     }
   };
 
@@ -124,57 +100,6 @@ export default function RecordsPage({ records = [], jobKey, onToast, onRefresh, 
         </div>
       </div>
 
-      {/* ZIP Download bar */}
-      <div style={{
-        display: 'flex', gap: 8, marginBottom: 14,
-        background: C.card, borderRadius: radius.md,
-        border: `1px solid ${C.border}`, padding: '10px 12px',
-        boxShadow: shadow.xs,
-      }}>
-        <button
-          onClick={() => handleDownloadZip('inspection')}
-          disabled={!!downloading}
-          style={{
-            flex: 1, height: 38, background: C.primaryLight, color: C.primary,
-            border: `1.5px solid ${C.primaryMid}`, borderRadius: radius.sm,
-            fontSize: 12.5, fontWeight: 600, cursor: downloading ? 'default' : 'pointer',
-            fontFamily: font.base, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-            opacity: downloading === 'inspection' ? 0.6 : 1,
-          }}
-        >
-          <Download size={13} strokeWidth={2} />
-          {downloading === 'inspection'
-            ? (dlProgress.text || '처리 중...')
-            : '검품사진 저장'}
-        </button>
-        <button
-          onClick={() => handleDownloadZip('movement')}
-          disabled={!!downloading}
-          style={{
-            flex: 1, height: 38, background: C.redLight, color: C.red,
-            border: `1.5px solid ${C.redMid}`, borderRadius: radius.sm,
-            fontSize: 12.5, fontWeight: 600, cursor: downloading ? 'default' : 'pointer',
-            fontFamily: font.base, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-            opacity: downloading === 'movement' ? 0.6 : 1,
-          }}
-        >
-          <Download size={13} strokeWidth={2} />
-          {downloading === 'movement'
-            ? (dlProgress.text || '처리 중...')
-            : '불량사진 저장'}
-        </button>
-      </div>
-      {/* Progress bar — visible only while ZIP is being generated/downloaded */}
-      {!!downloading && dlProgress.percent > 0 && (
-        <div style={{ marginBottom: 10, borderRadius: radius.sm, overflow: 'hidden', background: C.border, height: 4 }}>
-          <div style={{
-            height: '100%',
-            width: `${dlProgress.percent}%`,
-            background: downloading === 'inspection' ? C.primary : C.red,
-            transition: 'width 0.4s ease',
-          }} />
-        </div>
-      )}
       {filtered.length === 0 ? (
         <div style={{
           padding: '56px 24px', textAlign: 'center', color: C.muted,

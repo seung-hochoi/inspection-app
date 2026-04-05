@@ -1,16 +1,19 @@
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
-import { RefreshCw, AlertTriangle, Lock, BarChart3, Package, TrendingUp, ArrowDownLeft, ArrowLeftRight, Database } from 'lucide-react';
+import { RefreshCw, AlertTriangle, Lock, BarChart3, Package, TrendingUp, ArrowDownLeft, ArrowLeftRight, Database, Download, FolderDown } from 'lucide-react';
 import clsx from 'clsx';
 import { C, radius, font, shadow, trans } from './styles';
 import { manualRecalc, resetCurrentJobInputData, syncHistory } from '../api';
+import { buildAndDownloadPhotoZips } from '../utils/photoZipBuilder';
 
 export default function SummaryPage({ summary = {}, happycall = {}, onToast, onRefresh }) {
   const [recalcing, setRecalcing] = useState(false);
   const [syncing,   setSyncing]   = useState(false);
   const [resetting, setResetting] = useState(false);
   const [showReset, setShowReset] = useState(false);
-  const [resetPw, setResetPw]     = useState('');
+  const [resetPw,   setResetPw]   = useState('');
+  const [downloading, setDownloading] = useState('');   // active mode key
+  const [dlProgress,  setDlProgress]  = useState({ stage: '', percent: 0, text: '' });
 
   const handleRecalc = async () => {
     setRecalcing(true);
@@ -44,6 +47,57 @@ export default function SummaryPage({ summary = {}, happycall = {}, onToast, onR
     } catch (err) {
       onToast?.(err.message || '초기화 실패 (비밀번호 확인)', 'error');
     } finally { setResetting(false); }
+  };
+
+  // Download a single photo ZIP category
+  const handleDownloadZip = async (mode) => {
+    setDownloading(mode);
+    setDlProgress({ stage: 'generating', percent: 10, text: 'ZIP 생성 중...' });
+    try {
+      const { count, parts } = await buildAndDownloadPhotoZips(mode, { onProgress: setDlProgress });
+      if (count === 0) {
+        onToast?.('다운로드할 사진이 없습니다.', 'info');
+      } else {
+        const partsNote = parts > 1 ? ` (${parts}개 파일)` : '';
+        onToast?.(`총 ${count}장 다운로드 시작${partsNote}`, 'success');
+      }
+    } catch (err) {
+      onToast?.(err.message || 'ZIP 생성 실패', 'error');
+    } finally {
+      setDownloading('');
+      setDlProgress({ stage: '', percent: 0, text: '' });
+    }
+  };
+
+  // Download all 4 categories sequentially
+  const handleDownloadAll = async () => {
+    setDownloading('all');
+    const modes = [
+      { mode: 'inspection', label: '검품사진' },
+      { mode: 'movement',   label: '불량사진' },
+      { mode: 'weight',     label: '중량사진' },
+      { mode: 'sugar',      label: '당도사진' },
+    ];
+    let totalFiles = 0;
+    let totalParts = 0;
+    try {
+      for (const { mode, label } of modes) {
+        setDlProgress({ stage: 'generating', percent: 10, text: `${label} ZIP 생성 중...` });
+        const { count, parts } = await buildAndDownloadPhotoZips(mode, { onProgress: setDlProgress });
+        totalFiles += count;
+        totalParts += parts;
+      }
+      if (totalFiles === 0) {
+        onToast?.('다운로드할 사진이 없습니다.', 'info');
+      } else {
+        onToast?.(`전체 ${totalFiles}장 / ${totalParts}개 파일 다운로드 시작`, 'success');
+      }
+    } catch (err) {
+      onToast?.(err.message || '전체 다운로드 실패', 'error');
+    } finally {
+      setDownloading('');
+      setDlProgress({ stage: '', percent: 0, text: '' });
+    }
   };
 
   const s = summary || {};
@@ -138,6 +192,85 @@ export default function SummaryPage({ summary = {}, happycall = {}, onToast, onR
           </div>
         </div>
       )}
+
+      {/* ── Photo ZIP download section ── */}
+      <div style={{
+        background: C.card, borderRadius: radius.lg,
+        border: `1px solid ${C.border}`, boxShadow: shadow.sm,
+        overflow: 'hidden', marginBottom: 16,
+      }}>
+        <div style={{
+          padding: '11px 16px', borderBottom: `1px solid ${C.border}`,
+          background: 'linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%)',
+          display: 'flex', alignItems: 'center', gap: 8,
+        }}>
+          <FolderDown size={14} strokeWidth={2} color={C.muted} />
+          <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: C.text }}>사진 다운로드</p>
+        </div>
+        <div style={{ padding: '14px 14px 12px' }}>
+          {/* 4 individual category buttons */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
+            {[
+              { mode: 'inspection', label: '검품사진 저장', color: C.primary,  bg: C.primaryLight,  border: C.primaryMid  },
+              { mode: 'movement',   label: '불량사진 저장', color: C.red,       bg: C.redLight,      border: C.redMid      },
+              { mode: 'weight',     label: '중량사진 저장', color: C.muted,     bg: C.bgAlt,         border: C.borderMid   },
+              { mode: 'sugar',      label: '당도사진 저장', color: C.green,     bg: C.greenLight,    border: C.greenMid    },
+            ].map(({ mode, label, color, bg, border }) => {
+              const active = downloading === mode;
+              const busy   = !!downloading;
+              return (
+                <button
+                  key={mode}
+                  onClick={() => handleDownloadZip(mode)}
+                  disabled={busy}
+                  className="action-btn"
+                  style={{
+                    height: 40, background: active ? C.bgAlt : bg,
+                    color: active ? C.muted2 : color,
+                    border: `1.5px solid ${active ? C.border : border}`,
+                    borderRadius: radius.sm, fontSize: 12.5, fontWeight: 600,
+                    cursor: busy ? 'default' : 'pointer',
+                    fontFamily: font.base, transition: trans,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                    opacity: busy && !active ? 0.5 : 1,
+                  }}
+                >
+                  <Download size={12} strokeWidth={2} style={{ animation: active ? 'none' : 'none', flexShrink: 0 }} />
+                  {active ? (dlProgress.text || '처리 중...') : label}
+                </button>
+              );
+            })}
+          </div>
+          {/* 전체 다운로드 — all 4 categories */}
+          <button
+            onClick={handleDownloadAll}
+            disabled={!!downloading}
+            className="action-btn"
+            style={{
+              width: '100%', height: 42,
+              background: downloading === 'all' ? C.bgAlt : C.primaryLight,
+              color: downloading === 'all' ? C.muted2 : C.primary,
+              border: `1.5px solid ${downloading === 'all' ? C.border : C.primaryMid}`,
+              borderRadius: radius.sm, fontSize: 13, fontWeight: 700,
+              cursor: downloading ? 'default' : 'pointer',
+              fontFamily: font.base, transition: trans,
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7,
+            }}
+          >
+            <FolderDown size={14} strokeWidth={2} />
+            {downloading === 'all' ? (dlProgress.text || '처리 중...') : '전체 다운로드'}
+          </button>
+          {/* Progress bar */}
+          {!!downloading && dlProgress.percent > 0 && (
+            <div style={{ marginTop: 8, borderRadius: radius.xs, overflow: 'hidden', background: C.border, height: 3 }}>
+              <div style={{
+                height: '100%', width: `${dlProgress.percent}%`,
+                background: C.primary, transition: 'width 0.4s ease',
+              }} />
+            </div>
+          )}
+        </div>
+      </div>
 
       {/* Admin panel */}
       <div style={{
