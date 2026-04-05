@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Search, FileX, ChevronDown, Camera, XCircle, Pencil, ImagePlus, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Search, FileX, ChevronDown, Camera, XCircle, Pencil, ImagePlus } from 'lucide-react';
 import { C, radius, font, shadow, trans } from './styles';
 import { cancelMovementEvent, saveBatch, uploadPhotos, savePhotoMeta } from '../api';
 import { fileToBase64, getClientId } from '../utils';
@@ -262,7 +262,7 @@ function normalizeCode(value) {
   return text.replace(/^"+|"+$/g, '').replace(/\.0+$/, '').trim();
 }
 
-function RecordEditModal({ record, inspectionRows, jobKey, onClose, onToast, config = {} }) {
+function RecordEditModal({ record, inspectionRows, jobKey, onClose, onToast }) {
   const inspRow = useMemo(() => {
     const code    = normalizeCode(record['상품코드'] || '');
     const partner = record['협력사명'] || '';
@@ -271,63 +271,21 @@ function RecordEditModal({ record, inspectionRows, jobKey, onClose, onToast, con
     ) || null;
   }, [record, inspectionRows]);
 
-  const [brixMin, setBrixMin] = useState(String(inspRow?.['BRIX최저'] || ''));
-  const [brixMax, setBrixMax] = useState(String(inspRow?.['BRIX최고'] || ''));
   const [memo,    setMemo]    = useState(String(inspRow?.['불량사유'] || ''));
   const [saving,  setSaving]  = useState(false);
   const [uploadingType, setUploadingType] = useState(null);
 
-  // Split a server field value (array or newline-separated string) into a clean ID array
   const splitIds = (v) => Array.isArray(v)
     ? v.filter(Boolean)
     : String(v || '').split('\n').filter(Boolean);
 
-  const [inspIds,   setInspIds]   = useState(() => splitIds(inspRow?.['inspPhotoIds']));
   const [defectIds, setDefectIds] = useState(() => splitIds(inspRow?.['defectPhotoIds']));
-  const [weightIds, setWeightIds] = useState(() => splitIds(inspRow?.['weightPhotoIds']));
-  const [sugarIds,  setSugarIds]  = useState(() => splitIds(inspRow?.['brixPhotoIds']));
-
-  const inspRef   = useRef(null);
   const defectRef = useRef(null);
-  const weightRef = useRef(null);
-  const sugarRef  = useRef(null);
-
-  const brixAvg = useMemo(() => {
-    const min = parseFloat(brixMin);
-    const max = parseFloat(brixMax);
-    if (!isNaN(min) && !isNaN(max)) return ((min + max) / 2).toFixed(1);
-    return '';
-  }, [brixMin, brixMax]);
 
   const orderedQty   = parseInt(record['발주수량'] || inspRow?.['발주수량'] || 0, 10) || 0;
   const inspectedQty = parseInt(inspRow?.['검품수량'] || 0, 10) || 0;
   const returnQty    = record['처리유형'] === '회송'  ? (parseInt(record['회송수량'], 10) || 0) : 0;
   const exchangeQty  = record['처리유형'] === '교환' ? (parseInt(record['교환수량'], 10) || 0) : 0;
-
-  // Build lookup maps from sheet config data (once per modal open)
-  const { partnerToStandard, subCategoryEntries, dangjdoRules } = useMemo(
-    () => buildPhotoRequirementMaps(config.mapping_rows, config.dangjdo_rows),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [config.mapping_rows, config.dangjdo_rows]
-  );
-
-  const partnerShort   = standardizePartnerName(record['협력사명'], partnerToStandard);
-  const productCodeNorm = normalizeCode(record['상품코드'] || '');
-
-  // Weight requirement chip — derived from mapping sheet subcategory/product-name inference
-  const weightChip = useMemo(() => {
-    const cat = inferWeightCategory(record['상품명'] || '', subCategoryEntries);
-    if (!cat) return null;
-    return { label: cat, done: weightIds.length > 0 };
-  }, [record, subCategoryEntries, weightIds.length]);
-
-  // Sweetness requirement chip — from 당도 sheet (exact partner+code, fallback code-only)
-  const sweetnessChip = useMemo(() => {
-    const rule = findDangjdoRule(productCodeNorm, partnerShort, dangjdoRules);
-    if (!rule) return null;
-    const count = sugarIds.length;
-    return { label: rule.label, required: rule.required, count, done: count >= rule.required };
-  }, [productCodeNorm, partnerShort, dangjdoRules, sugarIds.length]);
 
   const handlePhotoUpload = async (type, files, setIds) => {
     if (!files.length) return;
@@ -371,7 +329,6 @@ function RecordEditModal({ record, inspectionRows, jobKey, onClose, onToast, con
   const handleSave = async () => {
     setSaving(true);
     try {
-      const allPhotoIds = [...new Set([...inspIds, ...defectIds, ...weightIds, ...sugarIds])];
       await saveBatch([{
         type: 'inspection',
         clientId: getClientId(),
@@ -383,14 +340,7 @@ function RecordEditModal({ record, inspectionRows, jobKey, onClose, onToast, con
         '발주수량':  String(record['발주수량'] || inspRow?.['발주수량'] || 0),
         '검품수량':  String(inspRow?.['검품수량'] || 0),
         '불량사유':  memo,
-        '사진파일ID목록': allPhotoIds.join('\n'),
-        inspPhotoIds:   inspIds,
         defectPhotoIds: defectIds,
-        weightPhotoIds: weightIds,
-        brixPhotoIds:   sugarIds,
-        'BRIX최저': brixMin,
-        'BRIX최고': brixMax,
-        'BRIX평균': brixAvg,
         ...(inspRow?.['버전']     ? { expectedVersion:   Number(inspRow['버전']) }     : {}),
         ...(inspRow?.['수정일시']  ? { expectedUpdatedAt: String(inspRow['수정일시']) } : {}),
       }]);
@@ -437,7 +387,7 @@ function RecordEditModal({ record, inspectionRows, jobKey, onClose, onToast, con
           }}>✕</button>
         </div>
 
-        {/* ── Inspection summary grid ── */}
+        {/* ── Summary grid ── */}
         <div style={{
           background: C.cardAlt, borderRadius: radius.md,
           border: `1px solid ${C.border}`, padding: '10px 12px',
@@ -452,42 +402,15 @@ function RecordEditModal({ record, inspectionRows, jobKey, onClose, onToast, con
           {exchangeQty  > 0 && <InfoChip label="교환"  value={exchangeQty} color={C.orange} />}
         </div>
 
-        {/* ── Photo requirement chips ── */}
-        {(weightChip || sweetnessChip) && (
-          <div style={{ marginBottom: 14 }}>
-            <p style={{ margin: '0 0 6px', fontSize: 10.5, fontWeight: 700, color: C.muted2, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-              촬영 필요
-            </p>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
-              {weightChip && (
-                <ReqChip
-                  prefix="중량"
-                  label={weightChip.label}
-                  status={weightChip.done ? 'done' : 'missing'}
-                  text={weightChip.done ? '완료' : '미완료'}
-                />
-              )}
-              {sweetnessChip && (
-                <ReqChip
-                  prefix="당도"
-                  label={sweetnessChip.label}
-                  status={sweetnessChip.done ? 'done' : sweetnessChip.count > 0 ? 'partial' : 'missing'}
-                  text={sweetnessChip.done ? '완료' : `${sweetnessChip.count}/${sweetnessChip.required}`}
-                />
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* ── Memo / defect reason ── */}
+        {/* ── Defect reason ── */}
         <div style={{ marginBottom: 16 }}>
           <label style={{ fontSize: 11, fontWeight: 700, color: C.muted2, textTransform: 'uppercase', letterSpacing: '0.04em', display: 'block', marginBottom: 6 }}>
-            비고 / 불량사유
+            불량사유
           </label>
           <textarea
             value={memo}
             onChange={(e) => setMemo(e.target.value)}
-            placeholder="비고 또는 불량사유를 입력하세요"
+            placeholder="불량사유를 입력하세요"
             rows={2}
             style={{
               width: '100%', padding: '8px 10px', boxSizing: 'border-box',
@@ -502,75 +425,13 @@ function RecordEditModal({ record, inspectionRows, jobKey, onClose, onToast, con
 
         <div style={{ height: 1, background: C.border, margin: '0 0 14px' }} />
 
-        {/* ── 4 Photo sections ── */}
-        <PhotoSection
-          title="검품사진" color={C.primary} bg={C.primaryLight} border={C.primaryMid}
-          ids={inspIds} setIds={setInspIds} fileRef={inspRef}
-          uploadType="insp" uploadingType={uploadingType}
-          onUpload={(files) => handlePhotoUpload('insp', files, setInspIds)}
-        />
+        {/* ── Defect photo ── */}
         <PhotoSection
           title="불량사진" color={C.red} bg={C.redLight} border={C.redMid}
           ids={defectIds} setIds={setDefectIds} fileRef={defectRef}
           uploadType="defect" uploadingType={uploadingType}
           onUpload={(files) => handlePhotoUpload('defect', files, setDefectIds)}
         />
-        <PhotoSection
-          title="중량사진" color={C.muted} bg={C.bgAlt} border={C.borderMid}
-          ids={weightIds} setIds={setWeightIds} fileRef={weightRef}
-          uploadType="weight" uploadingType={uploadingType}
-          onUpload={(files) => handlePhotoUpload('weight', files, setWeightIds)}
-          compact
-        />
-        <PhotoSection
-          title="당도사진" color={C.green} bg={C.greenLight} border={C.greenMid}
-          ids={sugarIds} setIds={setSugarIds} fileRef={sugarRef}
-          uploadType="sugar" uploadingType={uploadingType}
-          onUpload={(files) => handlePhotoUpload('sugar', files, setSugarIds)}
-          compact
-        />
-
-        <div style={{ height: 1, background: C.border, margin: '0 0 14px' }} />
-
-        {/* ── BRIX Section ── */}
-        <div style={{ marginBottom: 18 }}>
-          <p style={{ margin: '0 0 8px', fontSize: 11, fontWeight: 700, color: C.muted2, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-            BRIX 당도 측정
-          </p>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
-            <div style={{ flex: 1 }}>
-              <label style={{ fontSize: 11, color: C.muted, fontWeight: 600, display: 'block', marginBottom: 4 }}>최솟값</label>
-              <input type="number" step="0.1" value={brixMin} onChange={(e) => setBrixMin(e.target.value)}
-                placeholder="0.0" style={{
-                  width: '100%', height: 38, padding: '0 10px',
-                  border: `1.5px solid ${C.border}`, borderRadius: radius.sm,
-                  fontSize: 14, fontFamily: font.base, color: C.text, outline: 'none',
-                  boxSizing: 'border-box', background: C.card,
-                }} />
-            </div>
-            <div style={{ flex: 1 }}>
-              <label style={{ fontSize: 11, color: C.muted, fontWeight: 600, display: 'block', marginBottom: 4 }}>최댓값</label>
-              <input type="number" step="0.1" value={brixMax} onChange={(e) => setBrixMax(e.target.value)}
-                placeholder="0.0" style={{
-                  width: '100%', height: 38, padding: '0 10px',
-                  border: `1.5px solid ${C.border}`, borderRadius: radius.sm,
-                  fontSize: 14, fontFamily: font.base, color: C.text, outline: 'none',
-                  boxSizing: 'border-box', background: C.card,
-                }} />
-            </div>
-            <div style={{ flexShrink: 0 }}>
-              <label style={{ fontSize: 11, color: C.muted, fontWeight: 600, display: 'block', marginBottom: 4 }}>평균 (자동)</label>
-              <div style={{
-                height: 38, minWidth: 60, padding: '0 10px',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                background: brixAvg ? C.primaryLight : C.bgAlt,
-                border: `1.5px solid ${brixAvg ? C.primaryMid : C.border}`,
-                borderRadius: radius.sm, fontSize: 14, fontWeight: 700,
-                color: brixAvg ? C.primary : C.muted2,
-              }}>{brixAvg || '—'}</div>
-            </div>
-          </div>
-        </div>
 
         {/* ── Save ── */}
         <button
@@ -580,9 +441,10 @@ function RecordEditModal({ record, inspectionRows, jobKey, onClose, onToast, con
             color: '#fff', border: 'none', borderRadius: radius.md,
             fontSize: 15, fontWeight: 700, cursor: saving ? 'default' : 'pointer',
             fontFamily: font.base, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+            marginTop: 14,
           }}
         >
-          {saving ? '저장 중...' : '상세내용 저장'}
+          {saving ? '저장 중...' : '저장'}
         </button>
       </div>
     </div>
@@ -705,114 +567,3 @@ function PhotoSection({ title, color, bg, border, ids, setIds, fileRef, uploadTy
 
 
 // ─── Photo requirement logic (sheet-driven) ──────────────────────────────────
-
-/**
- * Build lookup maps from bootstrap config data.
- * - partnerToStandard: full partner name -> short standard name
- * - subCategoryEntries: list of { normalized, tokens, majorCategory } for product-name inference
- * - dangjdoRules: active rows from the "당도" sheet, filtered by 사용여부=TRUE
- */
-function buildPhotoRequirementMaps(mappingRows, dangjdoRows) {
-  const partnerToStandard  = {};
-  const subCategoryEntries = [];
-  const VALID_CATEGORIES   = ['채소', '과일', '축산', '수산'];
-
-  for (const row of (mappingRows || [])) {
-    const sub         = String(row['소분류명'] || '').trim();
-    const major       = String(row['대분류']  || '').trim();
-    const partnerFull = String(row['협력사']  || '').trim();
-    const partnerShrt = String(row['값']      || '').trim();
-
-    if (sub && VALID_CATEGORIES.includes(major)) {
-      subCategoryEntries.push({
-        normalized: sub.toLowerCase(),
-        tokens: sub.split('/').map((t) => t.trim().toLowerCase()).filter(Boolean),
-        majorCategory: major,
-      });
-    }
-    if (partnerFull && partnerShrt) partnerToStandard[partnerFull] = partnerShrt;
-  }
-
-  // Active dangjdo rules: 사용여부 must be true / TRUE / Y / 1
-  const dangjdoRules = [];
-  for (const row of (dangjdoRows || [])) {
-    const active = row['사용여부'];
-    const isActive =
-      active === true ||
-      String(active).trim() === 'TRUE' ||
-      String(active).trim() === '1' ||
-      String(active).trim().toUpperCase() === 'Y';
-    if (!isActive) continue;
-    const partner  = String(row['협력사']  || '').trim();
-    const code     = String(row['상품코드'] || '').trim();
-    const label    = String(row['분류']    || '').trim();
-    const required = parseInt(row['필요장수'], 10) || 0;
-    if (label && required > 0) dangjdoRules.push({ partner, code, label, required });
-  }
-
-  return { partnerToStandard, subCategoryEntries, dangjdoRules };
-}
-
-function standardizePartnerName(name, partnerToStandard) {
-  return partnerToStandard[String(name || '').trim()] || String(name || '').trim();
-}
-
-/** Infer major weight category from product name by matching subcategory tokens */
-function inferWeightCategory(productName, subCategoryEntries) {
-  const nameLower = (productName || '').toLowerCase();
-  let bestMatch   = null;
-  for (const entry of subCategoryEntries) {
-    let matched = entry.normalized && nameLower.includes(entry.normalized);
-    if (!matched) {
-      for (const token of entry.tokens) {
-        if (token && nameLower.includes(token)) { matched = true; break; }
-      }
-    }
-    if (matched && (!bestMatch || entry.normalized.length > bestMatch.normalized.length)) {
-      bestMatch = entry;
-    }
-  }
-  return bestMatch ? bestMatch.majorCategory : null;
-}
-
-/**
- * Lookup dangjdo rule for a product.
- * Priority: 1) exact partner+code, 2) code-only fallback among active rules.
- */
-function findDangjdoRule(productCode, partnerShort, dangjdoRules) {
-  for (const rule of dangjdoRules) {
-    if (rule.partner === partnerShort && rule.code === productCode) return rule;
-  }
-  for (const rule of dangjdoRules) {
-    if (rule.code === productCode) return rule;
-  }
-  return null;
-}
-
-/**
- * Compact requirement status chip.
- * status: 'done' | 'partial' | 'missing'
- * prefix: "중량" or "당도"
- * text: "완료", "1/2", "미완료"
- */
-function ReqChip({ prefix, label, status, text }) {
-  const isDone    = status === 'done';
-  const isPartial = status === 'partial';
-  const bg     = isDone ? C.greenLight  : isPartial ? C.yellowLight  : C.redLight;
-  const color  = isDone ? C.green       : isPartial ? C.yellow       : C.red;
-  const border = isDone ? C.greenMid    : isPartial ? C.yellowMid    : C.redMid;
-  const Icon   = isDone ? CheckCircle2  : AlertCircle;
-  return (
-    <span style={{
-      display: 'inline-flex', alignItems: 'center', gap: 4,
-      height: 24, padding: '0 9px',
-      background: bg, color, border: `1px solid ${border}`,
-      borderRadius: radius.full, fontSize: 10.5, fontWeight: 700,
-    }}>
-      <Icon size={10} strokeWidth={2.5} />
-      <span style={{ fontWeight: 500, fontSize: 9.5 }}>{prefix}</span>
-      {label}
-      <span style={{ fontWeight: 600 }}>{text}</span>
-    </span>
-  );
-}
