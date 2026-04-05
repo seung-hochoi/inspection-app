@@ -121,7 +121,7 @@ const S = {
   },
   tabBtnActive: { color: C.accent },
   tabIcon: { fontSize: 20 },
-  content: { flex: 1, paddingTop: 116, paddingBottom: 68 },
+  content: { flex: 1, paddingTop: 130, paddingBottom: 68 },
   card: {
     background: C.cardWhite,
     borderRadius: 14,
@@ -2010,72 +2010,104 @@ function App() {
         .header-right-cluster::-webkit-scrollbar { display: none; }
       `}</style>
 
-      {/* ── Header (two rows: brand + action strip) ── */}
+      {/* ── Header ── */}
       <header style={S.header}>
-        {/* Row 1: brand + right cluster */}
-        <div style={{ display: 'flex', alignItems: 'center', padding: '0 14px', height: 52, overflow: 'hidden' }}>
-
-          {/* ── LEFT: logo + divider + title (brand block, grows to fill leftover space) ── */}
-          <div style={{
-            display: 'flex', alignItems: 'center', gap: 10,
-            flex: '1 1 auto', minWidth: 0,
+        {/* ── ROW 1: logo · 검품PDA · SKU badge · 수량 badge ── */}
+        <div style={{
+          display: 'flex', alignItems: 'center',
+          padding: '0 14px', height: 52, overflow: 'hidden',
+          gap: 10,
+        }}>
+          <img src={gs25Logo} alt="GS25" style={{ height: 28, flexShrink: 0, display: 'block' }} />
+          <div style={{ width: 1, height: 22, background: C.borderLight, flexShrink: 0 }} />
+          <p style={{
+            fontSize: 15, fontWeight: 800, color: C.text, margin: 0,
+            letterSpacing: '-0.02em', whiteSpace: 'nowrap',
+            flex: '0 0 auto',
           }}>
-            <img src={gs25Logo} alt="GS25" style={{ height: 28, flexShrink: 0, display: 'block' }} />
-            <div style={{ width: 1, height: 22, background: C.borderLight, flexShrink: 0 }} />
-            <p style={{
-              fontSize: 15, fontWeight: 800, color: C.text, margin: 0,
-              letterSpacing: '-0.02em', whiteSpace: 'nowrap',
-              overflow: 'hidden', textOverflow: 'ellipsis',
-            }}>
-              검품PDA
-            </p>
-          </div>
+            검품PDA
+          </p>
 
-          {/* ── RIGHT: action cluster (chips + buttons) — fixed-item scrollable row ── */}
+          {/* SKU badge — 검품대상 SKU (exclusion-applied) */}
+          {headerTargetSku > 0 && (
+            <span style={{
+              fontSize: 11, fontWeight: 700, color: C.textMid,
+              background: C.card, border: `1px solid ${C.borderLight}`,
+              borderRadius: 6, padding: '3px 8px',
+              flex: '0 0 auto', flexShrink: 0, whiteSpace: 'nowrap',
+            }}>
+              SKU&nbsp;<span style={{ color: C.accent }}>{headerTargetSku.toLocaleString()}</span>
+            </span>
+          )}
+
+          {/* 수량 badge — 검품 입고수량 (exclusion-applied) */}
+          {headerTargetQty > 0 && (
+            <span style={{
+              fontSize: 11, fontWeight: 700, color: C.textMid,
+              background: C.card, border: `1px solid ${C.borderLight}`,
+              borderRadius: 6, padding: '3px 8px',
+              flex: '0 0 auto', flexShrink: 0, whiteSpace: 'nowrap',
+            }}>
+              수량&nbsp;<span style={{ color: C.accent }}>{headerTargetQty.toLocaleString()}</span>
+            </span>
+          )}
+        </div>
+
+        {/* ── ROW 2: fixed label · scrollable action strip ── */}
+        <div style={{
+          display: 'flex', alignItems: 'center',
+          padding: '0 14px 6px',
+          minHeight: 28,
+          overflow: 'hidden',
+        }}>
+          {/* Fixed left label */}
+          <span style={{
+            fontSize: 10, fontWeight: 500,
+            letterSpacing: '0.08em', color: 'rgba(15,23,42,0.30)',
+            fontFamily: "'Pretendard',-apple-system,BlinkMacSystemFont,system-ui,sans-serif",
+            textTransform: 'uppercase', whiteSpace: 'nowrap',
+            flex: '0 0 auto', flexShrink: 0,
+            marginRight: 10,
+          }}>
+            MADE BY . SEUNG-HO
+          </span>
+
+          {/* Vertical divider */}
+          <div style={{ width: 1, height: 14, background: C.borderLight, flexShrink: 0, marginRight: 10 }} />
+
+          {/* Scrollable action strip */}
           <div
             className="header-right-cluster"
             style={{
-              flex: '0 0 auto',
-              maxWidth: '65vw',
-              minWidth: 0,
-              marginLeft: 8,
               display: 'flex', flexWrap: 'nowrap', alignItems: 'center', gap: 6,
               overflowX: 'auto', overflowY: 'hidden',
-              whiteSpace: 'nowrap',
               WebkitOverflowScrolling: 'touch',
               overscrollBehaviorX: 'contain',
               touchAction: 'pan-x',
               scrollbarWidth: 'none', msOverflowStyle: 'none',
+              flex: '1 1 0', minWidth: 0,
             }}
           >
-            {/* SKU badge — 검품대상 SKU (exclusion-applied) */}
-            {headerTargetSku > 0 && (
+            {/* CSV file name chip */}
+            {currentFileName && (
               <span style={{
-                fontSize: 11, fontWeight: 700, color: C.textMid,
+                fontSize: 10, fontWeight: 500, color: C.textSecondary,
                 background: C.card, border: `1px solid ${C.borderLight}`,
-                borderRadius: 6, padding: '3px 8px',
+                borderRadius: 6, padding: '2px 7px',
                 flex: '0 0 auto', flexShrink: 0, whiteSpace: 'nowrap',
+                maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis',
               }}>
-                SKU&nbsp;<span style={{ color: C.accent }}>{headerTargetSku.toLocaleString()}</span>
+                {currentFileName.length > 20 ? currentFileName.slice(0, 20) + '…' : currentFileName}
               </span>
             )}
-            {/* 수량 badge — 검품 입고수량 (exclusion-applied total quantity) */}
-            {headerTargetQty > 0 && (
-              <span style={{
-                fontSize: 11, fontWeight: 700, color: C.textMid,
-                background: C.card, border: `1px solid ${C.borderLight}`,
-                borderRadius: 6, padding: '3px 8px',
-                flex: '0 0 auto', flexShrink: 0, whiteSpace: 'nowrap',
-              }}>
-                수량&nbsp;<span style={{ color: C.accent }}>{headerTargetQty.toLocaleString()}</span>
-              </span>
-            )}
+
+            {/* 시트↗ link */}
             {worksheetUrl && (
               <a
                 href={worksheetUrl} target="_blank" rel="noreferrer"
                 style={{
                   fontSize: 11, fontWeight: 700, color: C.accent,
-                  textDecoration: 'none', padding: '4px 9px',
+                  textDecoration: 'none', padding: '3px 8px',
                   background: C.accentBg, borderRadius: 7,
                   border: `1px solid ${C.accent}30`,
                   flex: '0 0 auto', flexShrink: 0, whiteSpace: 'nowrap',
@@ -2087,11 +2119,11 @@ function App() {
             <div style={{
               display: 'flex', alignItems: 'center', gap: 5,
               background: C.card, border: `1px solid ${C.borderLight}`,
-              borderRadius: 8, padding: '4px 9px',
+              borderRadius: 8, padding: '3px 8px',
               flex: '0 0 auto', flexShrink: 0,
             }}>
               <span style={{
-                fontSize: 12, fontWeight: 700, color: C.text,
+                fontSize: 11, fontWeight: 700, color: C.text,
                 maxWidth: 72, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
               }}>
                 {authUser.name || authUser.id}
@@ -2101,20 +2133,20 @@ function App() {
                 color: authUser.role === 'ADMIN' ? '#7c3aed' : authUser.role === 'MANAGER' ? C.accent : C.textSoft,
                 background: authUser.role === 'ADMIN' ? '#f5f3ff' : authUser.role === 'MANAGER' ? C.accentBg : C.borderLight,
                 border: `1px solid ${authUser.role === 'ADMIN' ? '#ddd6fe' : authUser.role === 'MANAGER' ? C.accent + '44' : C.border}`,
-                borderRadius: 5, padding: '1px 6px', letterSpacing: '0.02em',
+                borderRadius: 5, padding: '1px 6px', letterSpacing: '0.02em', whiteSpace: 'nowrap',
               }}>
                 {authUser.role || 'USER'}
               </span>
             </div>
 
-            {/* Admin: active sessions button — MANAGE_USERS only */}
+            {/* Admin: active sessions button */}
             {canManageUsers && (
               <button
                 onClick={() => setShowSessionsModal(true)}
                 title="접속중인 사용자 관리"
                 style={{
                   background: C.accentBg, border: `1px solid ${C.accent}44`,
-                  borderRadius: 7, padding: '5px 9px', cursor: 'pointer',
+                  borderRadius: 7, padding: '4px 8px', cursor: 'pointer',
                   display: 'flex', alignItems: 'center', gap: 4,
                   fontSize: 11, fontWeight: 700, color: C.accent,
                   flex: '0 0 auto', flexShrink: 0, whiteSpace: 'nowrap',
@@ -2130,7 +2162,7 @@ function App() {
               title="로그아웃"
               style={{
                 background: 'transparent', border: `1px solid ${C.borderLight}`,
-                borderRadius: 7, padding: '5px 8px', cursor: 'pointer',
+                borderRadius: 7, padding: '4px 8px', cursor: 'pointer',
                 display: 'flex', alignItems: 'center', gap: 4,
                 color: C.textSecondary, fontSize: 11, fontWeight: 600,
                 flex: '0 0 auto', flexShrink: 0, whiteSpace: 'nowrap',
@@ -2140,23 +2172,6 @@ function App() {
               로그아웃
             </button>
           </div>
-        </div>
-
-        {/* Row 2: subtitle */}
-        <div style={{ padding: '0 14px 5px' }}>
-          <p style={{
-            margin: 0, fontSize: 10, fontWeight: 500,
-            letterSpacing: '0.08em', color: 'rgba(15,23,42,0.30)',
-            fontFamily: "'Pretendard',-apple-system,BlinkMacSystemFont,system-ui,sans-serif",
-            textTransform: 'uppercase', whiteSpace: 'nowrap', overflow: 'hidden',
-          }}>
-            MADE BY. SEUNG-HO
-            {currentFileName && (
-              <span style={{ marginLeft: 6, color: C.textSecondary, letterSpacing: 0 }}>
-                · {currentFileName.length > 24 ? currentFileName.slice(0, 24) + '…' : currentFileName}
-              </span>
-            )}
-          </p>
         </div>
 
         {/* Row 3: scrollable action strip */}

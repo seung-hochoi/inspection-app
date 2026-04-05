@@ -154,14 +154,16 @@ export default function SummaryPage({ summary = {}, happycall = {}, jobRows = []
     };
   }, [jobRows, config.reservation_rows, config.exclude_rows, s]);
 
+  const formatKoreanAmount = (value) => {
+    if (value >= 100_000_000) return (value / 100_000_000).toFixed(2) + '억';
+    if (value >= 10_000)      return Math.round(value / 10_000) + '만';
+    return value.toLocaleString('ko-KR');
+  };
+
   const kpis = [
     {
       label: '총 금액',
-      value: hasPriceData
-        ? (totalAmount >= 1_000_000
-          ? (totalAmount / 1_000_000).toFixed(1) + 'M'
-          : totalAmount.toLocaleString())
-        : '-',
+      value: hasPriceData ? formatKoreanAmount(totalAmount) : '-',
       sub: hasPriceData ? '원' : '가격 데이터 없음',
       color: C.primary, bg: C.primaryLight, border: C.primaryMid,
       icon: <BarChart3 size={16} strokeWidth={2} />,
