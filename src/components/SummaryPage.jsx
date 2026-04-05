@@ -11,6 +11,7 @@ export default function SummaryPage({ summary = {}, happycall = {}, jobRows = []
   // ── KPI computation from live jobRows + 사전예약 rows (available immediately after CSV upload) ──
   const { totalOrderedQty, totalSku, inspTargetSku, totalAmount, hasPriceData } = useMemo(() => {
     const reservationRows = Array.isArray(config.reservation_rows) ? config.reservation_rows : [];
+    const excludeRows = Array.isArray(config.exclude_rows) ? config.exclude_rows : [];
     const hasJobRows = Array.isArray(jobRows) && jobRows.length > 0;
     if (!hasJobRows && reservationRows.length === 0) {
       return {
@@ -21,11 +22,39 @@ export default function SummaryPage({ summary = {}, happycall = {}, jobRows = []
         hasPriceData: false,
       };
     }
-    const PRICE_COLS = ['금액', '발주금액', '입고금액', '공급금액', '총금액', '합계금액'];
+
+    const PRICE_COLS     = ['금액', '발주금액', '입고금액', '공급금액', '총금액', '합계금액'];
     const UNIT_PRICE_COLS = ['단가', '공급단가', '매입단가'];
-    const COST_COLS = ['상품원가', '입고원가', '원가'];
-    const CODE_COLS = ['상품코드', '상품 코드', '코드', '바코드'];
-    const QTY_COLS  = ['발주수량', '입고수량', '수량'];
+    const COST_COLS      = ['입고원가', '상품원가', '원가'];
+    const CODE_COLS      = ['상품코드', '상품 코드', '코드', '바코드'];
+    const QTY_COLS       = ['발주수량', '입고수량', '수량'];
+
+    // Normalize a raw value to a number: handles commas, spaces, =T("...") wrappers, quotes
+    const toNumber = (raw) => {
+      if (raw == null || raw === '') return NaN;
+      let str = String(raw).trim();
+      const tMatch = str.match(/^=T\("(.+)"\)$/i);
+      if (tMatch) str = tMatch[1];
+      str = str.replace(/^"+|"+$/g, '').replace(/,/g, '').trim();
+      return Number(str);
+    };
+
+    // Returns true when (code, partner) matches an active exclusion rule
+    const isExcludedRow = (code, partner) => {
+      const normCode = String(code || '').trim().toLowerCase();
+      if (!normCode) return false;
+      for (const ex of excludeRows) {
+        const use = String(ex['사용여부'] || '').trim().toUpperCase();
+        if (use !== 'TRUE') continue;
+        const exCode = String(ex['상품코드'] || '').trim().toLowerCase();
+        if (!exCode || exCode !== normCode) continue;
+        const exPartner = String(ex['협력사'] || ex['협력사명'] || '').trim().toLowerCase();
+        if (!exPartner) return true; // code-only rule
+        if (exPartner === String(partner || '').trim().toLowerCase()) return true; // code+partner rule
+      }
+      return false;
+    };
+
     let amount = 0;
     let hasPriceData = false;
     const codes = new Set();
@@ -34,27 +63,32 @@ export default function SummaryPage({ summary = {}, happycall = {}, jobRows = []
 
     // Process main CSV job rows
     for (const r of (hasJobRows ? jobRows : [])) {
-      const code = r.__productCode || '';
-      const qty  = Number(r.__qty) || 0;
+      const code    = r.__productCode || '';
+      const qty     = Number(r.__qty) || 0;
+      const partner = r.__partner || r['협력사명'] || '';
       qtySum += qty;
       if (code) codes.add(code);
-      if (code && qty > 0) inspCodes.add(code);
+      if (code && qty > 0 && !isExcludedRow(code, partner)) inspCodes.add(code);
+
+      // Compute per-row price: try pre-calculated total → unit price × qty → cost × qty
+      let rowAmount = NaN;
       for (const col of PRICE_COLS) {
-        const raw = r[col];
-        if (raw !== undefined && raw !== '' && raw !== null) {
-          const v = Number(String(raw).replace(/,/g, ''));
-          if (!isNaN(v) && v > 0) { amount += v; hasPriceData = true; break; }
-        }
+        const v = toNumber(r[col]);
+        if (!isNaN(v) && v > 0) { rowAmount = v; break; }
       }
-      if (!hasPriceData || amount === 0) {
+      if ((isNaN(rowAmount) || rowAmount === 0) && qty > 0) {
         for (const col of UNIT_PRICE_COLS) {
-          const raw = r[col];
-          if (raw !== undefined && raw !== '' && raw !== null) {
-            const price = Number(String(raw).replace(/,/g, ''));
-            if (!isNaN(price) && price > 0 && qty > 0) { amount += price * qty; hasPriceData = true; break; }
-          }
+          const p = toNumber(r[col]);
+          if (!isNaN(p) && p > 0) { rowAmount = p * qty; break; }
         }
       }
+      if ((isNaN(rowAmount) || rowAmount === 0) && qty > 0) {
+        for (const col of COST_COLS) {
+          const p = toNumber(r[col]);
+          if (!isNaN(p) && p > 0) { rowAmount = p * qty; break; }
+        }
+      }
+      if (!isNaN(rowAmount) && rowAmount > 0) { amount += rowAmount; hasPriceData = true; }
     }
 
     // Merge 사전예약 reservation rows
@@ -63,15 +97,15 @@ export default function SummaryPage({ summary = {}, happycall = {}, jobRows = []
         for (const c of cols) { const v = r[c]; if (v !== undefined && v !== '' && v !== null) return v; }
         return '';
       };
-      const code = String(getField(CODE_COLS) || '').trim();
-      const qty  = Number(String(getField(QTY_COLS) || '0').replace(/,/g, '')) || 0;
+      const code    = String(getField(CODE_COLS) || '').trim();
+      const qty     = toNumber(getField(QTY_COLS) || '0') || 0;
+      const partner = String(r['협력사명'] || r['협력사'] || '').trim();
       qtySum += qty;
       if (code) codes.add(code);
-      if (code && qty > 0) inspCodes.add(code);
-      // Cost for reservation rows
+      if (code && qty > 0 && !isExcludedRow(code, partner)) inspCodes.add(code);
       const rawCost = getField(COST_COLS);
       if (rawCost !== '') {
-        const cost = Number(String(rawCost).replace(/,/g, ''));
+        const cost = toNumber(rawCost);
         if (!isNaN(cost) && cost > 0 && qty > 0) { amount += cost * qty; hasPriceData = true; }
       }
     }
@@ -83,7 +117,7 @@ export default function SummaryPage({ summary = {}, happycall = {}, jobRows = []
       totalAmount:     amount,
       hasPriceData,
     };
-  }, [jobRows, config.reservation_rows, s]);
+  }, [jobRows, config.reservation_rows, config.exclude_rows, s]);
 
   const kpis = [
     {

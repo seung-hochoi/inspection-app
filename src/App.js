@@ -121,7 +121,7 @@ const S = {
   },
   tabBtnActive: { color: C.accent },
   tabIcon: { fontSize: 20 },
-  content: { flex: 1, paddingTop: 104, paddingBottom: 68 },
+  content: { flex: 1, paddingTop: 116, paddingBottom: 68 },
   card: {
     background: C.cardWhite,
     borderRadius: 14,
@@ -1966,46 +1966,42 @@ function App() {
 
       {/* ── Header (two rows: brand + action strip) ── */}
       <header style={S.header}>
-        {/* Row 1: brand · summary chips · user area */}
-        <div style={{ ...S.headerMain, gap: 0, padding: '0 14px', overflow: 'hidden' }}>
+        {/* Row 1: brand + right cluster */}
+        <div style={{ display: 'flex', alignItems: 'center', padding: '0 14px', height: 52, overflow: 'hidden' }}>
 
-          {/* ── LEFT: logo + divider + title block (grows to fill leftover space) ── */}
+          {/* ── LEFT: logo + divider + title (brand block, grows to fill leftover space) ── */}
           <div style={{
             display: 'flex', alignItems: 'center', gap: 10,
             flex: '1 1 auto', minWidth: 0,
           }}>
             <img src={gs25Logo} alt="GS25" style={{ height: 28, flexShrink: 0, display: 'block' }} />
             <div style={{ width: 1, height: 22, background: C.borderLight, flexShrink: 0 }} />
-            {/* Title + "MADE BY" subtitle stacked vertically */}
-            <div style={{ minWidth: 0 }}>
-              <p style={{
-                fontSize: 15, fontWeight: 800, color: C.text, margin: 0,
-                letterSpacing: '-0.02em', whiteSpace: 'nowrap',
-                overflow: 'hidden', textOverflow: 'ellipsis',
-              }}>
-                검품PDA
-              </p>
-              <p style={{
-                margin: '2px 0 0', fontSize: 10, fontWeight: 500,
-                letterSpacing: '0.08em', color: 'rgba(15,23,42,0.30)',
-                fontFamily: "'Pretendard',-apple-system,BlinkMacSystemFont,system-ui,sans-serif",
-                textTransform: 'uppercase', whiteSpace: 'nowrap',
-              }}>
-                MADE BY. SEUNG-HO
-                {currentFileName && (
-                  <span style={{ marginLeft: 6, color: C.textSecondary, letterSpacing: 0 }}>
-                    · {currentFileName.length > 24 ? currentFileName.slice(0, 24) + '…' : currentFileName}
-                  </span>
-                )}
-              </p>
-            </div>
+            <p style={{
+              fontSize: 15, fontWeight: 800, color: C.text, margin: 0,
+              letterSpacing: '-0.02em', whiteSpace: 'nowrap',
+              overflow: 'hidden', textOverflow: 'ellipsis',
+            }}>
+              검품PDA
+            </p>
           </div>
 
-          {/* ── CENTER: summary chips (shrinks to zero when space is tight) ── */}
-          <div style={{
-            flex: '0 1 auto', minWidth: 0, display: 'flex', alignItems: 'center',
-            gap: 5, marginLeft: 10, overflow: 'hidden',
-          }}>
+          {/* ── RIGHT: action cluster (status chips + buttons) — scrollable ── */}
+          <div
+            className="header-right-cluster"
+            style={{
+              flex: '0 0 auto',
+              minWidth: 0,
+              marginLeft: 8,
+              display: 'flex', alignItems: 'center', gap: 6,
+              overflowX: 'auto', overflowY: 'hidden',
+              whiteSpace: 'nowrap',
+              WebkitOverflowScrolling: 'touch',
+              overscrollBehaviorX: 'contain',
+              touchAction: 'pan-x',
+              scrollbarWidth: 'none', msOverflowStyle: 'none',
+            }}
+          >
+            {/* Status chips */}
             {headerSkuCount > 0 && (
               <span style={{
                 fontSize: 11, fontWeight: 700, color: C.textMid,
@@ -2037,23 +2033,6 @@ function App() {
                 {headerStatusText}
               </span>
             )}
-          </div>
-
-          {/* ── RIGHT: action cluster — fixed width, independently scrollable ── */}
-          <div
-            className="header-right-cluster"
-            style={{
-              flex: '0 0 auto',
-              maxWidth: '42vw',
-              marginLeft: 8,
-              display: 'flex', alignItems: 'center', gap: 6,
-              overflowX: 'auto', overflowY: 'hidden',
-              WebkitOverflowScrolling: 'touch',
-              overscrollBehaviorX: 'contain',
-              touchAction: 'pan-x',
-              scrollbarWidth: 'none', msOverflowStyle: 'none',
-            }}
-          >
             {worksheetUrl && (
               <a
                 href={worksheetUrl} target="_blank" rel="noreferrer"
@@ -2125,7 +2104,24 @@ function App() {
           </div>
         </div>
 
-        {/* Row 2: scrollable action strip */}
+        {/* Row 2: subtitle */}
+        <div style={{ padding: '0 14px 5px' }}>
+          <p style={{
+            margin: 0, fontSize: 10, fontWeight: 500,
+            letterSpacing: '0.08em', color: 'rgba(15,23,42,0.30)',
+            fontFamily: "'Pretendard',-apple-system,BlinkMacSystemFont,system-ui,sans-serif",
+            textTransform: 'uppercase', whiteSpace: 'nowrap', overflow: 'hidden',
+          }}>
+            MADE BY. SEUNG-HO
+            {currentFileName && (
+              <span style={{ marginLeft: 6, color: C.textSecondary, letterSpacing: 0 }}>
+                · {currentFileName.length > 24 ? currentFileName.slice(0, 24) + '…' : currentFileName}
+              </span>
+            )}
+          </p>
+        </div>
+
+        {/* Row 3: scrollable action strip */}
         <ActionStrip
           downloading={downloading}
           dlProgress={dlProgress}
