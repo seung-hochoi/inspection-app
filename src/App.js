@@ -1,10 +1,12 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import Papa from 'papaparse';
-import { ClipboardCheck, FileText, BarChart3 } from 'lucide-react';
+import { ClipboardCheck, FileText, BarChart3, RefreshCw, Database, AlertTriangle, Lock, Download, FolderDown } from 'lucide-react';
 import gs25Logo from './gs25-logo.svg';
 import InspectionPage from './components/InspectionPage';
 import RecordsPage from './components/RecordsPage';
 import SummaryPage from './components/SummaryPage';
+import { manualRecalc, syncHistory, resetCurrentJobInputData, fetchHistoryData } from './api'; // eslint-disable-line no-unused-vars
+import { buildAndDownloadPhotoZips } from './utils/photoZipBuilder';
 
 // ============================================================
 // SECTION 1: CONSTANTS / CONFIG
@@ -66,13 +68,26 @@ const S = {
     position: "fixed",
     top: 0, left: 0, right: 0, zIndex: 100,
     background: C.cardWhite,
+    boxShadow: `0 2px 14px ${C.shadow}`,
+    borderBottom: `1px solid ${C.borderLight}`,
+  },
+  headerMain: {
     height: 60,
     display: "flex",
     alignItems: "center",
     padding: "0 16px",
     gap: 10,
-    boxShadow: `0 2px 14px ${C.shadow}`,
-    borderBottom: `1px solid ${C.borderLight}`,
+  },
+  actionStrip: {
+    height: 44,
+    display: "flex",
+    alignItems: "center",
+    padding: "0 12px",
+    gap: 5,
+    overflowX: "auto",
+    borderTop: `1px solid ${C.borderLight}`,
+    scrollbarWidth: "none",  // Firefox
+    msOverflowStyle: "none", // IE/Edge
   },
   headerIcon: {
     width: 34, height: 34, borderRadius: 9,
@@ -105,7 +120,7 @@ const S = {
   },
   tabBtnActive: { color: C.accent },
   tabIcon: { fontSize: 20 },
-  content: { flex: 1, paddingTop: 60, paddingBottom: 68 },
+  content: { flex: 1, paddingTop: 104, paddingBottom: 68 },
   card: {
     background: C.cardWhite,
     borderRadius: 14,
@@ -1354,6 +1369,166 @@ function PartnerGroup({ partnerName, products, jobKey, inspectionRows, onSaved, 
   );
 }
 
+// ── ActionStrip: fixed scrollable bar of download + admin action buttons ──────
+function ActionStrip({
+  downloading, dlProgress,
+  syncing, resetting,
+  showReset, resetPw,
+  onResetPwChange, onToggleReset,
+  onDownloadZip, onDownloadAll, onSyncHistory, onReset,
+}) {
+  const busy = !!downloading;
+  const BTN = {
+    height: 30, padding: "0 10px", border: "none", borderRadius: 8,
+    fontSize: 11.5, fontWeight: 600, cursor: "pointer", flexShrink: 0,
+    fontFamily: "'Apple SD Gothic Neo','Pretendard',system-ui,sans-serif",
+    display: "inline-flex", alignItems: "center", gap: 4, whiteSpace: "nowrap",
+    transition: "opacity 0.15s, background 0.15s",
+  };
+  const ZIPS = [
+    { mode: "inspection", label: "검품사진↓", color: C.accent,  bg: C.accentBg },
+    { mode: "movement",   label: "불량사진↓", color: C.red,     bg: C.redBg    },
+    { mode: "weight",     label: "중량사진↓", color: C.gray,    bg: C.card     },
+    { mode: "sugar",      label: "당도사진↓", color: C.green,   bg: C.greenBg  },
+  ];
+  return (
+    <>
+      <div
+        className="action-strip"
+        style={{
+          ...S.actionStrip,
+          background: C.card,
+        }}
+      >
+        {/* ZIP downloads */}
+        {ZIPS.map(({ mode, label, color, bg }) => {
+          const active = downloading === mode;
+          return (
+            <button
+              key={mode}
+              onClick={() => onDownloadZip(mode)}
+              disabled={busy}
+              style={{
+                ...BTN,
+                background: active ? C.cardWhite : bg,
+                color: active ? C.textSecondary : color,
+                border: `1px solid ${active ? C.border : color + "44"}`,
+                opacity: busy && !active ? 0.5 : 1,
+              }}
+            >
+              <Download size={10} strokeWidth={2.5} />
+              {active ? (dlProgress.text || "처리중") : label}
+            </button>
+          );
+        })}
+
+        {/* Separator */}
+        <div style={{ width: 1, height: 20, background: C.borderLight, flexShrink: 0 }} />
+
+        {/* All download */}
+        <button
+          onClick={onDownloadAll}
+          disabled={busy}
+          style={{
+            ...BTN,
+            background: downloading === "all" ? C.cardWhite : C.accentBg,
+            color: downloading === "all" ? C.textSecondary : C.accent,
+            border: `1px solid ${C.border}`,
+            opacity: busy && downloading !== "all" ? 0.5 : 1,
+          }}
+        >
+          <FolderDown size={10} strokeWidth={2.5} />
+          {downloading === "all" ? (dlProgress.text || "처리중") : "전체↓"}
+        </button>
+
+        {/* Separator */}
+        <div style={{ width: 1, height: 20, background: C.borderLight, flexShrink: 0 }} />
+
+        {/* History */}
+        <button
+          onClick={onSyncHistory}
+          disabled={syncing}
+          style={{
+            ...BTN,
+            background: syncing ? C.cardWhite : C.greenBg,
+            color: syncing ? C.textSecondary : C.green,
+            border: `1px solid ${syncing ? C.border : C.green + "44"}`,
+          }}
+        >
+          <Database size={10} strokeWidth={2.5} style={{ animation: syncing ? "spin 1s linear infinite" : "none" }} />
+          {syncing ? "기록중" : "이력관리 기록"}
+        </button>
+
+        {/* Reset */}
+        <button
+          onClick={onToggleReset}
+          style={{
+            ...BTN,
+            background: showReset ? C.red : C.redBg,
+            color: showReset ? "#fff" : C.red,
+            border: `1px solid ${C.red + "44"}`,
+          }}
+        >
+          <AlertTriangle size={10} strokeWidth={2.5} />
+          초기화
+        </button>
+      </div>
+
+      {/* Reset password panel */}
+      {showReset && (
+        <div style={{
+          display: "flex", alignItems: "center", gap: 8, padding: "8px 14px",
+          background: C.redBg, borderTop: `1px solid ${C.red + "30"}`,
+        }}>
+          <AlertTriangle size={12} strokeWidth={2} color={C.red} style={{ flexShrink: 0 }} />
+          <span style={{ fontSize: 11.5, color: C.red, fontWeight: 600, flexShrink: 0 }}>
+            입력 데이터 모두 삭제
+          </span>
+          <div style={{ position: "relative", flexShrink: 0 }}>
+            <Lock size={11} strokeWidth={2} style={{ position: "absolute", left: 8, top: "50%", transform: "translateY(-50%)", color: C.red, pointerEvents: "none" }} />
+            <input
+              type="password" placeholder="비밀번호"
+              value={resetPw} onChange={(e) => onResetPwChange(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") onReset(); }}
+              style={{
+                height: 30, padding: "0 10px 0 26px",
+                border: `1.5px solid ${C.red + "80"}`, borderRadius: 7,
+                fontSize: 12, fontFamily: "inherit", outline: "none",
+                color: C.red, background: "#fff", width: 130,
+              }}
+            />
+          </div>
+          <button
+            onClick={onReset}
+            disabled={resetting}
+            style={{
+              height: 30, padding: "0 14px",
+              background: resetting ? C.textSecondary : C.red, color: "#fff",
+              border: "none", borderRadius: 7,
+              fontSize: 12, fontWeight: 700, cursor: resetting ? "default" : "pointer",
+              fontFamily: "inherit", flexShrink: 0,
+            }}
+          >{resetting ? "처리중" : "확인"}</button>
+          <button
+            onClick={onToggleReset}
+            style={{ ...BTN, background: "transparent", color: C.textSecondary, border: "none", padding: "0 4px" }}
+          >✕</button>
+        </div>
+      )}
+
+      {/* Download progress bar */}
+      {!!downloading && dlProgress.percent > 0 && (
+        <div style={{ height: 2, background: C.borderLight }}>
+          <div style={{
+            height: "100%", width: `${dlProgress.percent}%`,
+            background: C.accent, transition: "width 0.4s ease",
+          }} />
+        </div>
+      )}
+    </>
+  );
+}
+
 // ── Main App component ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 function App() {
   const [tab, setTab] = useState("inspection");
@@ -1371,6 +1546,15 @@ function App() {
   const [currentFileName, setCurrentFileName] = useState("");
   const [toast, setToast] = useState({ message: "", type: "info" });
   const [productImages, setProductImages] = useState([]);
+  const [historyData, setHistoryData] = useState([]);
+
+  // ── Action bar state (shared across header + all tabs) ────────────────────────
+  const [downloading,  setDownloading]  = useState("");
+  const [dlProgress,   setDlProgress]   = useState({ stage: "", percent: 0, text: "" });
+  const [syncing,      setSyncing]      = useState(false);
+  const [resetting,    setResetting]    = useState(false);
+  const [showReset,    setShowReset]    = useState(false);
+  const [resetPw,      setResetPw]      = useState("");
 
   // ── Action handlers (SECTION 7) ───────────────────────────────
   const showToast = useCallback((message, type = "info") => {
@@ -1431,6 +1615,81 @@ function App() {
     });
   }, []);
 
+  // ── Action bar handlers ────────────────────────────────────────────────────
+  const handleSyncHistory= useCallback(async () => {
+    setSyncing(true);
+    try {
+      await syncHistory();
+      // Reload history data for charts
+      const res = await fetchHistoryData();
+      setHistoryData(Array.isArray(res.data) ? res.data : []);
+      showToast("이력관리 기록 완료", "success");
+    } catch (err) {
+      showToast(err.message || "이력관리 기록 실패", "error");
+    } finally { setSyncing(false); }
+  }, [showToast]);
+
+  const handleReset = useCallback(async () => {
+    if (!resetPw) { showToast("비밀번호를 입력하세요.", "error"); return; }
+    setResetting(true);
+    try {
+      await resetCurrentJobInputData(resetPw);
+      setShowReset(false); setResetPw("");
+      showToast("초기화 완료", "success");
+      loadBootstrap();
+    } catch (err) {
+      showToast(err.message || "초기화 실패 (비밀번호 확인)", "error");
+    } finally { setResetting(false); }
+  }, [resetPw, loadBootstrap, showToast]);
+
+  const handleDownloadZip = useCallback(async (mode) => {
+    setDownloading(mode);
+    setDlProgress({ stage: "generating", percent: 10, text: "ZIP 생성 중..." });
+    try {
+      const { count, parts } = await buildAndDownloadPhotoZips(mode, { onProgress: setDlProgress });
+      if (count === 0) {
+        showToast("다운로드할 사진이 없습니다.", "info");
+      } else {
+        showToast(`총 ${count}장 다운로드 시작${parts > 1 ? ` (${parts}개 파일)` : ""}`, "success");
+      }
+    } catch (err) {
+      showToast(err.message || "ZIP 생성 실패", "error");
+    } finally {
+      setDownloading(""); setDlProgress({ stage: "", percent: 0, text: "" });
+    }
+  }, [showToast]);
+
+  const handleDownloadAll = useCallback(async () => {
+    setDownloading("all");
+    const modes = [
+      { mode: "inspection", label: "검품사진" },
+      { mode: "movement",   label: "불량사진" },
+      { mode: "weight",     label: "중량사진" },
+      { mode: "sugar",      label: "당도사진" },
+    ];
+    let totalFiles = 0; let totalParts = 0;
+    try {
+      for (const { mode, label } of modes) {
+        setDlProgress({ stage: "generating", percent: 10, text: `${label} ZIP 생성 중...` });
+        const { count, parts } = await buildAndDownloadPhotoZips(mode, { onProgress: setDlProgress });
+        totalFiles += count; totalParts += parts;
+      }
+      if (totalFiles === 0) { showToast("다운로드할 사진이 없습니다.", "info"); }
+      else { showToast(`전체 ${totalFiles}장 / ${totalParts}개 파일 다운로드 시작`, "success"); }
+    } catch (err) {
+      showToast(err.message || "전체 다운로드 실패", "error");
+    } finally {
+      setDownloading(""); setDlProgress({ stage: "", percent: 0, text: "" });
+    }
+  }, [showToast]);
+
+  // Load history data once on initial load
+  useEffect(() => {
+    fetchHistoryData()
+      .then((res) => { if (Array.isArray(res.data)) setHistoryData(res.data); })
+      .catch(() => {}); // silently ignore if backend not reachable
+  }, []);
+
   const handleCsvUpload = useCallback(
     async (e) => {
       const file = e.target.files?.[0];
@@ -1475,38 +1734,63 @@ function App() {
 
   return (
     <div style={S.app}>
-      <style>{`* { box-sizing: border-box; } body { margin: 0; } input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer-spin-button { opacity: 1; }`}</style>
+      <style>{`
+        * { box-sizing: border-box; }
+        body { margin: 0; }
+        input[type=number]::-webkit-inner-spin-button,
+        input[type=number]::-webkit-outer-spin-button { opacity: 1; }
+        .action-strip::-webkit-scrollbar { display: none; }
+      `}</style>
 
-      {/* Header */}
+      {/* ── Header (two rows: brand + action strip) ── */}
       <header style={S.header}>
-        <img src={gs25Logo} alt="GS25" style={{ height: 26, flexShrink: 0, verticalAlign: "middle" }} />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <p style={S.headerTitle}>
-            검품 시스템
-            <span style={{
-              marginLeft: 8, paddingLeft: 8,
-              borderLeft: "1px solid rgba(15,23,42,0.14)",
-              fontSize: 9.5, fontWeight: 500, letterSpacing: "0.08em",
-              color: "rgba(15,23,42,0.32)",
-              verticalAlign: "middle", fontFamily: "'SF Mono','Menlo','Consolas',monospace",
-              textTransform: "uppercase",
-            }}>MADE BY. SEUNG-HO</span>
-          </p>
-          {currentFileName && (
-            <p style={S.headerSub}>
-              {currentFileName.length > 40 ? currentFileName.slice(0, 40) + "…" : currentFileName}
+        {/* Row 1: brand + 시트 link */}
+        <div style={S.headerMain}>
+          <img src={gs25Logo} alt="GS25" style={{ height: 26, flexShrink: 0, verticalAlign: "middle" }} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <p style={S.headerTitle}>
+              검품 시스템
+              <span style={{
+                marginLeft: 8, paddingLeft: 8,
+                borderLeft: "1px solid rgba(15,23,42,0.14)",
+                fontSize: 9.5, fontWeight: 500, letterSpacing: "0.08em",
+                color: "rgba(15,23,42,0.32)",
+                verticalAlign: "middle", fontFamily: "'SF Mono','Menlo','Consolas',monospace",
+                textTransform: "uppercase",
+              }}>MADE BY. SEUNG-HO</span>
             </p>
-          )}
+            {currentFileName && (
+              <p style={S.headerSub}>
+                {currentFileName.length > 40 ? currentFileName.slice(0, 40) + "…" : currentFileName}
+              </p>
+            )}
+          </div>
+          <div style={S.headerRight}>
+            {worksheetUrl && (
+              <a
+                href={worksheetUrl} target="_blank" rel="noreferrer"
+                style={{ fontSize: 12, color: C.accent, fontWeight: 600, textDecoration: "none",
+                  padding: "6px 10px", background: C.accentBg, borderRadius: 8 }}
+              >시트↗</a>
+            )}
+          </div>
         </div>
-        <div style={S.headerRight}>
-          {worksheetUrl && (
-            <a
-              href={worksheetUrl} target="_blank" rel="noreferrer"
-              style={{ fontSize: 12, color: C.accent, fontWeight: 600, textDecoration: "none",
-                padding: "6px 10px", background: C.accentBg, borderRadius: 8 }}
-            >시트↗</a>
-          )}
-        </div>
+
+        {/* Row 2: scrollable action strip */}
+        <ActionStrip
+          downloading={downloading}
+          dlProgress={dlProgress}
+          syncing={syncing}
+          resetting={resetting}
+          showReset={showReset}
+          resetPw={resetPw}
+          onResetPwChange={setResetPw}
+          onToggleReset={() => setShowReset((v) => !v)}
+          onDownloadZip={handleDownloadZip}
+          onDownloadAll={handleDownloadAll}
+          onSyncHistory={handleSyncHistory}
+          onReset={handleReset}
+        />
       </header>
 
       {/* Content */}
@@ -1545,6 +1829,9 @@ function App() {
           <SummaryPage
             summary={summary}
             happycall={happycall}
+            jobRows={jobRows}
+            historyData={historyData}
+            config={config}
             onToast={showToast}
             onRefresh={loadBootstrap}
           />

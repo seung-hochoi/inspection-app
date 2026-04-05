@@ -2,7 +2,8 @@ import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { motion } from 'framer-motion';
 import { Minus, Plus, ImagePlus, Truck, ArrowLeftRight,
-         CheckCircle2, AlertTriangle, Loader2, AlertCircle, ShieldAlert, Camera } from 'lucide-react';
+         CheckCircle2, AlertTriangle, Loader2, AlertCircle, ShieldAlert, Camera,
+         X as XIcon, Eye } from 'lucide-react';
 import { C, radius, font, shadow, trans } from './styles';
 import PhotoUploader from './PhotoUploader';
 import ReturnExchangeModal from './ReturnExchangeModal';
@@ -25,6 +26,8 @@ const ProductRow = React.memo(function ProductRow({
   const [movementType, setMovementType]   = useState('RETURN');
   const [isConflict, setIsConflict]       = useState(false);
   const [thumbUploading, setThumbUploading] = useState(false);
+  const [isExpanded, setIsExpanded]       = useState(false);
+  const [lightboxId, setLightboxId]       = useState(null);
   const saveTimerRef   = useRef(null);
   const latestDraftRef = useRef(draft);
   const inFlightRef    = useRef(false);
@@ -155,20 +158,36 @@ const ProductRow = React.memo(function ProductRow({
       // before the React state update propagates will hit the duplicate guard.
       lastSavedFingerprintRef.current = fingerprint;
 
-      // Persist server version/updatedAt so next save can detect concurrent conflicts.
-      // Use { silent: true } so handleDraftChange does NOT set saveStatuses='saving'
-      // — that spurious transition triggers unnecessary PartnerGroup re-renders.
+      // Persist server version/updatedAt and re-hydrate per-category photo IDs
+      // from the save response so the action-button counts stay correct after save.
       const savedRow = result?.data?.inspectionRows?.[0];
       if (savedRow && !savedRow.__conflict) {
         const serverVersion   = Number(savedRow['버전']    || 0);
         const serverUpdatedAt = String(savedRow['수정일시'] || '');
+
+        // Merge server photo IDs with local draft to guarantee counts survive
+        const hydrateIds = (field) => {
+          const serverIds = String(savedRow[field] || '').split('\n').filter(Boolean);
+          const localIds  = latestDraftRef.current[field] || [];
+          if (!serverIds.length) return localIds.length ? localIds : undefined;
+          return [...new Set([...localIds, ...serverIds])];
+        };
+        const pInsp   = hydrateIds('inspPhotoIds');
+        const pDefect = hydrateIds('defectPhotoIds');
+        const pWeight = hydrateIds('weightPhotoIds');
+        const pBrix   = hydrateIds('brixPhotoIds');
+
+        const nextDraft = { ...latestDraftRef.current };
         if (serverVersion || serverUpdatedAt) {
-          onDraftChange?.(productKey, {
-            ...latestDraftRef.current, // use ref, not stale draftSnapshot
-            serverVersion,
-            serverUpdatedAt,
-          }, { silent: true });
+          nextDraft.serverVersion   = serverVersion;
+          nextDraft.serverUpdatedAt = serverUpdatedAt;
         }
+        if (pInsp)   nextDraft.inspPhotoIds   = pInsp;
+        if (pDefect) nextDraft.defectPhotoIds = pDefect;
+        if (pWeight) nextDraft.weightPhotoIds = pWeight;
+        if (pBrix)   nextDraft.brixPhotoIds   = pBrix;
+
+        onDraftChange?.(productKey, nextDraft, { silent: true });
       }
 
       onSaved?.(productKey);
@@ -270,207 +289,248 @@ const ProductRow = React.memo(function ProductRow({
 
   return (
     <>
-      <div
-        style={{
-          display: 'flex', background: rowBg, borderBottom: `1px solid ${C.border}`,
-          contentVisibility: 'auto',
-          containIntrinsicSize: '0 120px',
-        }}
-      >
-        {/* Left accent bar — live color reflects completion / save state */}
-        <div style={{ width: 4, flexShrink: 0, background: accentColor, transition: 'background 0.3s' }} />
+      {/* ── Outer wrapper: provides shared border/bg for card + expanded preview ── */}
+      <div style={{ borderBottom: `1px solid ${C.border}` }}>
+        {/* ── Main card row ── */}
+        <div
+          style={{
+            display: 'flex', background: rowBg,
+            contentVisibility: 'auto',
+            containIntrinsicSize: '0 120px',
+          }}
+        >
+          {/* Left accent bar — live color reflects completion / save state */}
+          <div style={{ width: 4, flexShrink: 0, background: accentColor, transition: 'background 0.3s' }} />
 
-        <div style={{ flex: 1, padding: '11px 14px 11px 11px', minWidth: 0 }}>
+          <div style={{ flex: 1, padding: '11px 14px 11px 11px', minWidth: 0 }}>
 
-          {/* ── Row 1: Product identity + status / tag chips ── */}
-          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 8 }}>
+            {/* ── Row 1: Product identity + status / tag chips ── */}
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 8 }}>
 
-            {/* Representative product thumbnail */}
-            <div
-              style={{
-                position: 'relative', flexShrink: 0,
-                width: 46, height: 46, borderRadius: radius.sm,
-                overflow: 'hidden',
-                border: `1px solid ${C.border}`,
-                background: C.bgAlt,
-                cursor: 'pointer',
-              }}
-              title="대표 이미지 변경"
-              onClick={() => thumbInputRef.current?.click()}
-            >
-              {thumbUrl ? (
-                <img
-                  src={thumbUrl}
-                  alt={row['상품명'] || ''}
-                  style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
-                  loading="lazy"
-                />
-              ) : (
-                <div style={{
-                  width: '100%', height: '100%', display: 'flex',
-                  alignItems: 'center', justifyContent: 'center',
-                }}>
-                  {thumbUploading
-                    ? <Loader2 size={14} color={C.muted2} style={{ animation: 'spin 1s linear infinite' }} />
-                    : <Camera size={14} color={C.muted2} strokeWidth={1.5} />}
-                </div>
-              )}
-              {/* Camera overlay button */}
-              {!thumbUploading && (
-                <div style={{
-                  position: 'absolute', bottom: 2, right: 2,
-                  width: 16, height: 16, borderRadius: '50%',
-                  background: 'rgba(15,23,42,0.55)',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                }}>
-                  <Camera size={9} color="#fff" strokeWidth={2} />
-                </div>
-              )}
-              <input
-                ref={thumbInputRef}
-                type="file" accept="image/*"
-                style={{ display: 'none' }}
-                onChange={handleThumbUpload}
-              />
-            </div>
-
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <p style={{
-                margin: '0 0 2px', fontSize: 13.5, fontWeight: 700, color: C.text,
-                letterSpacing: '-0.015em', lineHeight: 1.3,
-                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-              }}>
-                {row['상품명'] || '—'}
-              </p>
-              <p style={{
-                margin: 0, fontSize: 11, color: C.muted, lineHeight: 1.3,
-                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-              }}>
-                <span style={{ fontFamily: "'Menlo','Consolas',monospace", letterSpacing: '-0.01em' }}>
-                  {cleanCode}
-                </span>
-                {row['협력사명'] && <span style={{ color: C.muted2 }}> · {row['협력사명']}</span>}
-                {orderedQty > 0 && <span style={{ color: C.muted2 }}> · 발주 {orderedQty}</span>}
-              </p>
-            </div>
-            {/* Tags + animated save-status badge */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
-              {eventName && <Tag bg={C.orangeLight} color={C.orange} border={C.orangeMid}>{eventName}</Tag>}
-              {hcRank && (
-                <Tag bg={C.redLight} color={C.red} border={C.redMid} title={hcReason || undefined}>
-                  TOP.{hcRank}
-                </Tag>
-              )}
-              <SaveStatusBadge
-                saveStatus={saveStatus}
-                isDone={isDone}
-                hasDefect={hasDefect}
-                isConflict={isConflict}
-              />
-            </div>
-          </div>
-
-          {/* ── Row 2: Qty · result chip · defect reason · photos · movement ── */}
-          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 7, flexWrap: 'wrap' }}>
-
-            {/* 검품수량 stepper */}
-            <div style={{
-              display: 'flex', alignItems: 'stretch', flexShrink: 0,
-              borderRadius: radius.sm, overflow: 'hidden',
-              border: `1.5px solid ${isDone ? C.greenMid : hasDefect ? C.orangeMid : C.border}`,
-              boxShadow: isDone
-                ? `0 0 0 2px ${C.greenLight}`
-                : hasDefect ? `0 0 0 2px ${C.orangeLight}` : shadow.xs,
-              background: C.card, transition: 'border-color 0.2s, box-shadow 0.2s',
-            }}>
-              <StepperBtn onClick={() => stepQty(-1)} aria-label="감소">
-                <Minus size={12} strokeWidth={2.5} />
-              </StepperBtn>
-              <input
-                type="text" inputMode="numeric" aria-label="검품수량"
-                value={inspQty}
-                onChange={(e) => handleQtyChange(e.target.value)}
-                onFocus={() => { if (inspQty === '0') handleQtyChange(''); }}
-                onBlur={handleQtyBlur}
-                placeholder="0"
+              {/* Representative product thumbnail */}
+              <div
                 style={{
-                  width: 52, height: 36, textAlign: 'center', border: 'none',
-                  fontSize: 16, fontWeight: 800,
-                  color: isDone ? C.green : hasDefect ? C.orange : C.text,
-                  fontFamily: font.base, outline: 'none', background: 'transparent',
-                  letterSpacing: '-0.02em',
+                  position: 'relative', flexShrink: 0,
+                  width: 46, height: 46, borderRadius: radius.sm,
+                  overflow: 'hidden',
+                  border: `1px solid ${C.border}`,
+                  background: C.bgAlt,
+                  cursor: 'pointer',
                 }}
-              />
-              <StepperBtn onClick={() => stepQty(1)} aria-label="증가" primary>
-                <Plus size={12} strokeWidth={2.5} />
-              </StepperBtn>
-            </div>
-
-            {/* 검품 chip — shown when inspected with no return/exchange records */}
-            {isDone && (
-              <div style={{
-                height: 36, padding: '0 10px', flexShrink: 0,
-                display: 'inline-flex', alignItems: 'center', gap: 5,
-                borderRadius: radius.sm,
-                background: C.greenLight,
-                border: `1.5px solid ${C.greenMid}`,
-                fontSize: 12, fontWeight: 700,
-                color: C.green,
-              }}>
-                <CheckCircle2 size={13} strokeWidth={2.5} />
-                검품
+                title="대표 이미지 변경"
+                onClick={() => thumbInputRef.current?.click()}
+              >
+                {thumbUrl ? (
+                  <img
+                    src={thumbUrl}
+                    alt={row['상품명'] || ''}
+                    style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
+                    loading="lazy"
+                  />
+                ) : (
+                  <div style={{
+                    width: '100%', height: '100%', display: 'flex',
+                    alignItems: 'center', justifyContent: 'center',
+                  }}>
+                    {thumbUploading
+                      ? <Loader2 size={14} color={C.muted2} style={{ animation: 'spin 1s linear infinite' }} />
+                      : <Camera size={14} color={C.muted2} strokeWidth={1.5} />}
+                  </div>
+                )}
+                {/* Camera overlay button */}
+                {!thumbUploading && (
+                  <div style={{
+                    position: 'absolute', bottom: 2, right: 2,
+                    width: 16, height: 16, borderRadius: '50%',
+                    background: 'rgba(15,23,42,0.55)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  }}>
+                    <Camera size={9} color="#fff" strokeWidth={2} />
+                  </div>
+                )}
+                <input
+                  ref={thumbInputRef}
+                  type="file" accept="image/*"
+                  style={{ display: 'none' }}
+                  onChange={handleThumbUpload}
+                />
               </div>
-            )}
 
-            {/* 불량 사유 — removed from inline row; entered via 회송/교환 modal */}
-
-            {/* Photos + movement actions — pushed to far right (desktop), full-width 2-row on mobile */}
-            <div className="action-btn-row" style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0 }}>
-              {/* Primary photo slots: 검품 + 불량 — higher usage, show up to 3 thumbs */}
-              <PhotoSlot
-                label="검품" fileIds={inspPhotoIds}
-                color={C.primary} bg={C.primaryLight} border={C.primaryMid}
-                onClick={() => setShowPhotoType('insp')}
-                onDeletePhoto={(id) => deletePhoto('insp', id)}
-              />
-              <PhotoSlot
-                label="불량" fileIds={defectPhotoIds}
-                color={C.red} bg={C.redLight} border={C.redMid}
-                onClick={() => setShowPhotoType('defect')}
-                onDeletePhoto={(id) => deletePhoto('defect', id)}
-              />
-              {/* Compact photo slots: 중량 + 당도 — lower usage, 1 thumb max */}
-              <PhotoSlot
-                label="중량" fileIds={weightPhotoIds}
-                color={C.muted} bg={C.bgAlt} border={C.borderMid}
-                onClick={() => setShowPhotoType('weight')}
-                onDeletePhoto={(id) => deletePhoto('weight', id)}
-                compact
-              />
-              <PhotoSlot
-                label="당도" fileIds={brixPhotoIds}
-                color={C.muted} bg={C.bgAlt} border={C.borderMid}
-                onClick={() => setShowPhotoType('brix')}
-                onDeletePhoto={(id) => deletePhoto('brix', id)}
-                compact
-              />
-              <div className="action-separator" style={{ width: 1, height: 20, background: C.border, flexShrink: 0 }} />
-              <MovBtn
-                icon={<Truck size={11} strokeWidth={2} />} label="회송"
-                color={C.red} bg={C.redLight} border={C.redMid}
-                count={returnCount}
-                onClick={() => { setMovementType('RETURN'); setShowMovement(true); }}
-              />
-              <MovBtn
-                icon={<ArrowLeftRight size={11} strokeWidth={2} />} label="교환"
-                color={C.orange} bg={C.orangeLight} border={C.orangeMid}
-                count={exchangeCount}
-                onClick={() => { setMovementType('EXCHANGE'); setShowMovement(true); }}
-              />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <p style={{
+                  margin: '0 0 2px', fontSize: 13.5, fontWeight: 700, color: C.text,
+                  letterSpacing: '-0.015em', lineHeight: 1.3,
+                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                }}>
+                  {row['상품명'] || '—'}
+                </p>
+                <p style={{
+                  margin: 0, fontSize: 11, color: C.muted, lineHeight: 1.3,
+                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                }}>
+                  <span style={{ fontFamily: "'Menlo','Consolas',monospace", letterSpacing: '-0.01em' }}>
+                    {cleanCode}
+                  </span>
+                  {row['협력사명'] && <span style={{ color: C.muted2 }}> · {row['협력사명']}</span>}
+                  {orderedQty > 0 && <span style={{ color: C.muted2 }}> · 발주 {orderedQty}</span>}
+                </p>
+              </div>
+              {/* Tags + animated save-status badge */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+                {eventName && <Tag bg={C.orangeLight} color={C.orange} border={C.orangeMid}>{eventName}</Tag>}
+                {hcRank && (
+                  <Tag bg={C.redLight} color={C.red} border={C.redMid} title={hcReason || undefined}>
+                    TOP.{hcRank}
+                  </Tag>
+                )}
+                <SaveStatusBadge
+                  saveStatus={saveStatus}
+                  isDone={isDone}
+                  hasDefect={hasDefect}
+                  isConflict={isConflict}
+                />
+              </div>
             </div>
 
+            {/* ── Row 2: Qty · result chip · defect reason · photos · movement ── */}
+            <div style={{ display: 'flex', alignItems: 'flex-end', gap: 7, flexWrap: 'wrap' }}>
+
+              {/* 검품수량 stepper */}
+              <div style={{
+                display: 'flex', alignItems: 'stretch', flexShrink: 0,
+                borderRadius: radius.sm, overflow: 'hidden',
+                border: `1.5px solid ${isDone ? C.greenMid : hasDefect ? C.orangeMid : C.border}`,
+                boxShadow: isDone
+                  ? `0 0 0 2px ${C.greenLight}`
+                  : hasDefect ? `0 0 0 2px ${C.orangeLight}` : shadow.xs,
+                background: C.card, transition: 'border-color 0.2s, box-shadow 0.2s',
+              }}>
+                <StepperBtn onClick={() => stepQty(-1)} aria-label="감소">
+                  <Minus size={12} strokeWidth={2.5} />
+                </StepperBtn>
+                <input
+                  type="text" inputMode="numeric" aria-label="검품수량"
+                  value={inspQty}
+                  onChange={(e) => handleQtyChange(e.target.value)}
+                  onFocus={() => { if (inspQty === '0') handleQtyChange(''); }}
+                  onBlur={handleQtyBlur}
+                  placeholder="0"
+                  style={{
+                    width: 52, height: 36, textAlign: 'center', border: 'none',
+                    fontSize: 16, fontWeight: 800,
+                    color: isDone ? C.green : hasDefect ? C.orange : C.text,
+                    fontFamily: font.base, outline: 'none', background: 'transparent',
+                    letterSpacing: '-0.02em',
+                  }}
+                />
+                <StepperBtn onClick={() => stepQty(1)} aria-label="증가" primary>
+                  <Plus size={12} strokeWidth={2.5} />
+                </StepperBtn>
+              </div>
+
+              {/* 검품 chip — shown when inspected with no return/exchange records */}
+              {isDone && (
+                <div style={{
+                  height: 36, padding: '0 10px', flexShrink: 0,
+                  display: 'inline-flex', alignItems: 'center', gap: 5,
+                  borderRadius: radius.sm,
+                  background: C.greenLight,
+                  border: `1.5px solid ${C.greenMid}`,
+                  fontSize: 12, fontWeight: 700,
+                  color: C.green,
+                }}>
+                  <CheckCircle2 size={13} strokeWidth={2.5} />
+                  검품
+                </div>
+              )}
+
+              {/* 불량 사유 — removed from inline row; entered via 회송/교환 modal */}
+
+              {/* Photos + movement actions — pushed to far right (desktop), full-width 2-row on mobile */}
+              <div className="action-btn-row" style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0 }}>
+                {/* Primary photo slots: 검품 + 불량 — higher usage, show up to 3 thumbs */}
+                <PhotoSlot
+                  label="검품" fileIds={inspPhotoIds}
+                  color={C.primary} bg={C.primaryLight} border={C.primaryMid}
+                  onClick={() => setShowPhotoType('insp')}
+                  onDeletePhoto={(id) => deletePhoto('insp', id)}
+                />
+                <PhotoSlot
+                  label="불량" fileIds={defectPhotoIds}
+                  color={C.red} bg={C.redLight} border={C.redMid}
+                  onClick={() => setShowPhotoType('defect')}
+                  onDeletePhoto={(id) => deletePhoto('defect', id)}
+                />
+                {/* Compact photo slots: 중량 + 당도 — lower usage, 1 thumb max */}
+                <PhotoSlot
+                  label="중량" fileIds={weightPhotoIds}
+                  color={C.muted} bg={C.bgAlt} border={C.borderMid}
+                  onClick={() => setShowPhotoType('weight')}
+                  onDeletePhoto={(id) => deletePhoto('weight', id)}
+                  compact
+                />
+                <PhotoSlot
+                  label="당도" fileIds={brixPhotoIds}
+                  color={C.muted} bg={C.bgAlt} border={C.borderMid}
+                  onClick={() => setShowPhotoType('brix')}
+                  onDeletePhoto={(id) => deletePhoto('brix', id)}
+                  compact
+                />
+                <div className="action-separator" style={{ width: 1, height: 20, background: C.border, flexShrink: 0 }} />
+                <MovBtn
+                  icon={<Truck size={11} strokeWidth={2} />} label="회송"
+                  color={C.red} bg={C.redLight} border={C.redMid}
+                  count={returnCount}
+                  onClick={() => { setMovementType('RETURN'); setShowMovement(true); }}
+                />
+                <MovBtn
+                  icon={<ArrowLeftRight size={11} strokeWidth={2} />} label="교환"
+                  color={C.orange} bg={C.orangeLight} border={C.orangeMid}
+                  count={exchangeCount}
+                  onClick={() => { setMovementType('EXCHANGE'); setShowMovement(true); }}
+                />
+                {/* Expand / collapse photo preview toggle */}
+                <button
+                  type="button"
+                  onClick={() => setIsExpanded((v) => !v)}
+                  className="action-btn"
+                  title={isExpanded ? '미리보기 닫기' : '사진 미리보기'}
+                  style={{
+                    height: 32, width: 32, padding: 0,
+                    background: isExpanded ? C.primaryLight : C.bgAlt,
+                    color: isExpanded ? C.primary : C.muted2,
+                    border: `1px solid ${isExpanded ? C.primaryMid : C.border}`,
+                    borderRadius: radius.sm, cursor: 'pointer',
+                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                    transition: trans, flex: '0 0 auto',
+                  }}
+                >
+                  <Eye size={13} strokeWidth={2} />
+                </button>
+              </div>
+
+            </div>
           </div>
         </div>
+
+        {/* ── Expandable photo preview panel ── */}
+        {isExpanded && (
+          <div style={{ background: C.bgAlt, borderTop: `1px solid ${C.border}` }}>
+            <div style={{ padding: '10px 14px 12px 15px' }}>
+              <PhotoPreviewSection
+                categories={[
+                  { type: 'insp',   label: '검품사진', fileIds: inspPhotoIds,   color: C.primary, bg: C.primaryLight, border: C.primaryMid },
+                  { type: 'defect', label: '불량사진', fileIds: defectPhotoIds, color: C.red,     bg: C.redLight,     border: C.redMid    },
+                  { type: 'weight', label: '중량사진', fileIds: weightPhotoIds, color: C.muted,   bg: C.bgAlt,        border: C.borderMid },
+                  { type: 'brix',   label: '당도사진', fileIds: brixPhotoIds,   color: C.muted,   bg: C.bgAlt,        border: C.borderMid },
+                ]}
+                onDeletePhoto={deletePhoto}
+                onViewPhoto={(id) => setLightboxId(id)}
+                onAddPhoto={(type) => setShowPhotoType(type)}
+              />
+            </div>
+          </div>
+        )}
       </div>
 
       {/* ── Modals: rendered via portal to avoid overflow/transform clipping ── */}
@@ -520,6 +580,42 @@ const ProductRow = React.memo(function ProductRow({
           onSave={handleMovementSave}
           onClose={() => setShowMovement(false)}
         />,
+        document.body,
+      )}
+      {/* Lightbox — full-size image overlay */}
+      {lightboxId && createPortal(
+        <div
+          onClick={() => setLightboxId(null)}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 950,
+            background: 'rgba(0,0,0,0.93)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}
+        >
+          <img
+            src={`https://drive.google.com/thumbnail?id=${lightboxId}&sz=w1200`}
+            alt="사진 미리보기"
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              maxWidth: '92vw', maxHeight: '88vh',
+              objectFit: 'contain', borderRadius: 6,
+              boxShadow: '0 8px 40px rgba(0,0,0,0.6)',
+            }}
+          />
+          <button
+            onClick={() => setLightboxId(null)}
+            style={{
+              position: 'absolute', top: 14, right: 14,
+              width: 38, height: 38, borderRadius: '50%',
+              background: 'rgba(255,255,255,0.14)',
+              border: '1px solid rgba(255,255,255,0.25)',
+              cursor: 'pointer', color: '#fff',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}
+          >
+            <XIcon size={18} strokeWidth={2.5} />
+          </button>
+        </div>,
         document.body,
       )}
     </>
@@ -694,6 +790,103 @@ function PhotoSlot({ label, fileIds = [], color, bg, border, onClick, onDeletePh
         </span>
       ))}
     </button>
+  );
+}
+
+// ── PhotoPreviewSection: expanded card photo gallery with per-photo delete ──
+function PhotoPreviewSection({ categories, onDeletePhoto, onViewPhoto, onAddPhoto }) {
+  const hasSomething = categories.some((c) => c.fileIds.length > 0);
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      {!hasSomething && (
+        <p style={{ margin: 0, fontSize: 12, color: C.muted, textAlign: 'center', padding: '6px 0' }}>
+          업로드된 사진이 없습니다
+        </p>
+      )}
+      {categories.map(({ type, label, fileIds, color, bg, border }) => (
+        <div key={type}>
+          {/* Section header: label + count badge + add button */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+            <span style={{
+              fontSize: 11, fontWeight: 700,
+              color: fileIds.length > 0 ? color : C.muted,
+            }}>
+              {label}
+            </span>
+            <span style={{
+              fontSize: 9, fontWeight: 800, padding: '0 5px',
+              borderRadius: radius.full,
+              background: fileIds.length > 0 ? color : C.border,
+              color: fileIds.length > 0 ? '#fff' : C.muted2,
+              minWidth: 16, height: 14,
+              display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+            }}>
+              {fileIds.length}
+            </span>
+            <button
+              type="button"
+              onClick={() => onAddPhoto(type)}
+              style={{
+                height: 22, padding: '0 7px', marginLeft: 2,
+                background: bg, color: color,
+                border: `1px solid ${border}`,
+                borderRadius: radius.sm, fontSize: 10, fontWeight: 600,
+                cursor: 'pointer', fontFamily: font.base,
+                display: 'inline-flex', alignItems: 'center', gap: 3,
+              }}
+            >
+              <ImagePlus size={10} strokeWidth={2} />
+              추가
+            </button>
+          </div>
+
+          {/* Thumbnail grid */}
+          {fileIds.length === 0 ? (
+            <p style={{ margin: 0, fontSize: 11, color: C.muted2 }}>사진 없음</p>
+          ) : (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {fileIds.map((id) => (
+                <div
+                  key={id}
+                  style={{ position: 'relative', flexShrink: 0, width: 64, height: 64 }}
+                >
+                  <img
+                    src={`https://drive.google.com/thumbnail?id=${id}&sz=w120`}
+                    alt=""
+                    onClick={() => onViewPhoto(id)}
+                    style={{
+                      width: 64, height: 64, objectFit: 'cover',
+                      borderRadius: radius.sm,
+                      border: `1.5px solid ${border}`,
+                      cursor: 'pointer', display: 'block',
+                    }}
+                    loading="lazy"
+                    onError={(e) => { e.currentTarget.style.visibility = 'hidden'; }}
+                  />
+                  {/* Per-photo delete button */}
+                  <button
+                    type="button"
+                    onClick={() => onDeletePhoto(type, id)}
+                    title="삭제"
+                    style={{
+                      position: 'absolute', top: -5, right: -5,
+                      width: 18, height: 18, borderRadius: '50%',
+                      background: '#ef4444', color: '#fff',
+                      border: '2px solid #fff',
+                      cursor: 'pointer', padding: 0,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      boxShadow: '0 1px 4px rgba(0,0,0,0.25)',
+                    }}
+                  >
+                    <XIcon size={9} strokeWidth={3} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
   );
 }
 

@@ -121,6 +121,26 @@ function doGet(e) {
       });
     }
 
+    if (action === "getHistoryData") {
+      var ss = SpreadsheetApp.getActiveSpreadsheet();
+      var histSheet = ss.getSheetByName(SHEET_NAMES.history);
+      if (!histSheet || histSheet.getLastRow() < 2) {
+        return jsonOutput_({ ok: true, data: [] });
+      }
+      var allVals = histSheet.getDataRange().getValues();
+      var headers = allVals[0].map(String);
+      var histRows = [];
+      for (var hi = 1; hi < allVals.length; hi++) {
+        var obj = {};
+        for (var hj = 0; hj < headers.length; hj++) {
+          var v = allVals[hi][hj];
+          obj[headers[hj]] = (typeof v === 'number') ? v : String(v);
+        }
+        histRows.push(obj);
+      }
+      return jsonOutput_({ ok: true, data: histRows });
+    }
+
     return jsonOutput_({
       ok: false,
       message: "지원하지 않는 action입니다.",
@@ -2288,6 +2308,23 @@ function saveBatch_(rows) {
           }
         }
       }
+      // Attach per-category photo IDs (from the request payload) to the returned
+      // inspection row so the frontend can re-hydrate photo counts from the save
+      // response without needing a full page reload.
+      if (savedInspection && !savedInspection.__conflict) {
+        var setPhotoField_ = function(fieldName) {
+          var val = row[fieldName];
+          if (Array.isArray(val)) {
+            savedInspection[fieldName] = val.filter(function(id) { return String(id || "").trim(); }).join("\n");
+          } else if (typeof val === "string" && val) {
+            savedInspection[fieldName] = val;
+          }
+        };
+        setPhotoField_("inspPhotoIds");
+        setPhotoField_("defectPhotoIds");
+        setPhotoField_("weightPhotoIds");
+        setPhotoField_("brixPhotoIds");
+      }
       inspectionRows.push(savedInspection);
       return;
     }
@@ -3891,21 +3928,38 @@ function savePhotosToDrive_(photos, baseName, existingFileIdsText) {
 }
 
 function getOrCreatePhotoFolder_() {
+  // ── Primary: always try the designated inspection-photo Drive folder first ──
+  // This folder ID is fixed and must be used for all new photo uploads.
+  var DESIGNATED_FOLDER_ID = '1q2ZCBXNACyCGtPXdl3rr-qVRKc2VHl-F';
+  try {
+    DriveApp.getFolderById(DESIGNATED_FOLDER_ID);
+    // Keep the script property in sync so any code that reads it directly also works.
+    PropertiesService.getScriptProperties().setProperty('PHOTO_FOLDER_ID', DESIGNATED_FOLDER_ID);
+    return DESIGNATED_FOLDER_ID;
+  } catch (_) {
+    // Designated folder inaccessible (wrong account / permissions) — fall through.
+    console.warn('[getOrCreatePhotoFolder_] Designated folder inaccessible, trying property fallback.');
+  }
+
+  // ── Fallback: property-stored folder ID (from a previous run) ──
   var props = PropertiesService.getScriptProperties();
-  var folderId = props.getProperty("PHOTO_FOLDER_ID");
-  if (folderId) {
+  var folderId = props.getProperty('PHOTO_FOLDER_ID');
+  if (folderId && folderId !== DESIGNATED_FOLDER_ID) {
     try {
       DriveApp.getFolderById(folderId);
       return folderId;
     } catch (_) {
-      // Folder was deleted or inaccessible — recreate below.
+      // Property folder also inaccessible — fall through to create.
     }
   }
+
+  // ── Last resort: create a new folder (should never happen if permissions are correct) ──
   var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var folderName = "GS25검품_사진_" + ss.getId().slice(0, 8);
+  var folderName = 'GS25검품_사진_' + ss.getId().slice(0, 8);
   var newFolder = DriveApp.createFolder(folderName);
   folderId = newFolder.getId();
-  props.setProperty("PHOTO_FOLDER_ID", folderId);
+  props.setProperty('PHOTO_FOLDER_ID', folderId);
+  console.warn('[getOrCreatePhotoFolder_] Created fallback folder: ' + folderId);
   return folderId;
 }
 
@@ -4496,16 +4550,27 @@ function syncHistorySheet_(ss) {
     skuCovNonExcl,
   ];
 
-  // Delete any existing data rows (rows 2 onward) so the sheet never accumulates
-  // stale or duplicate entries across repeated calculation runs.
+  // Append or update today's row. Deduplicate by date so multiple runs on the
+  // same day overwrite the existing row instead of creating duplicates.
   var lastRow = histSheet.getLastRow();
+  var existingDateRow = -1;
   if (lastRow >= 2) {
-    histSheet.deleteRows(2, lastRow - 1);
+    var dateCol = histSheet.getRange(2, 1, lastRow - 1, 1).getValues();
+    for (var di = 0; di < dateCol.length; di++) {
+      if (String(dateCol[di][0]).trim() === dateStr) {
+        existingDateRow = di + 2; // convert to 1-based sheet row number
+        break;
+      }
+    }
   }
-
-  // Write the single latest result into row 2.
-  histSheet.appendRow(rowValues);
-  console.log("[syncHistorySheet_] wrote single latest row for date=" + dateStr);
+  if (existingDateRow > 0) {
+    // Update the existing row for today
+    histSheet.getRange(existingDateRow, 1, 1, rowValues.length).setValues([rowValues]);
+  } else {
+    // No row for today yet — append a new one
+    histSheet.appendRow(rowValues);
+  }
+  console.log("[syncHistorySheet_] wrote row for date=" + dateStr + (existingDateRow > 0 ? " (updated)" : " (appended)"));
 }
 
 // ── Daily scheduled jobs ───────────────────────────────────
