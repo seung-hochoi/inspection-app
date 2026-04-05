@@ -600,18 +600,23 @@ function StepperBtn({ onClick, children, 'aria-label': ariaLabel, primary }) {
   );
 }
 
-// PhotoSlot: button with inline Drive thumbnails, per-photo delete, compact mode, and always-visible count badge.
-// compact=true → smaller height, 1 thumb max (중량/당도).
-// compact=false (default) → full size, up to 3 thumbs (검품/불량).
-function PhotoSlot({ label, fileIds = [], color, bg, border, onClick, onDeletePhoto, compact = false }) {
-  const MAX_THUMBS = compact ? 1 : 3;
-  const thumbs   = fileIds.slice(0, MAX_THUMBS);
-  const overflow = fileIds.length - thumbs.length;
+// PhotoSlot: button with inline Drive thumbnail, per-photo delete, and always-visible count badge.
+// All PhotoSlot buttons are the same fixed size regardless of photo category so the
+// action row fits on mobile without any button being clipped.
+// compact prop is accepted but ignored for sizing (kept for call-site compatibility).
+function PhotoSlot({ label, fileIds = [], color, bg, border, onClick, onDeletePhoto, compact = false }) { // eslint-disable-line no-unused-vars
+  // Show at most 1 thumbnail inside the button so width stays fixed.
+  // The count badge communicates the total; the +N overflow badge is omitted
+  // because it would widen the button. Users open the modal to see all photos.
+  const MAX_THUMBS = 1;
+  const thumbs    = fileIds.slice(0, MAX_THUMBS);
   const hasPhotos = fileIds.length > 0;
-  const height    = compact ? 28 : 30;
-  const fontSize  = compact ? 9.5 : 10.5;
-  const thumbSize = compact ? 15 : 18;
   const count     = fileIds.length;
+
+  // Shared fixed dimensions — same for every action button in the row.
+  const BTN_H  = 32;
+  const BTN_FS = 12;
+  const BTN_PX = '0 8px';
 
   return (
     <button
@@ -619,17 +624,17 @@ function PhotoSlot({ label, fileIds = [], color, bg, border, onClick, onDeletePh
       onClick={onClick}
       className="action-btn"
       style={{
-        height, padding: compact ? '0 6px' : '0 8px',
+        height: BTN_H, padding: BTN_PX,
         background: hasPhotos ? bg : C.bgAlt,
         color: hasPhotos ? color : C.muted2,
         border: `1px solid ${hasPhotos ? border : C.border}`,
-        borderRadius: radius.sm, fontSize, fontWeight: compact ? 500 : 600,
+        borderRadius: radius.sm, fontSize: BTN_FS, fontWeight: 600,
         cursor: 'pointer', fontFamily: font.base,
-        display: 'inline-flex', alignItems: 'center', gap: compact ? 3 : 4,
-        transition: trans, flexShrink: 0, whiteSpace: 'nowrap',
+        display: 'inline-flex', alignItems: 'center', gap: 4,
+        transition: trans, flex: '0 0 auto', whiteSpace: 'nowrap',
       }}
     >
-      <ImagePlus size={compact ? 10 : 11} strokeWidth={2} style={{ flexShrink: 0 }} />
+      <ImagePlus size={11} strokeWidth={2} style={{ flexShrink: 0 }} />
       <span>{label}</span>
       {/* Always-visible count badge — immediately reflects local + server state */}
       <span style={{
@@ -645,13 +650,14 @@ function PhotoSlot({ label, fileIds = [], color, bg, border, onClick, onDeletePh
       }}>
         {count}
       </span>
+      {/* Single thumbnail — max 1 to keep button at fixed width */}
       {thumbs.map((id) => (
         <span key={id} style={{ position: 'relative', flexShrink: 0, display: 'inline-flex' }}>
           <img
             src={`https://drive.google.com/thumbnail?id=${id}&sz=w40`}
             alt=""
             style={{
-              width: thumbSize, height: thumbSize, borderRadius: 3,
+              width: 16, height: 16, borderRadius: 3,
               objectFit: 'cover', display: 'block',
               border: `1px solid ${border}`,
             }}
@@ -681,16 +687,6 @@ function PhotoSlot({ label, fileIds = [], color, bg, border, onClick, onDeletePh
           )}
         </span>
       ))}
-      {overflow > 0 && (
-        <span style={{
-          fontSize: 9, fontWeight: 800, background: color, color: '#fff',
-          borderRadius: radius.full, minWidth: 16, height: 16, padding: '0 3px',
-          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-          flexShrink: 0,
-        }}>
-          +{overflow}
-        </span>
-      )}
     </button>
   );
 }
@@ -702,14 +698,14 @@ function MovBtn({ icon, label, color, bg, border, onClick, count = 0 }) {
       onClick={onClick}
       className="action-btn"
       style={{
-        height: 30, padding: '0 10px',
+        height: 32, padding: '0 8px',
         background: count > 0 ? bg : C.bgAlt,
         color: count > 0 ? color : C.muted2,
         border: `1px solid ${count > 0 ? border : C.border}`,
-        borderRadius: radius.sm, fontSize: 11, fontWeight: 600,
+        borderRadius: radius.sm, fontSize: 12, fontWeight: 600,
         cursor: 'pointer', fontFamily: font.base,
         display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 4,
-        transition: trans, flexShrink: 0,
+        transition: trans, flex: '0 0 auto', whiteSpace: 'nowrap',
       }}
     >
       {icon}{label}
