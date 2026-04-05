@@ -246,11 +246,15 @@ const ProductRow = React.memo(function ProductRow({
     onMovementSaved?.(result?.data?.freshRecords);
   };
 
-  const orderedQty = parseInt(row['발주수량'], 10) || 0;
-  const inspNum    = parseInt(inspQty, 10) || 0;
+  const orderedQty  = parseInt(row['발주수량'], 10) || 0;
+  const inspNum     = parseInt(inspQty, 10) || 0;
   const defectCount = orderedQty > 0 ? Math.max(0, orderedQty - inspNum) : 0;
-  const isDone      = inspNum > 0 && inspNum >= orderedQty;
-  const hasDefect   = inspNum > 0 && inspNum < orderedQty;
+  // hasMovement: return or exchange records already registered for this product
+  const hasMovement = returnQty > 0 || exchangeQty > 0;
+  // isDone (검품): inspected with no return/exchange records → light-green card
+  // hasDefect (불량): return/exchange actually registered → orange card
+  const isDone    = inspNum > 0 && !hasMovement;
+  const hasDefect = hasMovement;
 
   const accentColor =
     saveStatus === 'saving' ? C.yellow :
@@ -402,7 +406,7 @@ const ProductRow = React.memo(function ProductRow({
               </StepperBtn>
             </div>
 
-            {/* Done chip — shown only when fully inspected */}
+            {/* 검품 chip — shown when inspected with no return/exchange records */}
             {isDone && (
               <div style={{
                 height: 36, padding: '0 10px', flexShrink: 0,
@@ -414,14 +418,14 @@ const ProductRow = React.memo(function ProductRow({
                 color: C.green,
               }}>
                 <CheckCircle2 size={13} strokeWidth={2.5} />
-                완료
+                검품
               </div>
             )}
 
             {/* 불량 사유 — removed from inline row; entered via 회송/교환 modal */}
 
-            {/* Photos + movement actions — pushed to far right */}
-            <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0 }}>
+            {/* Photos + movement actions — pushed to far right (desktop), full-width 2-row on mobile */}
+            <div className="action-btn-row" style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0 }}>
               {/* Primary photo slots: 검품 + 불량 — higher usage, show up to 3 thumbs */}
               <PhotoSlot
                 label="검품" fileIds={inspPhotoIds}
@@ -450,7 +454,7 @@ const ProductRow = React.memo(function ProductRow({
                 onDeletePhoto={(id) => deletePhoto('brix', id)}
                 compact
               />
-              <div style={{ width: 1, height: 20, background: C.border, flexShrink: 0 }} />
+              <div className="action-separator" style={{ width: 1, height: 20, background: C.border, flexShrink: 0 }} />
               <MovBtn
                 icon={<Truck size={11} strokeWidth={2} />} label="회송"
                 color={C.red} bg={C.redLight} border={C.redMid}
@@ -543,7 +547,7 @@ function SaveStatusBadge({ saveStatus, isDone, hasDefect, isConflict }) {
     saved:    { text: '저장됨',  icon: <CheckCircle2  size={10} strokeWidth={2.5} />, bg: C.greenLight,  color: C.green,   border: C.greenMid  },
     error:    { text: '실패',    icon: <AlertCircle   size={10} strokeWidth={2.5} />, bg: C.redLight,    color: C.red,     border: C.redMid    },
     conflict: { text: '충돌',    icon: <ShieldAlert   size={10} strokeWidth={2.5} />, bg: '#faf5ff',     color: '#7c3aed', border: '#ddd6fe'   },
-    done:     { text: '완료',    icon: <CheckCircle2  size={10} strokeWidth={2.5} />, bg: C.greenLight,  color: C.green,   border: C.greenMid  },
+    done:     { text: '검품',    icon: <CheckCircle2  size={10} strokeWidth={2.5} />, bg: C.greenLight,  color: C.green,   border: C.greenMid  },
     defect:   { text: '불량',    icon: <AlertTriangle size={10} strokeWidth={2.5} />, bg: C.orangeLight, color: C.orange,  border: C.orangeMid },
   };
   const s = MAP[state];

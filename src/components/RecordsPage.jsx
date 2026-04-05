@@ -3,7 +3,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Search, FileX, ChevronDown, Camera, XCircle, Pencil, Download, ImagePlus, CheckCircle2, AlertCircle } from 'lucide-react';
 import { C, radius, font, shadow, trans } from './styles';
 import { cancelMovementEvent, saveBatch, uploadPhotos, savePhotoMeta } from '../api';
-import { fileToBase64 } from '../utils';
+import { fileToBase64, getClientId } from '../utils';
+import { v4 as uuidv4 } from 'uuid';
 import { buildAndDownloadPhotoZips } from '../utils/photoZipBuilder';
 
 export default function RecordsPage({ records = [], jobKey, onToast, onRefresh, inspectionRows = [], config = {} }) {
@@ -351,16 +352,15 @@ function RecordEditModal({ record, inspectionRows, jobKey, onClose, onToast, con
   const [saving,  setSaving]  = useState(false);
   const [uploadingType, setUploadingType] = useState(null);
 
-  const [inspIds,   setInspIds]   = useState(
-    () => String(inspRow?.['사진파일ID목록'] || '').split('\n').filter(Boolean)
-  );
-  const [defectIds, setDefectIds] = useState([]);
-  const [weightIds, setWeightIds] = useState(
-    () => String(inspRow?.['중량사진ID목록'] || '').split('\n').filter(Boolean)
-  );
-  const [sugarIds, setSugarIds] = useState(
-    () => String(inspRow?.['당도사진ID목록'] || '').split('\n').filter(Boolean)
-  );
+  // Split a server field value (array or newline-separated string) into a clean ID array
+  const splitIds = (v) => Array.isArray(v)
+    ? v.filter(Boolean)
+    : String(v || '').split('\n').filter(Boolean);
+
+  const [inspIds,   setInspIds]   = useState(() => splitIds(inspRow?.['inspPhotoIds']));
+  const [defectIds, setDefectIds] = useState(() => splitIds(inspRow?.['defectPhotoIds']));
+  const [weightIds, setWeightIds] = useState(() => splitIds(inspRow?.['weightPhotoIds']));
+  const [sugarIds,  setSugarIds]  = useState(() => splitIds(inspRow?.['brixPhotoIds']));
 
   const inspRef   = useRef(null);
   const defectRef = useRef(null);
@@ -449,6 +449,8 @@ function RecordEditModal({ record, inspectionRows, jobKey, onClose, onToast, con
       const allPhotoIds = [...new Set([...inspIds, ...defectIds, ...weightIds, ...sugarIds])];
       await saveBatch([{
         type: 'inspection',
+        clientId: getClientId(),
+        operationId: uuidv4(),
         '작업기준일또는CSV식별값': jobKey,
         '상품코드':  normalizeCode(record['상품코드'] || ''),
         '상품명':    record['상품명']   || '',
@@ -457,9 +459,15 @@ function RecordEditModal({ record, inspectionRows, jobKey, onClose, onToast, con
         '검품수량':  String(inspRow?.['검품수량'] || 0),
         '불량사유':  memo,
         '사진파일ID목록': allPhotoIds.join('\n'),
+        inspPhotoIds:   inspIds,
+        defectPhotoIds: defectIds,
+        weightPhotoIds: weightIds,
+        brixPhotoIds:   sugarIds,
         'BRIX최저': brixMin,
         'BRIX최고': brixMax,
         'BRIX평균': brixAvg,
+        ...(inspRow?.['버전']     ? { expectedVersion:   Number(inspRow['버전']) }     : {}),
+        ...(inspRow?.['수정일시']  ? { expectedUpdatedAt: String(inspRow['수정일시']) } : {}),
       }]);
       onToast?.('저장되었습니다.', 'success');
       onClose();

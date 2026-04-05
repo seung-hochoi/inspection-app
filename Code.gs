@@ -4677,15 +4677,12 @@ function createPhotoZip_(payload) {
         !!String(record["사진파일ID목록"] || "").trim();
       if (!hasInspPh) return;
     } else if (mode === "sugar") {
-      var assetMap1 = {};
-      try { assetMap1 = JSON.parse(record["photoAssetMap"] || "{}"); } catch (_) {}
-      if (!assetMap1["sugar"] || !assetMap1["sugar"].length) return;
-      photos = assetMap1["sugar"];
+      // brixPhotoIds is a newline-separated string of Drive file IDs set by applyPhotoAssetFieldsToRow_
+      photos = splitPhotoSourceText_(record["brixPhotoIds"] || "");
+      if (!photos.length) return;
     } else if (mode === "weight") {
-      var assetMap2 = {};
-      try { assetMap2 = JSON.parse(record["photoAssetMap"] || "{}"); } catch (_) {}
-      if (!assetMap2["weight"] || !assetMap2["weight"].length) return;
-      photos = assetMap2["weight"];
+      photos = splitPhotoSourceText_(record["weightPhotoIds"] || "");
+      if (!photos.length) return;
     } else {
       var isMov = isMovementRecord_(record);
       if (mode === "movement" && !isMov) return;
@@ -4693,7 +4690,7 @@ function createPhotoZip_(payload) {
     }
 
     photos.forEach(function (source, index) {
-      photoEntries.push({ record: record, source: source, index: index });
+      photoEntries.push({ record: record, source: source, index: index, modeHint: (mode === "sugar" || mode === "weight") ? mode : null });
     });
   });
 
@@ -4755,7 +4752,7 @@ function createPhotoZip_(payload) {
       var blob = getPhotoBlob_(entry.source, blobCache);
       if (!blob) { skippedCount += 1; return; }
 
-      var finalName = buildPhotoZipFileName_(entry.record, entry.index + 1, blob, entry.source, refMaps);
+      var finalName = buildPhotoZipFileName_(entry.record, entry.index + 1, blob, entry.source, refMaps, entry.modeHint);
       var dedupeKey = finalName.toLowerCase();
       var dupSuffix = 2;
       while (usedNames[dedupeKey]) {
@@ -4900,9 +4897,11 @@ function zipFileName_(mode) {
 }
 
 // maps is now pre-computed by the caller (avoids a sheet read per photo file).
-function buildPhotoZipFileName_(record, sequence, blob, source, maps) {
+function buildPhotoZipFileName_(record, sequence, blob, source, maps, modeHint) {
   if (!maps) maps = readOperationalReferenceMaps_(SpreadsheetApp.getActiveSpreadsheet());
-  var typeLabel = getPhotoZipTypeLabel_(record, source);
+  var typeLabel = modeHint === "sugar"  ? "당도" :
+                  modeHint === "weight" ? "중량" :
+                  getPhotoZipTypeLabel_(record, source);
   var rawPartner = String(record["협력사명"] || record["파트너사"] || "협력사").trim();
   var partnerKey = normalizeOperationalLookupText_(rawPartner);
   var partnerName = sanitizeFileName_((maps.partnerToStandard && maps.partnerToStandard[partnerKey]) || rawPartner);

@@ -5,182 +5,22 @@ import InspectionPage from './components/InspectionPage';
 import RecordsPage from './components/RecordsPage';
 import SummaryPage from './components/SummaryPage';
 
+// ============================================================
+// SECTION 1: CONSTANTS / CONFIG
+// ============================================================
+
+// ── URL / storage keys ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 const SCRIPT_URL = process.env.REACT_APP_GOOGLE_SCRIPT_URL || "https://script.google.com/macros/s/AKfycbzIR8srYEDBgHOUKGfs0J3nk2BY4fsDPiw0J5cHfXUU7t77cEPWYw15mdUcW0T7oCw7Xg/exec";
 const PENDING_KEY = "inspection_pending_v2";
 
-// ─── Utility Functions ────────────────────────────────────────────────────────
-const normalizeKey = (key) => String(key || "").replace(/\uFEFF/g, "").trim();
+// ── Tab definitions ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+const TABS = [
+  { key: "inspection", label: "검품", icon: ClipboardCheck },
+  { key: "records",    label: "기록", icon: FileText },
+  { key: "summary",   label: "요약", icon: BarChart3 },
+];
 
-const normalizeText = (value) =>
-  String(value ?? "").replace(/\uFEFF/g, "").normalize("NFKC").replace(/\s+/g, " ").trim().toLowerCase();
-
-const normalizeProductCode = (value) => {
-  if (value == null) return "";
-  let text = String(value).replace(/\uFEFF/g, "").trim();
-  const tMatch = text.match(/^=T\("(.+)"\)$/i);
-  if (tMatch) text = tMatch[1];
-  text = text.replace(/^"+|"+$/g, "").trim();
-  const numericText = text.replace(/,/g, "").trim();
-  if (/^\d+(\.0+)?$/.test(numericText)) return numericText.replace(/\.0+$/, "");
-  return text;
-};
-
-const parseQty = (value) => {
-  const num = Number(String(value ?? "").replace(/,/g, "").trim());
-  return Number.isNaN(num) ? 0 : num;
-};
-
-const clampText = (value, maxLength = 4000) => {
-  const text = String(value ?? "");
-  if (text.length <= maxLength) return text;
-  return `${text.slice(0, Math.max(0, maxLength - 7))}...(생략)`;
-};
-
-const hashString = (text) => {
-  let hash = 0;
-  for (let i = 0; i < text.length; i++) {
-    hash = (hash * 31 + text.charCodeAt(i)) >>> 0;
-  }
-  return String(hash);
-};
-
-const computeJobKey = (rows) =>
-  `job_${hashString(JSON.stringify((rows || []).map((r) => ({
-    productCode: r.__productCode,
-    productName: r.__productName,
-    center: r.__center,
-    partner: r.__partner,
-    qty: r.__qty,
-  }))))}`;
-
-const fileToBase64 = (file) =>
-  new Promise((resolve, reject) => {
-    if (!file) { resolve(null); return; }
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = String(reader.result || "");
-      const base64 = result.includes(",") ? result.split(",")[1] : result;
-      resolve({ name: file.name, type: file.type || "application/octet-stream", data: base64 });
-    };
-    reader.onerror = () => reject(new Error("사진 읽기 실패"));
-    reader.readAsDataURL(file);
-  });
-
-const decodeCsvFile = async (file) => {
-  const buffer = await file.arrayBuffer();
-  const tryDecode = (enc) => new TextDecoder(enc).decode(buffer);
-  const isBroken = (t) => (t.match(/\uFFFD/g) || []).length > 5;
-  let text = tryDecode("utf-8");
-  if (isBroken(text)) text = tryDecode("euc-kr");
-  return { text };
-};
-
-const getValue = (row, candidates) => {
-  for (const key of candidates) {
-    if (row[key] !== undefined && row[key] !== null && row[key] !== "") return row[key];
-  }
-  return "";
-};
-
-const buildNormalizedRows = (parsedRows) =>
-  (parsedRows || []).map((rawRow, index) => {
-    const row = {};
-    Object.keys(rawRow || {}).forEach((k) => { row[normalizeKey(k)] = rawRow[k]; });
-
-    if (index === 0) {
-      console.log('[buildNormalizedRows] CSV headers detected:', Object.keys(row));
-    }
-
-    const productCode = normalizeProductCode(
-      getValue(row, ["상품코드", "상품 코드", "바코드", "코드"]) || row.__productCode || ""
-    );
-    const productName = String(
-      getValue(row, ["상품명", "상품 명", "품목명", "품명"]) || row.__productName || ""
-    ).trim();
-    const rawPartner = getValue(
-      row,
-      ["협력사명(구매조건명)", "협력사명", "거래처명(구매조건명)", "거래처명", "협력사"]
-    ) || row.__partner || "";
-    const partner = String(rawPartner).trim();
-    const center = String(getValue(row, ["센터명", "센터"]) || row.__center || "").trim();
-    const qty = parseQty(getValue(row, ["총 발주수량", "발주수량", "수량"]) || row.__qty || 0);
-
-    if (index === 0) {
-      console.log('[buildNormalizedRows] first row → partner raw:', rawPartner,
-        '| normalized:', partner, '| productCode:', productCode);
-    }
-
-    return {
-      ...row,
-      // Canonical Korean field names — used by groupByPartner, PartnerGroup, ProductRow
-      '협력사명':     partner,
-      '상품코드':     productCode,
-      '상품명':       productName,
-      '센터명':       center,
-      '발주수량':     qty,
-      '전체발주수량': qty,
-      __id: `${productCode || "empty"}-${center || "nocenter"}-${partner || "nopartner"}-${index}`,
-      __index: index,
-      __productCode: productCode,
-      __productName: productName,
-      __partner: partner,
-      __center: center,
-      __qty: qty,
-      __productNameNormalized: normalizeText(productName),
-      __partnerNormalized: normalizeText(partner),
-    };
-  });
-
-const formatDateTime = (value) => {
-  if (!value) return "-";
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return String(value);
-  return d.toLocaleString("ko-KR");
-};
-
-const formatDateShort = (value) => {
-  if (!value) return "-";
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return String(value);
-  return d.toLocaleDateString("ko-KR");
-};
-
-const getRecordType = (record) => {
-  const t = String(record.처리유형 || "").trim();
-  if (t) return t;
-  if (parseQty(record.회송수량) > 0) return "회송";
-  if (parseQty(record.교환수량) > 0) return "교환";
-  return "기타";
-};
-
-const postApi = async (body) => {
-  const resp = await fetch(SCRIPT_URL, {
-    method: "POST",
-    headers: { "Content-Type": "text/plain;charset=utf-8" },
-    body: JSON.stringify(body),
-  });
-  const data = await resp.json();
-  if (!resp.ok || data.ok === false) {
-    const err = new Error(data.message || "API 오류");
-    err.isLogicalError = true;
-    throw err;
-  }
-  return data;
-};
-
-const retryApi = async (fn, retries = 3, delay = 2000) => {
-  for (let i = 0; i < retries; i++) {
-    try { return await fn(); }
-    catch (err) {
-      // Do NOT retry server-side logical rejections (conflict, version mismatch, etc.)
-      if (err.isLogicalError) throw err;
-      if (i < retries - 1) await new Promise((r) => setTimeout(r, delay));
-      else throw err;
-    }
-  }
-};
-
-// ─── Styles ───────────────────────────────────────────────────────────────────
+// ── Color palette ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 const C = {
   bg: "#dce3ed",
   card: "#edf1f8",
@@ -212,6 +52,7 @@ const C = {
   textDark: "#2c3a4e",
 };
 
+// ── Style objects ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 const S = {
   app: {
     minHeight: "100vh",
@@ -424,7 +265,234 @@ const S = {
   },
 };
 
-// ─── Small Helper Components ──────────────────────────────────────────────────
+// ============================================================
+// SECTION 2: API HELPERS
+// ============================================================
+
+// ── Low-level fetch wrapper (→ SCRIPT_URL defined in SECTION 1) ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+const postApi = async (body) => {
+  const resp = await fetch(SCRIPT_URL, {
+    method: "POST",
+    headers: { "Content-Type": "text/plain;charset=utf-8" },
+    body: JSON.stringify(body),
+  });
+  const data = await resp.json();
+  if (!resp.ok || data.ok === false) {
+    const err = new Error(data.message || "API 오류");
+    err.isLogicalError = true;
+    throw err;
+  }
+  return data;
+};
+
+const retryApi = async (fn, retries = 3, delay = 2000) => {
+  for (let i = 0; i < retries; i++) {
+    try { return await fn(); }
+    catch (err) {
+      // Do NOT retry server-side logical rejections (conflict, version mismatch, etc.)
+      if (err.isLogicalError) throw err;
+      if (i < retries - 1) await new Promise((r) => setTimeout(r, delay));
+      else throw err;
+    }
+  }
+};
+
+
+// ============================================================
+// SECTION 3: SAVE PAYLOAD HELPERS
+// ============================================================
+
+// buildInspPayload and buildMovPayload were extracted to src/savePayload.js.
+// ProductRow.jsx imports them via:
+//   import { buildInspPayload, buildMovPayload } from '../savePayload';
+// No inline payload-building functions remain in App.js.
+
+// ============================================================
+// SECTION 4: PHOTO HELPERS
+// ============================================================
+
+const fileToBase64 = (file) =>
+  new Promise((resolve, reject) => {
+    if (!file) { resolve(null); return; }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = String(reader.result || "");
+      const base64 = result.includes(",") ? result.split(",")[1] : result;
+      resolve({ name: file.name, type: file.type || "application/octet-stream", data: base64 });
+    };
+    reader.onerror = () => reject(new Error("사진 읽기 실패"));
+    reader.readAsDataURL(file);
+  });
+
+
+// ============================================================
+// SECTION 5: BOOTSTRAP / LOADERS
+// ============================================================
+
+// ── String / value normalizers (required by CSV row builders below) ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+const normalizeKey = (key) => String(key || "").replace(/\uFEFF/g, "").trim();
+
+const normalizeText = (value) =>
+  String(value ?? "").replace(/\uFEFF/g, "").normalize("NFKC").replace(/\s+/g, " ").trim().toLowerCase();
+
+const normalizeProductCode = (value) => {
+  if (value == null) return "";
+  let text = String(value).replace(/\uFEFF/g, "").trim();
+  const tMatch = text.match(/^=T\("(.+)"\)$/i);
+  if (tMatch) text = tMatch[1];
+  text = text.replace(/^"+|"+$/g, "").trim();
+  const numericText = text.replace(/,/g, "").trim();
+  if (/^\d+(\.0+)?$/.test(numericText)) return numericText.replace(/\.0+$/, "");
+  return text;
+};
+
+const parseQty = (value) => {
+  const num = Number(String(value ?? "").replace(/,/g, "").trim());
+  return Number.isNaN(num) ? 0 : num;
+};
+
+const clampText = (value, maxLength = 4000) => {
+  const text = String(value ?? "");
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, Math.max(0, maxLength - 7))}...(생략)`;
+};
+
+const hashString = (text) => {
+  let hash = 0;
+  for (let i = 0; i < text.length; i++) {
+    hash = (hash * 31 + text.charCodeAt(i)) >>> 0;
+  }
+  return String(hash);
+};
+
+const computeJobKey = (rows) =>
+  `job_${hashString(JSON.stringify((rows || []).map((r) => ({
+    productCode: r.__productCode,
+    productName: r.__productName,
+    center: r.__center,
+    partner: r.__partner,
+    qty: r.__qty,
+  }))))}`;
+
+
+// ── Job key / CSV row builders ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+const decodeCsvFile = async (file) => {
+  const buffer = await file.arrayBuffer();
+  const tryDecode = (enc) => new TextDecoder(enc).decode(buffer);
+  const isBroken = (t) => (t.match(/\uFFFD/g) || []).length > 5;
+  let text = tryDecode("utf-8");
+  if (isBroken(text)) text = tryDecode("euc-kr");
+  return { text };
+};
+
+const getValue = (row, candidates) => {
+  for (const key of candidates) {
+    if (row[key] !== undefined && row[key] !== null && row[key] !== "") return row[key];
+  }
+  return "";
+};
+
+const buildNormalizedRows = (parsedRows) =>
+  (parsedRows || []).map((rawRow, index) => {
+    const row = {};
+    Object.keys(rawRow || {}).forEach((k) => { row[normalizeKey(k)] = rawRow[k]; });
+
+    if (index === 0) {
+      console.log('[buildNormalizedRows] CSV headers detected:', Object.keys(row));
+    }
+
+    const productCode = normalizeProductCode(
+      getValue(row, ["상품코드", "상품 코드", "바코드", "코드"]) || row.__productCode || ""
+    );
+    const productName = String(
+      getValue(row, ["상품명", "상품 명", "품목명", "품명"]) || row.__productName || ""
+    ).trim();
+    const rawPartner = getValue(
+      row,
+      ["협력사명(구매조건명)", "협력사명", "거래처명(구매조건명)", "거래처명", "협력사"]
+    ) || row.__partner || "";
+    const partner = String(rawPartner).trim();
+    const center = String(getValue(row, ["센터명", "센터"]) || row.__center || "").trim();
+    const qty = parseQty(getValue(row, ["총 발주수량", "발주수량", "수량"]) || row.__qty || 0);
+
+    if (index === 0) {
+      console.log('[buildNormalizedRows] first row → partner raw:', rawPartner,
+        '| normalized:', partner, '| productCode:', productCode);
+    }
+
+    return {
+      ...row,
+      // Canonical Korean field names — used by groupByPartner, PartnerGroup, ProductRow
+      '협력사명':     partner,
+      '상품코드':     productCode,
+      '상품명':       productName,
+      '센터명':       center,
+      '발주수량':     qty,
+      '전체발주수량': qty,
+      __id: `${productCode || "empty"}-${center || "nocenter"}-${partner || "nopartner"}-${index}`,
+      __index: index,
+      __productCode: productCode,
+      __productName: productName,
+      __partner: partner,
+      __center: center,
+      __qty: qty,
+      __productNameNormalized: normalizeText(productName),
+      __partnerNormalized: normalizeText(partner),
+    };
+  });
+
+
+// ============================================================
+// SECTION 6: STATE HELPERS
+// ============================================================
+
+// ── Date / display formatters ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+const formatDateTime = (value) => {
+  if (!value) return "-";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return String(value);
+  return d.toLocaleString("ko-KR");
+};
+
+const formatDateShort = (value) => {
+  if (!value) return "-";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return String(value);
+  return d.toLocaleDateString("ko-KR");
+};
+
+const getRecordType = (record) => {
+  const t = String(record.처리유형 || "").trim();
+  if (t) return t;
+  if (parseQty(record.회송수량) > 0) return "회송";
+  if (parseQty(record.교환수량) > 0) return "교환";
+  return "기타";
+};
+
+
+// ============================================================
+// SECTION 7: ACTION HANDLERS
+// ============================================================
+
+// NOTE: Top-level action handlers (showToast, loadBootstrap,
+// handleProductImageUploaded, handleCsvUpload) live inside the
+// App component below because they depend on React state setters.
+// They are marked inline with a sub-group comment inside App().
+
+// ============================================================
+// SECTION 8: RENDER HELPERS
+// ============================================================
+
+// NOTE: No standalone render-helper functions exist in App.js.
+// Tab rendering is handled by InspectionPage, RecordsPage, and
+// SummaryPage (imported from src/components/*).
+// The main App component JSX is in SECTION 9 below.
+
+// ============================================================
+// SECTION 9: UI COMPONENTS (inline)
+// ============================================================
+
+// ── Small utility components ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 function AppToast({ toast }) {
   if (!toast.message) return null;
   const bg =
@@ -851,7 +919,11 @@ function QtyPill({ value, committed, onChange, onIncrement, onDecrement, accent 
   );
 }
 
-// ─── Product Card ─────────────────────────────────────────────────────────────
+
+// ── ProductCard ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+// LEGACY — ProductCard is no longer rendered by the production flow.
+// InspectionPage → components/PartnerGroup.jsx → components/ProductRow.jsx.
+// Kept here for reference only.
 function ProductCard({ product, jobKey, savedInspection, onSaved, showToast, happycall }) {
   const isMobile = useIsMobile();
   const [inspQty, setInspQty] = useState(() => String(parseQty(savedInspection?.검품수량 || 0) || ""));
@@ -880,6 +952,7 @@ function ProductCard({ product, jobKey, savedInspection, onSaved, showToast, hap
   const statusColors = { idle: C.border, pending: "#f0a020", saving: C.accent, saved: C.green, error: C.red };
   const borderColor = statusColors[saveStatus] || C.border;
 
+  // LEGACY — save logic moved to ProductRow.jsx; this path is no longer active
   const doSave = useCallback(async (qtyVal, memoVal, photoIds) => {
     if (!jobKey) return;
     setSaveStatus("saving");
@@ -1215,6 +1288,10 @@ function ProductCard({ product, jobKey, savedInspection, onSaved, showToast, hap
 }
 
 // ─── Partner Group ─────────────────────────────────────────────────────────────
+
+// ── PartnerGroup ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+// LEGACY — moved to src/components/PartnerGroup.jsx; no longer rendered from App.js.
+// InspectionPage imports PartnerGroup directly from ./PartnerGroup.
 function PartnerGroup({ partnerName, products, jobKey, inspectionRows, onSaved, showToast, defaultOpen, happycall }) {
   const [open, setOpen] = useState(defaultOpen !== false);
 
@@ -1275,12 +1352,8 @@ function PartnerGroup({ partnerName, products, jobKey, inspectionRows, onSaved, 
     </div>
   );
 }
-const TABS = [
-  { key: "inspection", label: "검품", icon: ClipboardCheck },
-  { key: "records",    label: "기록", icon: FileText },
-  { key: "summary",   label: "요약", icon: BarChart3 },
-];
 
+// ── Main App component ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 function App() {
   const [tab, setTab] = useState("inspection");
   const [loading, setLoading] = useState(true);
@@ -1297,6 +1370,7 @@ function App() {
   const [toast, setToast] = useState({ message: "", type: "info" });
   const [productImages, setProductImages] = useState([]);
 
+  // ── Action handlers (SECTION 7) ───────────────────────────────
   const showToast = useCallback((message, type = "info") => {
     setToast({ message, type });
     setTimeout(() => setToast({ message: "", type: "info" }), 2400);
