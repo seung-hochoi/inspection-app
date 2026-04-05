@@ -1967,36 +1967,44 @@ function App() {
       {/* ── Header (two rows: brand + action strip) ── */}
       <header style={S.header}>
         {/* Row 1: brand · summary chips · user area */}
-        <div style={{ ...S.headerMain, gap: 0, padding: '0 14px' }}>
+        <div style={{ ...S.headerMain, gap: 0, padding: '0 14px', overflow: 'hidden' }}>
 
-          {/* ── LEFT: logo + divider + title ── */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+          {/* ── LEFT: logo + divider + title block (grows to fill leftover space) ── */}
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 10,
+            flex: '1 1 auto', minWidth: 0,
+          }}>
             <img src={gs25Logo} alt="GS25" style={{ height: 28, flexShrink: 0, display: 'block' }} />
             <div style={{ width: 1, height: 22, background: C.borderLight, flexShrink: 0 }} />
-            <div style={{ lineHeight: 1 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <p style={{ fontSize: 14, fontWeight: 800, color: C.text, margin: 0, letterSpacing: '-0.025em' }}>
-                  GS25 신선 검품시스템
-                </p>
-                <span style={{
-                  fontSize: 9, fontWeight: 600, letterSpacing: '0.07em',
-                  color: 'rgba(15,23,42,0.30)',
-                  fontFamily: "'SF Mono','Menlo','Consolas',monospace",
-                  textTransform: 'uppercase', whiteSpace: 'nowrap',
-                }}>MADE BY. SEUNG-HO</span>
-              </div>
-              {currentFileName && (
-                <p style={{ fontSize: 10, color: C.textSecondary, margin: '2px 0 0', letterSpacing: 0 }}>
-                  {currentFileName.length > 32 ? currentFileName.slice(0, 32) + '…' : currentFileName}
-                </p>
-              )}
+            {/* Title + "MADE BY" subtitle stacked vertically */}
+            <div style={{ minWidth: 0 }}>
+              <p style={{
+                fontSize: 14, fontWeight: 800, color: C.text, margin: 0,
+                letterSpacing: '-0.025em', whiteSpace: 'nowrap',
+                overflow: 'hidden', textOverflow: 'ellipsis',
+              }}>
+                GS25 신선 검품시스템
+              </p>
+              <p style={{
+                margin: '1px 0 0', fontSize: 9, fontWeight: 600,
+                letterSpacing: '0.07em', color: 'rgba(15,23,42,0.28)',
+                fontFamily: "'SF Mono','Menlo','Consolas',monospace",
+                textTransform: 'uppercase', whiteSpace: 'nowrap',
+              }}>
+                MADE BY. SEUNG-HO
+                {currentFileName && (
+                  <span style={{ marginLeft: 6, color: C.textSecondary, fontFamily: 'inherit', letterSpacing: 0 }}>
+                    · {currentFileName.length > 24 ? currentFileName.slice(0, 24) + '…' : currentFileName}
+                  </span>
+                )}
+              </p>
             </div>
           </div>
 
-          {/* ── CENTER: lightweight business summary chips ── */}
+          {/* ── CENTER: summary chips (shrinks to zero when space is tight) ── */}
           <div style={{
-            flex: 1, minWidth: 0, display: 'flex', alignItems: 'center',
-            gap: 5, marginLeft: 14, overflow: 'hidden',
+            flex: '0 1 auto', minWidth: 0, display: 'flex', alignItems: 'center',
+            gap: 5, marginLeft: 10, overflow: 'hidden',
           }}>
             {headerSkuCount > 0 && (
               <span style={{
@@ -2031,16 +2039,21 @@ function App() {
             )}
           </div>
 
-          {/* ── RIGHT: sheet link · user badge · admin button · logout ── */}
+          {/* ── RIGHT: action cluster — fixed width, independently scrollable ── */}
           <div
             className="header-right-cluster"
             style={{
-            display: 'flex', alignItems: 'center', gap: 6,
-            flexShrink: 0, marginLeft: 8,
-            maxWidth: 'calc(100% - 210px)',
-            overflowX: 'auto',
-            scrollbarWidth: 'none', msOverflowStyle: 'none',
-          }}>
+              flex: '0 0 auto',
+              maxWidth: '42vw',
+              marginLeft: 8,
+              display: 'flex', alignItems: 'center', gap: 6,
+              overflowX: 'auto', overflowY: 'hidden',
+              WebkitOverflowScrolling: 'touch',
+              overscrollBehaviorX: 'contain',
+              touchAction: 'pan-x',
+              scrollbarWidth: 'none', msOverflowStyle: 'none',
+            }}
+          >
             {worksheetUrl && (
               <a
                 href={worksheetUrl} target="_blank" rel="noreferrer"
