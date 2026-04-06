@@ -493,6 +493,10 @@ function doGet(e) {
       return jsonOutput_(getWorkSchedule_());
     }
 
+    if (action === "getFullSchedule") {
+      return jsonOutput_(getFullSchedule_());
+    }
+
     return jsonOutput_({
       ok: false,
       message: "지원하지 않는 action입니다.",
@@ -507,14 +511,15 @@ function doGet(e) {
 
 function getWorkSchedule_() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
-  // Accept either Korean or English sheet name
-  var sheet = ss.getSheetByName("근무일정") || ss.getSheetByName("work_schedule");
+  // Try the multi-month sheet first, then legacy flat sheet
+  var sheet = ss.getSheetByName("근무표")
+            || ss.getSheetByName("근무일정")
+            || ss.getSheetByName("work_schedule");
   if (!sheet || sheet.getLastRow() < 2) {
     return { ok: true, workers: [] };
   }
   var data = sheet.getDataRange().getValues();
   var headerRow = data[0];
-  // headerRow[0] = "이름", headerRow[1..31] = day numbers 1..31
   var workers = [];
   for (var i = 1; i < data.length; i++) {
     var row = data[i];
@@ -529,6 +534,95 @@ function getWorkSchedule_() {
     workers.push({ name: name, days: days });
   }
   return { ok: true, workers: workers };
+}
+
+// ── Full multi-month schedule parser ──────────────────────────────────────────
+// Reads "근무표" (or fallback names), scans for month-header rows matching
+// "N월 검품담당 근무 일정", then parses day columns for 김민석 and 최승호 only.
+// Returns { ok, months: [{ month, label, days: [{ day, workers }] }] }
+function getFullSchedule_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName("근무표")
+            || ss.getSheetByName("근무일정")
+            || ss.getSheetByName("work_schedule");
+  if (!sheet || sheet.getLastRow() < 2) {
+    return { ok: true, months: [] };
+  }
+
+  var CORE = ["김민석", "최승호"];
+  var data = sheet.getDataRange().getValues();
+  var months = [];
+  var i = 0;
+
+  while (i < data.length) {
+    var firstCell = String(data[i][0] || "").trim();
+    var monthMatch = firstCell.match(/^(\d+)월/);
+
+    if (!monthMatch) { i++; continue; }
+
+    var monthNum = parseInt(monthMatch[1], 10);
+    i++; // advance past the month-header row
+
+    // Find the day-number header row: look for a row whose non-empty columns
+    // are mostly integers 1–31. Accept the first row that has ≥ 10 such values.
+    var dayColMap = {}; // "1".."31" → column index
+    while (i < data.length) {
+      var hrow = data[i];
+      // Stop if we've hit the next month header already
+      if (String(hrow[0] || "").trim().match(/^\d+월/)) break;
+      var tempMap = {};
+      for (var c = 0; c < hrow.length; c++) {
+        var v = String(hrow[c] || "").trim();
+        var n = parseInt(v, 10);
+        if (!isNaN(n) && n >= 1 && n <= 31 && String(n) === v) {
+          tempMap[String(n)] = c;
+        }
+      }
+      if (Object.keys(tempMap).length >= 10) {
+        dayColMap = tempMap;
+        i++;
+        break;
+      }
+      i++;
+    }
+
+    if (Object.keys(dayColMap).length === 0) continue;
+
+    // Collect raw cell values per core worker
+    var workerCells = {};
+    CORE.forEach(function(n) { workerCells[n] = {}; });
+
+    while (i < data.length) {
+      var wrow = data[i];
+      var wname = String(wrow[0] || "").trim();
+      if (!wname) { i++; continue; }
+      if (wname.match(/^\d+월/)) break; // reached next month section
+
+      if (CORE.indexOf(wname) >= 0) {
+        for (var dayStr in dayColMap) {
+          var col = dayColMap[dayStr];
+          workerCells[wname][dayStr] = String(wrow[col] || "").trim();
+        }
+      }
+      i++;
+    }
+
+    // Build frontend-friendly day list
+    var maxDay = Math.max.apply(null, Object.keys(dayColMap).map(Number));
+    var days = [];
+    for (var d = 1; d <= maxDay; d++) {
+      var ds = String(d);
+      var working = CORE.filter(function(name) {
+        var cell = workerCells[name][ds];
+        return cell !== undefined && cell !== "휴무";
+      });
+      days.push({ day: d, workers: working });
+    }
+
+    months.push({ month: monthNum, label: monthNum + "월", days: days });
+  }
+
+  return { ok: true, months: months };
 }
 
 function doPost(e) {

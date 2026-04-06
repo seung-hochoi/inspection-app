@@ -13,8 +13,7 @@ const SHADOW     = 'rgba(70,100,150,0.14)';
 
 // workers = Array<{ name: string, cell: string }> | null
 // Dot: cell === "휴무" → red, otherwise → green
-// Label: cell === "지원" → append " (지원)"
-export default function WorkerPanel({ workers, onClose }) {
+export default function WorkerPanel({ workers, onClose, onOpenSchedule }) {
   const panelRef = useRef(null);
 
   useEffect(() => {
@@ -71,15 +70,14 @@ export default function WorkerPanel({ workers, onClose }) {
           </div>
         ) : (
           workers.map((w, i) => {
-            const isOff     = w.cell === '휴무';
-            const isSupport = w.cell === '지원';
+            const isOff = w.cell === '휴무';
             return (
               <div
                 key={w.name}
                 style={{
                   display: 'flex', alignItems: 'center', gap: 8,
                   padding: '6px 14px',
-                  borderBottom: i < workers.length - 1 ? `1px solid ${BORDER}` : 'none',
+                  borderBottom: `1px solid ${BORDER}`,
                 }}
               >
                 <span style={{
@@ -93,12 +91,28 @@ export default function WorkerPanel({ workers, onClose }) {
                   color: isOff ? TEXT_SOFT : TEXT,
                   whiteSpace: 'nowrap',
                 }}>
-                  {w.name}{isSupport ? ' (지원)' : ''}
+                  {w.name}
                 </span>
               </div>
             );
           })
         )}
+      </div>
+
+      {/* Footer: open full schedule */}
+      <div style={{ padding: '8px 12px', borderTop: `1px solid ${BORDER}` }}>
+        <button
+          onClick={() => { onClose(); onOpenSchedule(); }}
+          style={{
+            width: '100%',
+            background: CARD_BG, border: `1px solid ${BORDER}`,
+            borderRadius: 7, padding: '5px 0',
+            fontSize: 11, fontWeight: 700, color: TEXT_SOFT,
+            cursor: 'pointer', fontFamily: 'inherit',
+          }}
+        >
+          근무 일정 보기
+        </button>
       </div>
     </div>
   );

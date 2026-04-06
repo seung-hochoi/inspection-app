@@ -7,7 +7,8 @@ import RecordsPage from './components/RecordsPage';
 import SummaryPage from './components/SummaryPage';
 import LoginPage from './components/LoginPage';
 import WorkerPanel from './components/WorkerPanel';
-import { manualRecalc, syncHistory, resetCurrentJobInputData, fetchHistoryData, fetchWorkSchedule, login as apiLogin, validateSession, logout as apiLogout, setSessionToken, listSessions, forceLogoutSession } from './api'; // eslint-disable-line no-unused-vars
+import ScheduleModal from './components/ScheduleModal';
+import { manualRecalc, syncHistory, resetCurrentJobInputData, fetchHistoryData, fetchWorkSchedule, fetchFullSchedule, login as apiLogin, validateSession, logout as apiLogout, setSessionToken, listSessions, forceLogoutSession } from './api'; // eslint-disable-line no-unused-vars
 import { buildAndDownloadPhotoZips } from './utils/photoZipBuilder';
 import { LoadingScreen, LoadingBlock } from './components/Spinner';
 
@@ -285,24 +286,16 @@ const S = {
 };
 
 // ── Work schedule: compute today's rows for the panel ────────────────────────
-// Core workers always appear; support workers only appear if cell === "지원".
-// Returns Array<{ name, cell }> — cell is the raw sheet value for today.
-const CORE_WORKERS = new Set(['김민석', '최승호']);
+// Only 김민석 and 최승호 are shown. Red dot if "휴무", green otherwise.
+const CORE_WORKERS = ['김민석', '최승호'];
 
 function computeWorkers(workers) {
   const today = String(new Date().getDate());
-  const rows = [];
-  for (const w of workers) {
-    const name = String(w.name || '').trim();
-    if (!name) continue;
-    const cell = String(w.days?.[today] ?? '').trim();
-    if (CORE_WORKERS.has(name)) {
-      rows.push({ name, cell }); // always include core workers
-    } else if (cell === '지원') {
-      rows.push({ name, cell }); // support workers only when "지원"
-    }
-  }
-  return rows;
+  return CORE_WORKERS.map((name) => {
+    const w = workers.find((r) => String(r.name || '').trim() === name);
+    const cell = String(w?.days?.[today] ?? '').trim();
+    return { name, cell };
+  });
 }
 
 // ============================================================
@@ -1695,9 +1688,12 @@ function App() {
   const [resetPw,      setResetPw]      = useState("");
 
   // ── Admin: session management state ──────────────────────────────────────────
-  const [showSessionsModal, setShowSessionsModal] = useState(false);
-  const [showWorkerPanel,   setShowWorkerPanel]   = useState(false);
-  const [workWorkers,       setWorkWorkers]       = useState(null); // null = not yet loaded
+  const [showSessionsModal,  setShowSessionsModal]  = useState(false);
+  const [showWorkerPanel,    setShowWorkerPanel]    = useState(false);
+  const [workWorkers,        setWorkWorkers]        = useState(null);
+  const [showScheduleModal,  setShowScheduleModal]  = useState(false);
+  const [scheduleMonths,     setScheduleMonths]     = useState(null); // null = not yet fetched
+  const [scheduleLoading,    setScheduleLoading]    = useState(false);
   const canManageUsers = !!(authUser && (authUser.permissions || []).includes('MANAGE_USERS'));
 
   // Fetch today's work schedule once when admin is confirmed
@@ -1705,8 +1701,19 @@ function App() {
     if (!canManageUsers) return;
     fetchWorkSchedule()
       .then((res) => setWorkWorkers(computeWorkers(res.workers || [])))
-      .catch(() => {}); // non-critical — panel still opens showing loading state
+      .catch(() => {});
   }, [canManageUsers]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Fetch full schedule on demand when the modal is first opened
+  const handleOpenSchedule = useCallback(() => {
+    setShowScheduleModal(true);
+    if (scheduleMonths !== null) return; // already loaded
+    setScheduleLoading(true);
+    fetchFullSchedule()
+      .then((res) => setScheduleMonths(res.months || []))
+      .catch(() => setScheduleMonths([]))
+      .finally(() => setScheduleLoading(false));
+  }, [scheduleMonths]);
 
   // ── Login note (e.g. forced-logout message to show on the login screen) ──────
   const [loginNote, setLoginNote] = useState('');
@@ -2320,6 +2327,16 @@ function App() {
         <WorkerPanel
           workers={workWorkers}
           onClose={() => setShowWorkerPanel(false)}
+          onOpenSchedule={handleOpenSchedule}
+        />
+      )}
+
+      {/* Admin: 근무 일정 modal — MANAGE_USERS only */}
+      {canManageUsers && showScheduleModal && (
+        <ScheduleModal
+          months={scheduleLoading ? [] : (scheduleMonths || [])}
+          loading={scheduleLoading}
+          onClose={() => setShowScheduleModal(false)}
         />
       )}
     </div>
