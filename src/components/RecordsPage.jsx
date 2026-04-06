@@ -6,7 +6,17 @@ import { cancelMovementEvent, saveBatch, uploadPhotos, savePhotoMeta } from '../
 import { fileToBase64, getClientId } from '../utils';
 import { v4 as uuidv4 } from 'uuid';
 
-export default function RecordsPage({ records = [], jobKey, onToast, onRefresh, inspectionRows = [], config = {}, authUser }) {
+// Error messages the backend uses when a row is already gone (stale local data).
+const ALREADY_DELETED_PATTERNS = [
+  '이미 삭제되었거나 존재하지 않는 행',
+  'already deleted',
+  'row not found',
+];
+
+const isAlreadyDeletedError = (msg = '') =>
+  ALREADY_DELETED_PATTERNS.some((p) => msg.toLowerCase().includes(p.toLowerCase()));
+
+export default function RecordsPage({ records = [], jobKey, onToast, onRefresh, onRecordsUpdate, inspectionRows = [], config = {}, authUser }) {
   const canEditReturnExchange = !authUser || !(authUser.permissions || []).length ||
     (authUser.permissions || []).includes('EDIT_RETURN_EXCHANGE');
   const [filter, setFilter]       = useState('all');
@@ -32,16 +42,31 @@ export default function RecordsPage({ records = [], jobKey, onToast, onRefresh, 
     return list;
   }, [records, filter, search]);
 
+  const removeRecordFromState = useCallback((rowNumber) => {
+    if (onRecordsUpdate) {
+      onRecordsUpdate((prev) => prev.filter((r) => r.__rowNumber !== rowNumber));
+    }
+  }, [onRecordsUpdate]);
+
   const handleCancel = async (record) => {
     if (!record.__rowNumber) return;
     if (!window.confirm(`이 내역을 취소하시겠습니까?\n${record['상품명']} (${record['처리유형']})`)) return;
     setCanceling(record.__rowNumber);
     try {
       await cancelMovementEvent(record.__rowNumber);
+      removeRecordFromState(record.__rowNumber);
       onToast?.('내역이 취소되었습니다.', 'success');
       onRefresh?.();
     } catch (err) {
-      onToast?.(err.message || '취소 실패', 'error');
+      const msg = err.message || '';
+      if (isAlreadyDeletedError(msg)) {
+        // Row is gone on the backend — remove stale local entry and treat as success.
+        removeRecordFromState(record.__rowNumber);
+        onToast?.('이미 삭제된 내역입니다. 화면에서 제거했습니다.', 'info');
+        onRefresh?.();
+      } else {
+        onToast?.(msg || '취소 실패', 'error');
+      }
     } finally {
       setCanceling(null);
     }

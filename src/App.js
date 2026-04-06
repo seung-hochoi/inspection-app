@@ -8,6 +8,7 @@ import SummaryPage from './components/SummaryPage';
 import LoginPage from './components/LoginPage';
 import { manualRecalc, syncHistory, resetCurrentJobInputData, fetchHistoryData, login as apiLogin, validateSession, logout as apiLogout, setSessionToken, listSessions, forceLogoutSession } from './api'; // eslint-disable-line no-unused-vars
 import { buildAndDownloadPhotoZips } from './utils/photoZipBuilder';
+import { LoadingScreen, LoadingBlock } from './components/Spinner';
 
 // ============================================================
 // SECTION 1: CONSTANTS / CONFIG
@@ -575,7 +576,7 @@ function ActiveSessionsModal({ onClose, showToast }) {
   return (
     <Modal title="접속중인 사용자" onClose={onClose}>
       {loading ? (
-        <div style={S.emptyBox}>⏳ 불러오는 중...</div>
+        <LoadingBlock label="불러오는 중..." />
       ) : sessions.length === 0 ? (
         <div style={S.emptyBox}>활성 세션이 없습니다.</div>
       ) : (
@@ -1654,6 +1655,9 @@ function App() {
   const [config, setConfig] = useState({});
   const [summary, setSummary] = useState({});
   const [happycall, setHappycall] = useState({});
+  // Single source of truth for inspection target SKU count — set by InspectionPage
+  // once it finishes deduplicating rows (partner × productCode pairs).
+  const [inspectionTargetSkuTotal, setInspectionTargetSkuTotal] = useState(0);
   const [worksheetUrl, setWorksheetUrl] = useState("");
   const [currentFileName, setCurrentFileName] = useState("");
   const [toast, setToast] = useState({ message: "", type: "info" });
@@ -1891,21 +1895,20 @@ function App() {
   // eslint-disable-next-line no-unused-vars
   const headerInspRate    = headerSkuCount > 0 ? Math.round((headerInspCount / headerSkuCount) * 100) : 0;
 
-  // headerTargetSku / headerTargetQty — exclusion-applied counts shown in header badges.
-  // Priority: backend summary ('검품입고 SKU', '검품 입고수량') → client-side from jobRows.
-  const { headerTargetSku, headerTargetQty } = useMemo(() => {
+  // headerTargetQty — exclusion-applied 수량 shown in the header badge.
+  // Priority: backend summary ('검품 입고수량') → client-side sum from jobRows.
+  // Note: the SKU count formerly derived here is now sourced from InspectionPage
+  // (inspectionTargetSkuTotal) so that both the badge and the progress bar use
+  // the exact same deduplication logic (partner × productCode pairs).
+  const headerTargetQty = useMemo(() => {
     const fromSummary = (key) => {
       const v = summary[key];
       if (v == null || v === '') return null;
       const n = typeof v === 'number' ? v : Number(String(v).replace(/,/g, ''));
       return isFinite(n) ? n : null;
     };
-    const bInspSku = fromSummary('검품입고 SKU');
     const bInspQty = fromSummary('검품 입고수량');
-
-    if (bInspSku !== null && bInspQty !== null) {
-      return { headerTargetSku: bInspSku, headerTargetQty: bInspQty };
-    }
+    if (bInspQty !== null) return bInspQty;
 
     const excludeRows = Array.isArray(config.exclude_rows) ? config.exclude_rows : [];
     const isExcluded = (code, partner) => {
@@ -1921,21 +1924,16 @@ function App() {
       }
       return false;
     };
-    const codes = new Set();
     let qty = 0;
     for (const r of (jobRows || [])) {
       const code    = r.__productCode || '';
       const rowQty  = Number(r.__qty) || 0;
       const partner = r.__partner || r['협력사명'] || '';
       if (code && rowQty > 0 && !isExcluded(code, partner)) {
-        codes.add(code);
         qty += rowQty;
       }
     }
-    return {
-      headerTargetSku: bInspSku !== null ? bInspSku : codes.size,
-      headerTargetQty: bInspQty !== null ? bInspQty : qty,
-    };
+    return qty;
   }, [summary, jobRows, config.exclude_rows]);
 
   const handleLogoutConfirm = useCallback(() => {
@@ -1986,13 +1984,7 @@ function App() {
 
   // ── Auth guard ───────────────────────────────────────────────────────────────
   if (authLoading) {
-    return (
-      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
-        background: '#dce3ed', fontFamily: "'Apple SD Gothic Neo','Pretendard',system-ui,sans-serif",
-        fontSize: 15, color: '#6878a0' }}>
-        ⏳ 세션 확인 중...
-      </div>
-    );
+    return <LoadingScreen label="세션 확인 중..." />;
   }
 
   if (!authUser) {
@@ -2028,15 +2020,15 @@ function App() {
             검품PDA
           </p>
 
-          {/* SKU badge — 검품대상 SKU (exclusion-applied) */}
-          {headerTargetSku > 0 && (
+          {/* SKU badge — inspection target SKU count (single source of truth: deduplicatedRows.length) */}
+          {inspectionTargetSkuTotal > 0 && (
             <span style={{
               fontSize: 11, fontWeight: 700, color: C.textMid,
               background: C.card, border: `1px solid ${C.borderLight}`,
               borderRadius: 6, padding: '3px 8px',
               flex: '0 0 auto', flexShrink: 0, whiteSpace: 'nowrap',
             }}>
-              SKU&nbsp;<span style={{ color: C.accent }}>{headerTargetSku.toLocaleString()}</span>
+              SKU&nbsp;<span style={{ color: C.accent }}>{inspectionTargetSkuTotal.toLocaleString()}</span>
             </span>
           )}
 
@@ -2194,7 +2186,7 @@ function App() {
 
       {/* Content */}
       <main style={S.content}>
-        {loading && !initialLoadDone && <div style={S.infoBox}>⏳ 초기 데이터를 불러오는 중...</div>}
+        {loading && !initialLoadDone && <LoadingBlock label="초기 데이터를 불러오는 중..." />}
         {loadError && <div style={S.errorBox}>⚠️ {loadError}</div>}
 
         {tab === "inspection" && (
@@ -2212,6 +2204,7 @@ function App() {
             onCsvUpload={handleCsvUpload}
             onRefresh={loadBootstrap}
             onRecordsUpdate={setRecords}
+            onTargetSkuChange={setInspectionTargetSkuTotal}
             authUser={authUser}
           />
         )}
@@ -2223,6 +2216,7 @@ function App() {
             config={config}
             onToast={showToast}
             onRefresh={loadBootstrap}
+            onRecordsUpdate={setRecords}
             authUser={authUser}
           />
         )}

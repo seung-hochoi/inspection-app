@@ -12,7 +12,7 @@ const DRAFTS_KEY = 'inspection_drafts_v2';
 export default function InspectionPage({
   jobKey, rows = [], config = {}, records = [], happycall = {}, inspectionRows = [],
   productImageMap = {}, onProductImageUploaded,
-  onError, onToast, onCsvUpload, onRefresh, onRecordsUpdate,
+  onError, onToast, onCsvUpload, onRefresh, onRecordsUpdate, onTargetSkuChange,
   authUser,
 }) {
   const [drafts, setDrafts]             = useState(() => loadDrafts());
@@ -245,6 +245,12 @@ export default function InspectionPage({
     }
     return Array.from(map.values());
   }, [activeRows]);
+
+  // Notify the parent of the inspection target SKU count (single source of truth).
+  // The parent uses this same number for the top SKU badge.
+  useEffect(() => {
+    onTargetSkuChange?.(deduplicatedRows.length);
+  }, [deduplicatedRows.length, onTargetSkuChange]);
 
   const handleDraftChange = useCallback((productKey, draft, options = {}) => {
     setDrafts((prev) => ({ ...prev, [productKey]: draft }));
