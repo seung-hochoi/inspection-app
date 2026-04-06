@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Search, FileX, ChevronDown, Camera, XCircle, Pencil, ImagePlus } from 'lucide-react';
+import { Search, FileX, ChevronDown, Camera, XCircle, Pencil, ImagePlus, X as XIcon } from 'lucide-react';
 import { C, radius, font, shadow, trans } from './styles';
 import { cancelMovementEvent, saveBatch, uploadPhotos, savePhotoMeta } from '../api';
 import { fileToBase64, getClientId } from '../utils';
@@ -571,7 +571,7 @@ function PhotoSection({ title, color, bg, border, ids, setIds, fileRef, uploadTy
       ) : (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
           {ids.map((id) => (
-            <span key={id} style={{ position: 'relative', display: 'inline-flex', flexShrink: 0 }}>
+            <span key={id} style={{ position: 'relative', display: 'inline-flex', flexShrink: 0, width: thumbSize, height: thumbSize }}>
               <img
                 src={`https://drive.google.com/thumbnail?id=${id}&sz=w100`}
                 alt={title}
@@ -586,14 +586,17 @@ function PhotoSection({ title, color, bg, border, ids, setIds, fileRef, uploadTy
                 onClick={() => setIds((prev) => prev.filter((x) => x !== id))}
                 title="삭제"
                 style={{
-                  position: 'absolute', top: -5, right: -5,
-                  width: 16, height: 16,
-                  background: '#ef4444', color: '#fff', borderRadius: '50%',
-                  fontSize: 10, fontWeight: 900,
+                  position: 'absolute', top: 2, right: 2,
+                  width: 20, height: 20,
+                  background: 'rgba(239,68,68,0.92)', color: '#fff', borderRadius: '50%',
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  cursor: 'pointer', border: '1.5px solid #fff', padding: 0,
+                  cursor: 'pointer', border: '2px solid rgba(255,255,255,0.85)', padding: 0,
+                  boxShadow: '0 1px 4px rgba(0,0,0,0.35)',
+                  zIndex: 20,
                 }}
-              >×</button>
+              >
+                <XIcon size={10} strokeWidth={3} />
+              </button>
             </span>
           ))}
         </div>

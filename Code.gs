@@ -902,6 +902,10 @@ function doPost(e) {
 
     if (action === "cancelMovementEvent") {
       var cancelled = cancelMovementEvent_(body.payload || {});
+      // Rebuild derived return sheets so the deleted record disappears immediately.
+      try { syncReturnSheets_(SpreadsheetApp.getActiveSpreadsheet()); } catch (e) {
+        console.error("[cancelMovementEvent] syncReturnSheets_ failed: " + e.message);
+      }
       return jsonOutput_({
         ok: true,
         deleted: cancelled,
@@ -3064,7 +3068,73 @@ function manualRecalc_() {
   updateInspectionDashboard_(ss);
   syncReturnSheets_(ss);
   autoResizeOperationalSheets_(ss);
+  // Sort inspection_data rows to match the in-app inspection screen order
+  // (partners in Korean 가나다 order, within each partner by original CSV row order).
+  var latestJob = loadLatestJob_();
+  sortInspectionSheet_(ss, latestJob ? (latestJob.rows || []) : []);
   return { ok: true };
+}
+
+/**
+ * Reorders inspection_data rows to match the in-app display order:
+ *   1. Partner (협력사명) in Korean alphabetical (가나다) order
+ *   2. Within each partner, by original CSV row position from the job cache
+ *   3. Tiebreak by 상품코드 alphabetical
+ *
+ * @param {GoogleAppsScript.Spreadsheet.Spreadsheet} ss
+ * @param {Array<Object>} jobCacheRows  rows from loadLatestJob_().rows
+ */
+function sortInspectionSheet_(ss, jobCacheRows) {
+  var sheet = getInspectionSheet_(ss);
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 3) return; // nothing to sort (row 1 = header, ≤1 data row)
+
+  // Build a CSV-position map: normalizedPartner||normalizedCode → index
+  var orderMap = {};
+  var cacheRows = Array.isArray(jobCacheRows) ? jobCacheRows : [];
+  cacheRows.forEach(function (row, idx) {
+    var code = normalizeCode_(
+      String(
+        row["상품코드"] || row["상품 코드"] || row["코드"] || row["바코드"] || ""
+      ).trim()
+    );
+    var partner = String(
+      row["협력사명"] || row["협력사"] || row["거래처명"] || ""
+    ).trim();
+    if (!code) return;
+    var key = partner + "||" + code;
+    if (!(key in orderMap)) orderMap[key] = idx;
+  });
+
+  var numCols = sheet.getLastColumn();
+  var headers = sheet.getRange(1, 1, 1, numCols).getValues()[0];
+  var partnerCol = headers.indexOf("협력사명"); // 0-based
+  var codeCol    = headers.indexOf("상품코드");
+  if (partnerCol < 0 || codeCol < 0) {
+    console.log("[sortInspectionSheet_] 협력사명 or 상품코드 column not found; skipping sort");
+    return;
+  }
+
+  var dataValues = sheet.getRange(2, 1, lastRow - 1, numCols).getValues();
+
+  dataValues.sort(function (a, b) {
+    var pA = String(a[partnerCol] || "").trim();
+    var pB = String(b[partnerCol] || "").trim();
+    var cmp = pA.localeCompare(pB, "ko");
+    if (cmp !== 0) return cmp;
+
+    var cA = normalizeCode_(String(a[codeCol] || "").trim());
+    var cB = normalizeCode_(String(b[codeCol] || "").trim());
+    var keyA = pA + "||" + cA;
+    var keyB = pB + "||" + cB;
+    var iA = (keyA in orderMap) ? orderMap[keyA] : 999999;
+    var iB = (keyB in orderMap) ? orderMap[keyB] : 999999;
+    if (iA !== iB) return iA - iB;
+    return cA.localeCompare(cB, "ko");
+  });
+
+  sheet.getRange(2, 1, dataValues.length, numCols).setValues(dataValues);
+  console.log("[sortInspectionSheet_] sorted " + dataValues.length + " rows");
 }
 
 // ── Payload builders ───────────────────────────────────────

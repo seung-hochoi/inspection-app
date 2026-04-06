@@ -790,7 +790,7 @@ function PhotoPreviewSection({ categories, onDeletePhoto, onViewPhoto, onAddPhot
               {fileIds.map((id) => (
                 <div
                   key={id}
-                  style={{ position: 'relative', flexShrink: 0, width: 64, height: 64 }}
+                  style={{ position: 'relative', flexShrink: 0, width: 64, height: 64, overflow: 'visible' }}
                 >
                   <img
                     src={`https://drive.google.com/thumbnail?id=${id}&sz=w120`}
@@ -805,22 +805,24 @@ function PhotoPreviewSection({ categories, onDeletePhoto, onViewPhoto, onAddPhot
                     loading="lazy"
                     onError={(e) => { e.currentTarget.style.visibility = 'hidden'; }}
                   />
-                  {/* Per-photo delete button — large enough for mobile tap */}
+                  {/* Per-photo delete button — positioned inside the thumbnail */}
                   <button
                     type="button"
-                    onClick={() => onDeletePhoto(type, id)}
+                    onClick={(e) => { e.stopPropagation(); onDeletePhoto(type, id); }}
                     title="삭제"
                     style={{
-                      position: 'absolute', top: -6, right: -6,
-                      width: 26, height: 26, borderRadius: '50%',
-                      background: '#ef4444', color: '#fff',
-                      border: '2.5px solid #fff',
+                      position: 'absolute', top: 3, right: 3,
+                      width: 22, height: 22, borderRadius: '50%',
+                      background: 'rgba(239,68,68,0.92)', color: '#fff',
+                      border: '2px solid rgba(255,255,255,0.85)',
                       cursor: 'pointer', padding: 0,
                       display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      boxShadow: '0 1px 6px rgba(0,0,0,0.30)',
+                      boxShadow: '0 1px 4px rgba(0,0,0,0.35)',
+                      zIndex: 20,
+                      lineHeight: 1,
                     }}
                   >
-                    <XIcon size={12} strokeWidth={3} />
+                    <XIcon size={11} strokeWidth={3} />
                   </button>
                 </div>
               ))}
