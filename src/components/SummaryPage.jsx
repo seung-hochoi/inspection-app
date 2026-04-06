@@ -3,7 +3,7 @@ import { motion } from 'framer-motion';
 import { BarChart3, Package, TrendingUp, ClipboardList } from 'lucide-react';
 import { C, radius, font, shadow } from './styles';
 
-export default function SummaryPage({ summary = {}, happycall = {}, jobRows = [], historyData = [], config = {}, onToast, onRefresh }) { // eslint-disable-line no-unused-vars
+export default function SummaryPage({ summary = {}, happycall = {}, jobRows = [], historyData = [], config = {}, inspTargetSku: inspTargetSkuProp, onToast, onRefresh }) { // eslint-disable-line no-unused-vars
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const s = useMemo(() => summary || {}, [summary]);
@@ -154,6 +154,10 @@ export default function SummaryPage({ summary = {}, happycall = {}, jobRows = []
     };
   }, [jobRows, config.reservation_rows, config.exclude_rows, s]);
 
+  // Use the inspection-tab SKU count passed from App.js when available,
+  // so the KPI card always matches the header SKU badge exactly.
+  const resolvedInspTargetSku = inspTargetSkuProp != null ? inspTargetSkuProp : inspTargetSku;
+
   const formatKoreanAmount = (value) => {
     if (value >= 100_000_000) return (value / 100_000_000).toFixed(2) + '억';
     if (value >= 10_000)      return Math.round(value / 10_000) + '만';
@@ -184,7 +188,7 @@ export default function SummaryPage({ summary = {}, happycall = {}, jobRows = []
     },
     {
       label: '검품대상 SKU',
-      value: String(inspTargetSku),
+      value: String(resolvedInspTargetSku),
       sub: '품목',
       color: C.orange, bg: C.orangeLight, border: C.orangeMid,
       icon: <ClipboardList size={16} strokeWidth={2} />,

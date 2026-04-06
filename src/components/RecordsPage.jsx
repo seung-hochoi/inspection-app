@@ -53,17 +53,28 @@ export default function RecordsPage({ records = [], jobKey, onToast, onRefresh, 
     if (!window.confirm(`이 내역을 취소하시겠습니까?\n${record['상품명']} (${record['처리유형']})`)) return;
     setCanceling(record.__rowNumber);
     try {
-      await cancelMovementEvent(record.__rowNumber);
-      removeRecordFromState(record.__rowNumber);
+      const result = await cancelMovementEvent({
+        rowNumber: record.__rowNumber,
+        // Secondary verification fields — backend cross-checks before deleting
+        상품코드:  record['상품코드'] || '',
+        처리유형:  record['처리유형'] || '',
+        센터명:    record['센터명']   || '',
+        협력사명:  record['협력사명'] || '',
+      });
+      // Use the fresh records list returned by the backend (read AFTER the delete)
+      // instead of re-fetching via loadBootstrap, which may serve a cached GET response.
+      if (onRecordsUpdate && Array.isArray(result?.records)) {
+        onRecordsUpdate(result.records);
+      } else {
+        removeRecordFromState(record.__rowNumber);
+      }
       onToast?.('내역이 취소되었습니다.', 'success');
-      onRefresh?.();
     } catch (err) {
       const msg = err.message || '';
       if (isAlreadyDeletedError(msg)) {
         // Row is gone on the backend — remove stale local entry and treat as success.
         removeRecordFromState(record.__rowNumber);
         onToast?.('이미 삭제된 내역입니다. 화면에서 제거했습니다.', 'info');
-        onRefresh?.();
       } else {
         onToast?.(msg || '취소 실패', 'error');
       }
@@ -370,8 +381,6 @@ function RecordEditModal({ record, inspectionRows, jobKey, onClose, onToast }) {
         '검품수량':  String(inspRow?.['검품수량'] || 0),
         '불량사유':  memo,
         defectPhotoIds: defectIds,
-        ...(inspRow?.['버전']     ? { expectedVersion:   Number(inspRow['버전']) }     : {}),
-        ...(inspRow?.['수정일시']  ? { expectedUpdatedAt: String(inspRow['수정일시']) } : {}),
       }]);
       onToast?.('저장되었습니다.', 'success');
       onClose();

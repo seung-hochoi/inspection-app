@@ -18,10 +18,11 @@ export function buildDraftFingerprint(d) {
     d.brixMin      || '',
     d.brixMax      || '',
     d.brixAvg      || '',
-    (d.inspPhotoIds   || []).join(','),
-    (d.defectPhotoIds || []).join(','),
-    (d.weightPhotoIds || []).join(','),
-    (d.brixPhotoIds   || []).join(','),
+    (d.inspPhotoIds    || []).join(','),
+    (d.defectPhotoIds  || []).join(','),
+    (d.weightPhotoIds  || []).join(','),
+    (d.brixPhotoIds    || []).join(','),
+    (d.deletedPhotoIds || []).join(','),
   ].join('|');
 }
 
@@ -29,9 +30,8 @@ export function buildDraftFingerprint(d) {
  * Build a saveBatch inspection-type row payload.
  *
  * Includes:
- *   clientId     — stable browser/session ID (allows same-user re-saves; conflict guard)
- *   operationId  — unique per request (useful for server-side dedup in future)
- *   expectedVersion / expectedUpdatedAt — optimistic concurrency tokens
+ *   clientId     — stable browser/session ID
+ *   operationId  — unique per request (useful for server-side dedup)
  */
 export function buildInspPayload(row, jobKey, draft) {
   const cleanCode = normalizeProductCode(row['상품코드']) || '';
@@ -65,11 +65,9 @@ export function buildInspPayload(row, jobKey, draft) {
     'BRIX평균': draft.brixAvg || '',
     clientId:   getClientId(),
     operationId: uuidv4(),
+    // IDs the user explicitly deleted — backend strips these before merging
+    deletedPhotoIds: (draft.deletedPhotoIds || []).filter(Boolean),
   };
-
-  // Optimistic concurrency tokens — omitted when not yet known (first save)
-  if (draft.serverVersion)   payload.expectedVersion   = draft.serverVersion;
-  if (draft.serverUpdatedAt) payload.expectedUpdatedAt = draft.serverUpdatedAt;
 
   return payload;
 }

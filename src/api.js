@@ -86,8 +86,8 @@ export const cacheCsv = (payload) => post({ action: "cacheCsv", payload });
 
 export const saveBatch = (rows) => post({ action: "saveBatch", rows });
 
-export const cancelMovementEvent = (rowNumber) =>
-  post({ action: "cancelMovementEvent", payload: { rowNumber } });
+export const cancelMovementEvent = (payload) =>
+  post({ action: "cancelMovementEvent", payload: typeof payload === 'number' ? { rowNumber: payload } : payload });
 
 export const manualRecalc = () => post({ action: "manualRecalc" });
 

@@ -2872,6 +2872,44 @@ function deleteRecord_(payload) {
   }
 
   var existingRecord = readMovementRow_(sheet, rowNumber);
+
+  // Cross-check: if the caller supplied secondary key fields, verify the row
+  // at rowNumber still contains the expected record.  Sheet rows can shift if
+  // a concurrent save inserted/deleted rows after the frontend loaded its data.
+  var verifyCode = String(payload["상품코드"] || "").trim();
+  var verifyType = String(payload["처리유형"] || "").trim();
+  if (verifyCode || verifyType) {
+    var rowCode = normalizeCode_(existingRecord["상품코드"] || "");
+    var rowType = String(existingRecord["처리유형"] || "").trim();
+    if (
+      (verifyCode && normalizeCode_(verifyCode) !== rowCode) ||
+      (verifyType && verifyType !== rowType)
+    ) {
+      // The row at this position no longer matches — search for the real row.
+      console.log("[deleteRecord_] rowNumber=" + rowNumber + " mismatch: expected code=" + verifyCode + " type=" + verifyType
+        + " but found code=" + rowCode + " type=" + rowType + ". Searching by key fields.");
+      var verifySenter    = String(payload["센터명"]   || "").trim();
+      var verifyPartner   = String(payload["협력사명"] || "").trim();
+      var verifyJobKey    = String(payload["작업기준일또는CSV식별값"] || "").trim();
+      var fallbackRow = findMovementRow_(sheet, verifyJobKey, verifyCode, verifyPartner, verifySenter, verifyType);
+      if (!fallbackRow) {
+        throw new Error("이미 삭제되었거나 존재하지 않는 행입니다.");
+      }
+      existingRecord = readMovementRow_(sheet, fallbackRow);
+      deletePhotoAsset_(makeMovementPhotoAssetKey_(
+        existingRecord["작업기준일또는CSV식별값"],
+        existingRecord["상품코드"],
+        existingRecord["협력사명"],
+        existingRecord["센터명"],
+        existingRecord["처리유형"]
+      ));
+      sheet.deleteRow(fallbackRow);
+      console.log("[deleteRecord_] deleted fallback row=" + fallbackRow);
+      return { rowNumber: fallbackRow };
+    }
+  }
+
+  console.log("[deleteRecord_] deleting row=" + rowNumber + " code=" + existingRecord["상품코드"] + " type=" + existingRecord["처리유형"]);
   deletePhotoAsset_(makeMovementPhotoAssetKey_(
     existingRecord["작업기준일또는CSV식별값"],
     existingRecord["상품코드"],
@@ -3052,7 +3090,17 @@ function buildInspectionPayload_(payload, existingRecord) {
     return acc.concat(Array.isArray(ids) ? ids.filter(Boolean) : []);
   }, []);
   const replacePhotoFileIdsMode = !!payload["replacePhotoFileIdsMode"];
-  const photoFileIds = replacePhotoFileIdsMode
+  // IDs explicitly deleted by the user — must be stripped from every merged list.
+  var deletedPhotoIds = Array.isArray(payload["deletedPhotoIds"])
+    ? payload["deletedPhotoIds"].map(function(id) { return String(id || "").trim(); }).filter(Boolean)
+    : [];
+  var deletedSet = {};
+  deletedPhotoIds.forEach(function(id) { deletedSet[id] = true; });
+  var stripDeleted = function(ids) {
+    return ids.filter(function(id) { return !deletedSet[id]; });
+  };
+
+  var mergedPhotoFileIds = replacePhotoFileIdsMode
     ? splitPhotoSourceText_(payloadPhotoFileIds.join("\n") + "\n" + uploadedPhotoFileIds.join("\n") + "\n" + typeMapFileIds.join("\n"))
     : mergePhotoLinks_(
         mergePhotoLinks_(
@@ -3063,6 +3111,7 @@ function buildInspectionPayload_(payload, existingRecord) {
         typeMapFileIds.join("\n"),
         ""
       ).split(/\n+/).filter(Boolean);
+  const photoFileIds = stripDeleted(mergedPhotoFileIds);
 
   // ── Per-category photo IDs ──────────────────────────────────────────────────
   // The new app sends per-category arrays so photo types survive page reload.
@@ -3072,10 +3121,11 @@ function buildInspectionPayload_(payload, existingRecord) {
     var text = String(val || "").trim();
     return text ? splitPhotoSourceText_(text) : [];
   };
-  var catInsp   = parseCatArr(payload["inspPhotoIds"]);
-  var catDefect = parseCatArr(payload["defectPhotoIds"]);
-  var catWeight = parseCatArr(payload["weightPhotoIds"]);
-  var catBrix   = parseCatArr(payload["brixPhotoIds"]);
+  // Strip explicitly deleted IDs from each category array as well.
+  var catInsp   = stripDeleted(parseCatArr(payload["inspPhotoIds"]));
+  var catDefect = stripDeleted(parseCatArr(payload["defectPhotoIds"]));
+  var catWeight = stripDeleted(parseCatArr(payload["weightPhotoIds"]));
+  var catBrix   = stripDeleted(parseCatArr(payload["brixPhotoIds"]));
   var hasCategories = catInsp.length || catDefect.length || catWeight.length || catBrix.length;
   var photoCategoriesJSON = hasCategories
     ? JSON.stringify({ insp: catInsp, defect: catDefect, weight: catWeight, brix: catBrix })
@@ -3174,65 +3224,9 @@ function buildRecordPayload_(payload, existingRecord) {
   return record;
 }
 
-// ── Conflict detection ─────────────────────────────────────
+// ── Conflict detection — disabled: last-write-wins ──────────
+// All saves are allowed regardless of concurrent edits.
 function hasRowConflict_(payload, existingRecord) {
-  var expectedUpdatedAt = String(payload && (payload.expectedUpdatedAt || payload["expectedUpdatedAt"]) || "").trim();
-  var expectedVersion   = parseNumber_(payload && (payload.expectedVersion || payload["expectedVersion"]) || 0);
-  var payloadClientId   = String((payload && (payload.clientId || payload["clientId"])) || "").trim();
-
-  // ── Legacy-app guard ──────────────────────────────────────────────────────
-  // Old app sends no clientId and no version info.
-  // If the server row was already written by the new app (has clientId), or
-  // has been saved more than once (version > 1), block the overwrite.
-  // New-app retries after versionConflict resolution still carry clientId,
-  // so they are NOT affected by this path.
-  if (!expectedUpdatedAt && !expectedVersion && !payloadClientId) {
-    if (existingRecord) {
-      var existingClientId_ = String(existingRecord["clientId"] || "").trim();
-      var existingVersion_  = parseNumber_(existingRecord["버전"] || 0);
-      if (existingClientId_ || existingVersion_ > 1) {
-        return true; // legacy overwrite blocked
-      }
-    }
-    return false;
-  }
-
-  if (!existingRecord) {
-    return expectedVersion > 0 || !!expectedUpdatedAt;
-  }
-
-  // Same browser session re-saving: bypass version/timestamp gating entirely.
-  // This eliminates false "another user is editing" for sequential edits by the same user.
-  //
-  // FIX: also bypass when the existing row has NO clientId (written by old app) but
-  // the new app carries a valid clientId.  Without this, any new-app save on a row
-  // originally written by the old app produces a versionConflict because the same-client
-  // check requires BOTH sides to have a clientId and match. The old-app rows always
-  // have clientId="" so the check was skipped, and the version comparison (expectedVersion=1
-  // vs. old-app row version=0 or 1) fired indefinitely — the root cause of the
-  // repeated saveInspection loop observed in write_conflict_log.
-  var existingClientId = String(existingRecord["clientId"] || "").trim();
-  if (payloadClientId && payloadClientId === existingClientId) {
-    // Exact match (both non-empty and equal)
-    return false;
-  }
-  if (payloadClientId && !existingClientId) {
-    // New-app client is re-saving a row that was written by the old app (no clientId).
-    // Treat as same session: allow the overwrite and let the new app claim the row.
-    return false;
-  }
-
-  var currentUpdatedAt = getRowUpdatedAt_(existingRecord);
-  var currentVersion   = getRowVersion_(existingRecord);
-
-  if (expectedUpdatedAt && currentUpdatedAt && expectedUpdatedAt !== currentUpdatedAt) {
-    return true;
-  }
-
-  if (expectedVersion && currentVersion !== expectedVersion) {
-    return true;
-  }
-
   return false;
 }
 

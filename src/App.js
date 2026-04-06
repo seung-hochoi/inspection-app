@@ -2285,6 +2285,7 @@ function App() {
             jobRows={jobRows}
             historyData={historyData}
             config={config}
+            inspTargetSku={inspectionTargetSkuTotal}
             onToast={showToast}
             onRefresh={loadBootstrap}
           />

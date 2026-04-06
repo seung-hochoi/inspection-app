@@ -2,7 +2,7 @@ import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { motion } from 'framer-motion';
 import { Minus, Plus, ImagePlus, Truck, ArrowLeftRight,
-         CheckCircle2, AlertTriangle, Loader2, AlertCircle, ShieldAlert, Camera,
+         CheckCircle2, AlertTriangle, Loader2, AlertCircle, Camera,
          X as XIcon, Eye } from 'lucide-react';
 import { C, radius, font, shadow, trans } from './styles';
 import PhotoUploader from './PhotoUploader';
@@ -25,10 +25,9 @@ const ProductRow = React.memo(function ProductRow({
   const [showPhotoType, setShowPhotoType] = useState(null);
   const [showMovement, setShowMovement]   = useState(false);
   const [movementType, setMovementType]   = useState('RETURN');
-  const [isConflict, setIsConflict]       = useState(false);
-  const [thumbUploading, setThumbUploading] = useState(false);
   const [isExpanded, setIsExpanded]       = useState(false);
   const [lightboxId, setLightboxId]       = useState(null);
+  const [thumbUploading, setThumbUploading] = useState(false);
   const saveTimerRef   = useRef(null);
   const latestDraftRef = useRef(draft);
   const inFlightRef    = useRef(false);
@@ -41,10 +40,6 @@ const ProductRow = React.memo(function ProductRow({
   // Rate limiter: track the wall-clock time of the last save attempt to prevent
   // saves firing faster than once per 2 seconds regardless of other guards.
   const lastSaveAttemptTimeRef = useRef(0);
-  // Count consecutive versionConflict responses for this row.
-  // If it exceeds the threshold, we stop retrying silently and surface an error
-  // instead of looping indefinitely.
-  const versionConflictCountRef = useRef(0);
   latestDraftRef.current = draft;  // always up-to-date even in stale closures
 
   const cleanCode    = normalizeProductCode(row['상품코드']) || '';
@@ -112,66 +107,27 @@ const ProductRow = React.memo(function ProductRow({
     lastSaveAttemptTimeRef.current = now;
     try {
       const result = await saveBatch([buildInspPayload(row, jobKey, draftSnapshot)]);
-      const conflicts = result?.data?.conflicts;
-
-      if (conflicts && conflicts.length > 0) {
-        const conflict = conflicts[0];
-        if (conflict.conflictType === 'editorConflict' || conflict.conflictType === 'legacyConflict') {
-          // A different user/session has the most recent save — genuine conflict
-          // legacyConflict: an old-app client tried to overwrite this new-app row
-          versionConflictCountRef.current = 0;
-          setIsConflict(true);
-          onError?.('충돌: 다른 사용자가 이미 저장했습니다. 🔄 새로고침 후 다시 입력해 주세요.');
-          onSaveError?.(productKey);
-        } else {
-          // versionConflict — stale expected version (e.g. after page refresh or
-          // first save on a row previously written by an older app version).
-          // Clear the stale tokens and schedule ONE clean retry after 500 ms.
-          //
-          // IMPORTANT: clear pendingSaveRef BEFORE returning so the finally block
-          // does not schedule a competing second timer that causes an infinite loop
-          // when the two timers keep setting pendingSaveRef on each other.
-          versionConflictCountRef.current += 1;
-          if (versionConflictCountRef.current > 3) {
-            // Too many consecutive versionConflicts — surface the error instead of
-            // silently retrying forever.
-            versionConflictCountRef.current = 0;
-            setIsConflict(true);
-            onError?.('버전 충돌이 반복됩니다. 🔄 새로고침 후 다시 시도해 주세요.');
-            onSaveError?.(productKey);
-          } else {
-            pendingSaveRef.current = false; // ← prevents finally from adding a 2nd timer
-            onDraftChange?.(productKey, {
-              ...latestDraftRef.current,
-              serverVersion: undefined,
-              serverUpdatedAt: undefined,
-            }, { silent: true });
-            saveTimerRef.current = setTimeout(() => runSaveRef.current?.(), 500);
-          }
-        }
-        return;
-      }
 
       // ── Save succeeded ────────────────────────────────────────────────────
-      versionConflictCountRef.current = 0;
 
       // Set the fingerprint FIRST so any pending follow-up save that fires
       // before the React state update propagates will hit the duplicate guard.
       lastSavedFingerprintRef.current = fingerprint;
 
-      // Persist server version/updatedAt and re-hydrate per-category photo IDs
-      // from the save response so the action-button counts stay correct after save.
+      // Re-hydrate per-category photo IDs from the save response
+      // so the action-button counts stay correct after save.
       const savedRow = result?.data?.inspectionRows?.[0];
-      if (savedRow && !savedRow.__conflict) {
-        const serverVersion   = Number(savedRow['버전']    || 0);
-        const serverUpdatedAt = String(savedRow['수정일시'] || '');
+      if (savedRow) {
+        // Never re-add IDs the user explicitly deleted — even if the server
+        // echoed them back before processing the deletion.
+        const deletedSet = new Set(latestDraftRef.current.deletedPhotoIds || []);
 
         // Merge server photo IDs with local draft to guarantee counts survive
         const hydrateIds = (field) => {
           const serverIds = String(savedRow[field] || '').split('\n').filter(Boolean);
           const localIds  = latestDraftRef.current[field] || [];
           if (!serverIds.length) return localIds.length ? localIds : undefined;
-          return [...new Set([...localIds, ...serverIds])];
+          return [...new Set([...localIds, ...serverIds])].filter((id) => !deletedSet.has(id));
         };
         const pInsp   = hydrateIds('inspPhotoIds');
         const pDefect = hydrateIds('defectPhotoIds');
@@ -179,14 +135,12 @@ const ProductRow = React.memo(function ProductRow({
         const pBrix   = hydrateIds('brixPhotoIds');
 
         const nextDraft = { ...latestDraftRef.current };
-        if (serverVersion || serverUpdatedAt) {
-          nextDraft.serverVersion   = serverVersion;
-          nextDraft.serverUpdatedAt = serverUpdatedAt;
-        }
         if (pInsp)   nextDraft.inspPhotoIds   = pInsp;
         if (pDefect) nextDraft.defectPhotoIds = pDefect;
         if (pWeight) nextDraft.weightPhotoIds = pWeight;
         if (pBrix)   nextDraft.brixPhotoIds   = pBrix;
+        // Deletion confirmed by server — clear the tracked list
+        nextDraft.deletedPhotoIds = [];
 
         onDraftChange?.(productKey, nextDraft, { silent: true });
       }
@@ -215,13 +169,7 @@ const ProductRow = React.memo(function ProductRow({
 
   useEffect(() => () => clearTimeout(saveTimerRef.current), []);
 
-  // Clear the conflict indicator whenever the server status clears back to idle
-  useEffect(() => {
-    if (saveStatus === 'idle') setIsConflict(false);
-  }, [saveStatus]);
-
   const updateDraft = useCallback((patch) => {
-    setIsConflict(false);  // editing after a conflict resets the indicator
     const next = { ...latestDraftRef.current, ...patch };
     onDraftChange?.(productKey, next);
     scheduleSave();
@@ -247,7 +195,12 @@ const ProductRow = React.memo(function ProductRow({
       type === 'defect' ? 'defectPhotoIds' :
       type === 'weight' ? 'weightPhotoIds' :
       type === 'brix'   ? 'brixPhotoIds'   : null;
-    if (key) updateDraft({ [key]: curr.filter((x) => x !== id) });
+    if (!key) return;
+    const existingDeleted = latestDraftRef.current.deletedPhotoIds || [];
+    updateDraft({
+      [key]: curr.filter((x) => x !== id),
+      deletedPhotoIds: [...new Set([...existingDeleted, id])],
+    });
   };
   const stepQty = (delta) => {
     const current = parseInt(latestDraftRef.current.inspQty, 10) || 0;
@@ -388,7 +341,6 @@ const ProductRow = React.memo(function ProductRow({
                   saveStatus={saveStatus}
                   isDone={isDone}
                   hasDefect={hasDefect}
-                  isConflict={isConflict}
                 />
               </div>
             </div>
@@ -639,9 +591,8 @@ export default ProductRow;
 // ─── Sub-components ──────────────────────────────────────────────────────────
 
 // Animated chip showing save state, completion, or defect quality result.
-function SaveStatusBadge({ saveStatus, isDone, hasDefect, isConflict }) {
+function SaveStatusBadge({ saveStatus, isDone, hasDefect }) {
   const state =
-    isConflict              ? 'conflict' :
     saveStatus === 'saving' ? 'saving'   :
     saveStatus === 'saved'  ? 'saved'    :
     saveStatus === 'error'  ? 'error'    :
@@ -654,7 +605,6 @@ function SaveStatusBadge({ saveStatus, isDone, hasDefect, isConflict }) {
     saving:   { text: '저장 중', icon: <Loader2      size={10} strokeWidth={2.5} style={{ animation: 'spin 1s linear infinite' }} />, bg: C.yellowLight, color: C.yellow,  border: C.yellowMid },
     saved:    { text: '저장됨',  icon: <CheckCircle2  size={10} strokeWidth={2.5} />, bg: C.greenLight,  color: C.green,   border: C.greenMid  },
     error:    { text: '실패',    icon: <AlertCircle   size={10} strokeWidth={2.5} />, bg: C.redLight,    color: C.red,     border: C.redMid    },
-    conflict: { text: '충돌',    icon: <ShieldAlert   size={10} strokeWidth={2.5} />, bg: '#faf5ff',     color: '#7c3aed', border: '#ddd6fe'   },
     done:     { text: '검품',    icon: <CheckCircle2  size={10} strokeWidth={2.5} />, bg: C.greenLight,  color: C.green,   border: C.greenMid  },
     defect:   { text: '불량',    icon: <AlertTriangle size={10} strokeWidth={2.5} />, bg: C.orangeLight, color: C.orange,  border: C.orangeMid },
   };
@@ -779,28 +729,6 @@ function PhotoSlot({ label, fileIds = [], color, bg, border, onClick, onDeletePh
             }}
             onError={(e) => { if (e.currentTarget.parentElement) e.currentTarget.parentElement.style.display = 'none'; }}
           />
-          {onDeletePhoto && (
-            <span
-              role="button"
-              tabIndex={0}
-              title="삭제"
-              onClick={(e) => { e.stopPropagation(); onDeletePhoto(id); }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); onDeletePhoto(id); }
-              }}
-              style={{
-                position: 'absolute', top: -4, right: -4,
-                width: 13, height: 13,
-                background: '#ef4444', color: '#fff', borderRadius: '50%',
-                fontSize: 9, fontWeight: 900, lineHeight: '13px',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                cursor: 'pointer', border: '1.5px solid #fff',
-                userSelect: 'none',
-              }}
-            >
-              ×
-            </span>
-          )}
         </span>
       ))}
     </button>
@@ -877,22 +805,22 @@ function PhotoPreviewSection({ categories, onDeletePhoto, onViewPhoto, onAddPhot
                     loading="lazy"
                     onError={(e) => { e.currentTarget.style.visibility = 'hidden'; }}
                   />
-                  {/* Per-photo delete button */}
+                  {/* Per-photo delete button — large enough for mobile tap */}
                   <button
                     type="button"
                     onClick={() => onDeletePhoto(type, id)}
                     title="삭제"
                     style={{
-                      position: 'absolute', top: -5, right: -5,
-                      width: 18, height: 18, borderRadius: '50%',
+                      position: 'absolute', top: -6, right: -6,
+                      width: 26, height: 26, borderRadius: '50%',
                       background: '#ef4444', color: '#fff',
-                      border: '2px solid #fff',
+                      border: '2.5px solid #fff',
                       cursor: 'pointer', padding: 0,
                       display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      boxShadow: '0 1px 4px rgba(0,0,0,0.25)',
+                      boxShadow: '0 1px 6px rgba(0,0,0,0.30)',
                     }}
                   >
-                    <XIcon size={9} strokeWidth={3} />
+                    <XIcon size={12} strokeWidth={3} />
                   </button>
                 </div>
               ))}
