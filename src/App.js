@@ -6,7 +6,8 @@ import InspectionPage from './components/InspectionPage';
 import RecordsPage from './components/RecordsPage';
 import SummaryPage from './components/SummaryPage';
 import LoginPage from './components/LoginPage';
-import { manualRecalc, syncHistory, resetCurrentJobInputData, fetchHistoryData, login as apiLogin, validateSession, logout as apiLogout, setSessionToken, listSessions, forceLogoutSession } from './api'; // eslint-disable-line no-unused-vars
+import WorkerPanel from './components/WorkerPanel';
+import { manualRecalc, syncHistory, resetCurrentJobInputData, fetchHistoryData, fetchWorkSchedule, login as apiLogin, validateSession, logout as apiLogout, setSessionToken, listSessions, forceLogoutSession } from './api'; // eslint-disable-line no-unused-vars
 import { buildAndDownloadPhotoZips } from './utils/photoZipBuilder';
 import { LoadingScreen, LoadingBlock } from './components/Spinner';
 
@@ -282,6 +283,27 @@ const S = {
     color: C.text, fontSize: 13,
   },
 };
+
+// ── Work schedule: compute today's rows for the panel ────────────────────────
+// Core workers always appear; support workers only appear if cell === "지원".
+// Returns Array<{ name, cell }> — cell is the raw sheet value for today.
+const CORE_WORKERS = new Set(['김민석', '최승호']);
+
+function computeWorkers(workers) {
+  const today = String(new Date().getDate());
+  const rows = [];
+  for (const w of workers) {
+    const name = String(w.name || '').trim();
+    if (!name) continue;
+    const cell = String(w.days?.[today] ?? '').trim();
+    if (CORE_WORKERS.has(name)) {
+      rows.push({ name, cell }); // always include core workers
+    } else if (cell === '지원') {
+      rows.push({ name, cell }); // support workers only when "지원"
+    }
+  }
+  return rows;
+}
 
 // ============================================================
 // SECTION 2: API HELPERS
@@ -1674,7 +1696,17 @@ function App() {
 
   // ── Admin: session management state ──────────────────────────────────────────
   const [showSessionsModal, setShowSessionsModal] = useState(false);
+  const [showWorkerPanel,   setShowWorkerPanel]   = useState(false);
+  const [workWorkers,       setWorkWorkers]       = useState(null); // null = not yet loaded
   const canManageUsers = !!(authUser && (authUser.permissions || []).includes('MANAGE_USERS'));
+
+  // Fetch today's work schedule once when admin is confirmed
+  useEffect(() => {
+    if (!canManageUsers) return;
+    fetchWorkSchedule()
+      .then((res) => setWorkWorkers(computeWorkers(res.workers || [])))
+      .catch(() => {}); // non-critical — panel still opens showing loading state
+  }, [canManageUsers]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Login note (e.g. forced-logout message to show on the login screen) ──────
   const [loginNote, setLoginNote] = useState('');
@@ -2131,6 +2163,25 @@ function App() {
               </span>
             </div>
 
+            {/* Admin: 근무 panel button — MANAGE_USERS only */}
+            {canManageUsers && (
+              <button
+                onClick={() => setShowWorkerPanel((v) => !v)}
+                title="오늘 근무 현황"
+                style={{
+                  background: showWorkerPanel ? '#d1fae5' : C.accentBg,
+                  border: `1px solid ${showWorkerPanel ? '#6ee7b7' : C.accent + '44'}`,
+                  borderRadius: 7, padding: '4px 8px', cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', gap: 4,
+                  fontSize: 11, fontWeight: 700,
+                  color: showWorkerPanel ? '#065f46' : C.accent,
+                  flex: '0 0 auto', flexShrink: 0, whiteSpace: 'nowrap',
+                }}
+              >
+                근무
+              </button>
+            )}
+
             {/* Admin: active sessions button */}
             {canManageUsers && (
               <button
@@ -2261,6 +2312,14 @@ function App() {
         <ActiveSessionsModal
           onClose={() => setShowSessionsModal(false)}
           showToast={showToast}
+        />
+      )}
+
+      {/* Admin: 근무 worker panel — MANAGE_USERS only */}
+      {canManageUsers && showWorkerPanel && (
+        <WorkerPanel
+          workers={workWorkers}
+          onClose={() => setShowWorkerPanel(false)}
         />
       )}
     </div>

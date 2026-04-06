@@ -113,6 +113,8 @@ export const saveProductImageMapping = (payload) =>
 
 export const fetchHistoryData = () => get("getHistoryData");
 
+export const fetchWorkSchedule = () => get("getWorkSchedule");
+
 // Request a lightweight server-side sync of return sheets + inspection totals.
 // Use after a save when a full bootstrap reload is too expensive.
 export const postSaveSync = (payload = {}) =>

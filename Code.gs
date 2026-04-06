@@ -489,6 +489,10 @@ function doGet(e) {
       return jsonOutput_({ ok: true, data: histRows });
     }
 
+    if (action === "getWorkSchedule") {
+      return jsonOutput_(getWorkSchedule_());
+    }
+
     return jsonOutput_({
       ok: false,
       message: "지원하지 않는 action입니다.",
@@ -499,6 +503,32 @@ function doGet(e) {
       message: err.message || "GET 실패",
     });
   }
+}
+
+function getWorkSchedule_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  // Accept either Korean or English sheet name
+  var sheet = ss.getSheetByName("근무일정") || ss.getSheetByName("work_schedule");
+  if (!sheet || sheet.getLastRow() < 2) {
+    return { ok: true, workers: [] };
+  }
+  var data = sheet.getDataRange().getValues();
+  var headerRow = data[0];
+  // headerRow[0] = "이름", headerRow[1..31] = day numbers 1..31
+  var workers = [];
+  for (var i = 1; i < data.length; i++) {
+    var row = data[i];
+    var name = String(row[0] || "").trim();
+    if (!name) continue;
+    var days = {};
+    for (var j = 1; j < headerRow.length; j++) {
+      var dayNum = String(headerRow[j] || "").trim();
+      if (!dayNum) continue;
+      days[dayNum] = String(row[j] || "").trim();
+    }
+    workers.push({ name: name, days: days });
+  }
+  return { ok: true, workers: workers };
 }
 
 function doPost(e) {
