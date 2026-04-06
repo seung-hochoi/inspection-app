@@ -69,15 +69,28 @@ export default function InspectionPage({
           ir['weightPhotoIds'] !== undefined ||
           ir['brixPhotoIds'] !== undefined;
 
+        // IDs the user explicitly deleted but whose deletion hasn't been confirmed
+        // by the server yet (e.g. page reloaded before the save fired).
+        // Never re-add these from server data during hydration.
+        const pendingDeletedSet = new Set(existing.deletedPhotoIds || []);
+
         if (hasCategories) {
           // Per-category hydration — each type is independent
           const merge = (draftField, legacyField, serverField) => {
-            const serverIds = String(ir[serverField] || '').split('\n').filter(Boolean);
-            if (!serverIds.length) return {};
-            const existingIds  = [...(existing[draftField] || existing[legacyField] || [])];
-            const existingSet  = new Set(existingIds);
-            const hasNew       = serverIds.some((id) => !existingSet.has(id));
-            if (!hasNew) return {};
+            const serverIds = String(ir[serverField] || '').split('\n').filter(Boolean)
+              .filter((id) => !pendingDeletedSet.has(id));
+            // Filter existing IDs through pendingDeletedSet too.
+            // If the existing draft was restored from localStorage in an inconsistent
+            // state (photo array still contains a deleted ID), force-remove it now
+            // rather than relying on hasNew, which would return false and leave the
+            // stale ID in place indefinitely.
+            const rawExistingIds = [...(existing[draftField] || existing[legacyField] || [])];
+            const existingIds    = rawExistingIds.filter((id) => !pendingDeletedSet.has(id));
+            const hadStaleDeletions = existingIds.length < rawExistingIds.length;
+            if (!serverIds.length && !hadStaleDeletions) return {};
+            const existingSet = new Set(existingIds);
+            const hasNew      = serverIds.some((id) => !existingSet.has(id));
+            if (!hasNew && !hadStaleDeletions) return {};
             return { [draftField]: [...new Set([...existingIds, ...serverIds])] };
           };
           const pInsp   = merge('inspPhotoIds',   'photoFileIds',  'inspPhotoIds');
@@ -89,14 +102,37 @@ export default function InspectionPage({
             Object.assign(updates, photoUpdates);
             changed = true;
           }
+
+          // Server-confirmation cleanup: remove from deletedPhotoIds any IDs the
+          // server no longer reports (meaning the backend persisted the deletion).
+          // This replaces the premature clear that used to happen in ProductRow.jsx's
+          // save callback — we now wait for fresh server data to confirm the deletion.
+          const existingDeleted = existing.deletedPhotoIds || [];
+          if (existingDeleted.length > 0) {
+            const allServerIds = new Set([
+              ...String(ir['inspPhotoIds']   || '').split('\n').filter(Boolean),
+              ...String(ir['defectPhotoIds'] || '').split('\n').filter(Boolean),
+              ...String(ir['weightPhotoIds'] || '').split('\n').filter(Boolean),
+              ...String(ir['brixPhotoIds']   || '').split('\n').filter(Boolean),
+            ]);
+            const stillPending = existingDeleted.filter((id) => allServerIds.has(id));
+            if (stillPending.length < existingDeleted.length) {
+              updates.deletedPhotoIds = stillPending;
+              changed = true;
+            }
+          }
         } else {
           // Legacy fallback: combined list → inspPhotoIds only
-          const photoIds = String(ir['사진파일ID목록'] || '').split('\n').filter(Boolean);
-          if (photoIds.length > 0) {
-            const existingIds = [...(existing.inspPhotoIds || existing.photoFileIds || [])];
+          const photoIds = String(ir['사진파일ID목록'] || '').split('\n').filter(Boolean)
+            .filter((id) => !pendingDeletedSet.has(id));
+          // Apply the same stale-deletion guard as the per-category branch above.
+          const rawExistingIds = [...(existing.inspPhotoIds || existing.photoFileIds || [])];
+          const existingIds    = rawExistingIds.filter((id) => !pendingDeletedSet.has(id));
+          const hadStale       = existingIds.length < rawExistingIds.length;
+          if (photoIds.length > 0 || hadStale) {
             const existingSet = new Set(existingIds);
             const hasNewIds   = photoIds.some((id) => !existingSet.has(id));
-            if (hasNewIds) {
+            if (hasNewIds || hadStale) {
               updates.inspPhotoIds = [...new Set([...existingIds, ...photoIds])];
               changed = true;
             }
@@ -643,6 +679,29 @@ function setsEqual(a, b) {
 }
 
 function loadDrafts() {
-  try { return JSON.parse(localStorage.getItem(DRAFTS_KEY) || '{}'); }
-  catch (_) { return {}; }
+  try {
+    const raw = JSON.parse(localStorage.getItem(DRAFTS_KEY) || '{}');
+    // Sanitize on restore: purge any deleted IDs from photo arrays before React
+    // ever sees the data.  Defends against any timing edge-case where the photo
+    // array and deletedPhotoIds were written to localStorage in an inconsistent
+    // state (e.g., useEffect([drafts]) flushed mid-update) and also covers the
+    // tab-switch / remount path where stale data could otherwise survive forever.
+    const PHOTO_FIELDS = ['inspPhotoIds', 'defectPhotoIds', 'weightPhotoIds', 'brixPhotoIds', 'photoFileIds'];
+    const out = {};
+    for (const [k, draft] of Object.entries(raw)) {
+      if (!draft || typeof draft !== 'object') { out[k] = draft; continue; }
+      const deletedSet = new Set(draft.deletedPhotoIds || []);
+      if (!deletedSet.size) { out[k] = draft; continue; }
+      const clean = { ...draft };
+      let dirty = false;
+      for (const field of PHOTO_FIELDS) {
+        if (Array.isArray(clean[field]) && clean[field].some((id) => deletedSet.has(id))) {
+          clean[field] = clean[field].filter((id) => !deletedSet.has(id));
+          dirty = true;
+        }
+      }
+      out[k] = dirty ? clean : draft;
+    }
+    return out;
+  } catch (_) { return {}; }
 }

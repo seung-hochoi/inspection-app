@@ -99,6 +99,10 @@ const ProductRow = React.memo(function ProductRow({
     }
 
     const draftSnapshot = latestDraftRef.current;
+    // Capture which deletions are included in THIS payload before going async.
+    // Used after success to clear only the IDs that were actually sent,
+    // preserving any new deletions that arrive while the request is in-flight.
+    const sentDeletionSet = new Set(draftSnapshot.deletedPhotoIds || []);
     // Duplicate-save guard: skip if value matches last successfully saved state
     const fingerprint = buildDraftFingerprint(draftSnapshot);
     if (fingerprint === lastSavedFingerprintRef.current) return;
@@ -139,8 +143,14 @@ const ProductRow = React.memo(function ProductRow({
         if (pDefect) nextDraft.defectPhotoIds = pDefect;
         if (pWeight) nextDraft.weightPhotoIds = pWeight;
         if (pBrix)   nextDraft.brixPhotoIds   = pBrix;
-        // Deletion confirmed by server — clear the tracked list
-        nextDraft.deletedPhotoIds = [];
+        // Retain ALL pending deletedPhotoIds — including those just sent — so the
+        // InspectionPage hydration effect's pendingDeletedSet guard stays active.
+        // If we cleared sent IDs here, a stale loadBootstrap response arriving after
+        // this save would bypass the guard (pendingDeletedSet would be empty) and
+        // re-add the deleted photo back into the draft.
+        // Confirmed deletions are pruned by the InspectionPage hydration effect once
+        // a fresh inspectionRows from the server no longer contains those IDs.
+        nextDraft.deletedPhotoIds = latestDraftRef.current.deletedPhotoIds || [];
 
         onDraftChange?.(productKey, nextDraft, { silent: true });
       }

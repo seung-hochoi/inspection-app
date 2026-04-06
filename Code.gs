@@ -902,10 +902,8 @@ function doPost(e) {
 
     if (action === "cancelMovementEvent") {
       var cancelled = cancelMovementEvent_(body.payload || {});
-      // Rebuild derived return sheets so the deleted record disappears immediately.
-      try { syncReturnSheets_(SpreadsheetApp.getActiveSpreadsheet()); } catch (e) {
-        console.error("[cancelMovementEvent] syncReturnSheets_ failed: " + e.message);
-      }
+      // Targeted row deletion is now handled inside deleteRecord_ via
+      // deleteReturnSheetRowsForRecord_ — no full sheet rebuild needed here.
       return jsonOutput_({
         ok: true,
         deleted: cancelled,
@@ -2907,6 +2905,7 @@ function deleteRecord_(payload) {
         existingRecord["센터명"],
         existingRecord["처리유형"]
       ));
+      deleteReturnSheetRowsForRecord_(ss, existingRecord);
       sheet.deleteRow(fallbackRow);
       console.log("[deleteRecord_] deleted fallback row=" + fallbackRow);
       return { rowNumber: fallbackRow };
@@ -2921,6 +2920,7 @@ function deleteRecord_(payload) {
     existingRecord["센터명"],
     existingRecord["처리유형"]
   ));
+  deleteReturnSheetRowsForRecord_(ss, existingRecord);
   sheet.deleteRow(rowNumber);
 
   return {
@@ -4354,6 +4354,7 @@ function syncReturnSheets_(ss) {
     "전산유형",
     "센터",
     "상세",
+    "작업기준일또는CSV식별값",
   ]);
 
   ensureHeaderRow_(summarySheet, [
@@ -4371,6 +4372,7 @@ function syncReturnSheets_(ss) {
     "회송량",
     "처리형태",
     "검품담당",
+    "작업기준일또는CSV식별값",
   ]);
 
   clearSheetBody_(centerSheet, 9);
@@ -4396,6 +4398,7 @@ function syncReturnSheets_(ss) {
         "",                                 // 전산유형: leave empty
         row["센터명"] || "",
         "검품회송",  // 상세: always this label
+        row["작업기준일또는CSV식별값"] || "", // lookup key for targeted row deletion
         ],
       };
     })
@@ -4407,9 +4410,9 @@ function syncReturnSheets_(ss) {
     });
 
   if (centerValues.length > 0) {
-    centerSheet.getRange(2, 1, centerValues.length, 9).setValues(centerValues);
+    centerSheet.getRange(2, 1, centerValues.length, 10).setValues(centerValues);
   }
-  applyOperationalTableBorders_(centerSheet, 9);
+  applyOperationalTableBorders_(centerSheet, 10);
 
   var summaryRows = Object.keys(skuRowMap)
     .map(function (key) {
@@ -4468,6 +4471,7 @@ function syncReturnSheets_(ss) {
           returnQty,
           getActionTypeByDefectRate_(defectRate),
           "",
+          baseRow["작업기준일또는CSV식별값"] || currentJobKey || "", // lookup key for targeted row deletion
         ],
       };
     })
@@ -4481,15 +4485,80 @@ function syncReturnSheets_(ss) {
   });
 
   if (summaryValues.length > 0) {
-    summarySheet.getRange(2, 1, summaryValues.length, 14).setValues(summaryValues);
+    summarySheet.getRange(2, 1, summaryValues.length, 15).setValues(summaryValues);
     summarySheet.getRange(2, 8, summaryValues.length, 1).setNumberFormat("0.0%");
     summarySheet.getRange(2, 10, summaryValues.length, 1).setNumberFormat("0.0%");
     mergeOperationalCategoryColumn_(summarySheet, summaryValues.length);
   }
-  applyOperationalTableBorders_(summarySheet, 14);
+  applyOperationalTableBorders_(summarySheet, 15);
   applyOperationalTableBorders_(getRecordSheet_(ss), recordHeaders_().length);
 
   return;
+}
+
+// ── Targeted row deletion from return output sheets ────────────────────────
+// Called after a single source record is deleted so both output sheets lose
+// only the exact corresponding row — no full sheet rebuild required.
+function deleteReturnSheetRowsForRecord_(ss, record) {
+  var jobKey      = String(record["작업기준일또는CSV식별값"] || "").trim();
+  var productCode = normalizeCode_(String(record["상품코드"] || "").trim());
+  var partnerName = String(record["협력사명"] || "").trim();
+  var centerName  = String(record["센터명"]   || "").trim();
+
+  // 검품 회송내역 (센터포함): one row per return event.
+  // Composite key: 작업기준일또는CSV식별값 + 상품코드 + 협력사명 + 센터
+  _deleteOutputSheetRows_(
+    ss.getSheetByName(SHEET_NAMES.returnCenter),
+    function (headers, row) {
+      var colJK = headers.indexOf("작업기준일또는CSV식별값");
+      var colPC = headers.indexOf("상품코드");
+      var colPN = headers.indexOf("협력사명");
+      var colCN = headers.indexOf("센터");
+      return (
+        colJK >= 0 && String(row[colJK] || "").trim() === jobKey &&
+        colPC >= 0 && normalizeCode_(String(row[colPC] || "").trim()) === productCode &&
+        colPN >= 0 && String(row[colPN] || "").trim() === partnerName &&
+        colCN >= 0 && String(row[colCN] || "").trim() === centerName
+      );
+    }
+  );
+
+  // 검품 회송내역 (센터미포함): one aggregated row per SKU.
+  // Composite key: 작업기준일또는CSV식별값 + 상품코드
+  // (파트너사 stores a standardized name that may differ from raw 협력사명,
+  //  so we rely on jobKey + productCode which is unique per SKU within a job.)
+  _deleteOutputSheetRows_(
+    ss.getSheetByName(SHEET_NAMES.returnSummary),
+    function (headers, row) {
+      var colJK = headers.indexOf("작업기준일또는CSV식별값");
+      var colPC = headers.indexOf("상품코드");
+      return (
+        colJK >= 0 && String(row[colJK] || "").trim() === jobKey &&
+        colPC >= 0 && normalizeCode_(String(row[colPC] || "").trim()) === productCode
+      );
+    }
+  );
+}
+
+// Reads every data row in sheet, calls matchFn(headers, rowValues) for each,
+// and deletes matching rows bottom-to-top so indices stay valid.
+function _deleteOutputSheetRows_(sheet, matchFn) {
+  if (!sheet) return;
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return;
+  var lastCol = sheet.getLastColumn();
+  if (lastCol < 1) return;
+
+  var headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(function (h) {
+    return String(h || "").trim();
+  });
+  var data = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
+
+  for (var i = data.length - 1; i >= 0; i--) {
+    if (matchFn(headers, data[i])) {
+      sheet.deleteRow(i + 2); // +2: row 1 is header, data array is 0-indexed
+    }
+  }
 }
 
 function sortRecordSheetForCurrentJob_(ss, currentJobKey, productMetaMap) {
