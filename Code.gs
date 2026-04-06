@@ -494,7 +494,14 @@ function doGet(e) {
     }
 
     if (action === "getFullSchedule") {
-      return jsonOutput_(getFullSchedule_());
+      var fsr = getFullSchedule_();
+      // Strip rawCells before sending over the wire (internal use only)
+      if (fsr.months) {
+        fsr.months = fsr.months.map(function(m) {
+          return { month: m.month, label: m.label, days: m.days };
+        });
+      }
+      return jsonOutput_(fsr);
     }
 
     return jsonOutput_({
@@ -511,117 +518,239 @@ function doGet(e) {
 
 function getWorkSchedule_() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
-  // Try the multi-month sheet first, then legacy flat sheet
-  var sheet = ss.getSheetByName("근무표")
-            || ss.getSheetByName("근무일정")
-            || ss.getSheetByName("work_schedule");
-  if (!sheet || sheet.getLastRow() < 2) {
+  var sheetNames = ["근무표", "근무일정", "work_schedule"];
+  var sheet = null;
+  for (var sn = 0; sn < sheetNames.length; sn++) {
+    sheet = ss.getSheetByName(sheetNames[sn]);
+    if (sheet) { console.log("[getWorkSchedule_] sheet found: " + sheetNames[sn]); break; }
+  }
+  if (!sheet) {
+    console.log("[getWorkSchedule_] ERROR: no schedule sheet found. Tried: " + sheetNames.join(", "));
     return { ok: true, workers: [] };
   }
-  var data = sheet.getDataRange().getValues();
-  var headerRow = data[0];
-  var workers = [];
-  for (var i = 1; i < data.length; i++) {
-    var row = data[i];
-    var name = String(row[0] || "").trim();
-    if (!name) continue;
-    var days = {};
-    for (var j = 1; j < headerRow.length; j++) {
-      var dayNum = String(headerRow[j] || "").trim();
-      if (!dayNum) continue;
-      days[dayNum] = String(row[j] || "").trim();
-    }
-    workers.push({ name: name, days: days });
+  if (sheet.getLastRow() < 2) {
+    console.log("[getWorkSchedule_] sheet is empty");
+    return { ok: true, workers: [] };
   }
+
+  var CORE = ["김민석", "최승호"];
+  var now = new Date();
+  var todayMonth = now.getMonth() + 1;
+  var todayDay   = String(now.getDate());
+  console.log("[getWorkSchedule_] today = month:" + todayMonth + " day:" + todayDay);
+
+  // Use the full-schedule parser to find today's block
+  var fullResult = getFullSchedule_();
+  if (!fullResult.months || fullResult.months.length === 0) {
+    console.log("[getWorkSchedule_] no months parsed — falling back to flat-table mode");
+    // Flat-table fallback (legacy sheet with row=worker, col=day)
+    var data = sheet.getDataRange().getValues();
+    var headerRow = data[0];
+    var workers = [];
+    for (var ri = 1; ri < data.length; ri++) {
+      var row = data[ri];
+      // Worker name: scan all columns for a CORE name
+      var foundName = null;
+      var foundNameCol = -1;
+      for (var ci = 0; ci < row.length; ci++) {
+        var cv = String(row[ci] || "").trim();
+        if (CORE.indexOf(cv) >= 0) { foundName = cv; foundNameCol = ci; break; }
+      }
+      if (!foundName) continue;
+      var days = {};
+      for (var j = 0; j < headerRow.length; j++) {
+        var dayNum = String(headerRow[j] || "").trim();
+        var num = parseInt(dayNum, 10);
+        if (isNaN(num) || num < 1 || num > 31) continue;
+        days[String(num)] = String(row[j] || "").trim();
+      }
+      var cellToday = days[todayDay];
+      console.log("[getWorkSchedule_] flat fallback worker=" + foundName + " day=" + todayDay + " cell=" + JSON.stringify(cellToday));
+      workers.push({ name: foundName, days: days });
+    }
+    return { ok: true, workers: workers };
+  }
+
+  // Find this month's block (fall back to last available)
+  var todayBlock = null;
+  for (var m = 0; m < fullResult.months.length; m++) {
+    if (fullResult.months[m].month === todayMonth) { todayBlock = fullResult.months[m]; break; }
+  }
+  if (!todayBlock) {
+    todayBlock = fullResult.months[fullResult.months.length - 1];
+    console.log("[getWorkSchedule_] month " + todayMonth + " not found — using last block: " + todayBlock.month);
+  } else {
+    console.log("[getWorkSchedule_] selected block for month " + todayMonth);
+  }
+
+  // Build workers array from this block's raw cells
+  var workers = CORE.map(function(name) {
+    // Find the cell for today from the block's rawCells map
+    var cellVal = (todayBlock.rawCells && todayBlock.rawCells[name])
+                  ? (todayBlock.rawCells[name][todayDay] !== undefined ? todayBlock.rawCells[name][todayDay] : null)
+                  : null;
+    console.log("[getWorkSchedule_] worker=" + name + " todayCell=" + JSON.stringify(cellVal));
+    var days = (todayBlock.rawCells && todayBlock.rawCells[name]) ? todayBlock.rawCells[name] : {};
+    return { name: name, days: days };
+  });
   return { ok: true, workers: workers };
 }
 
 // ── Full multi-month schedule parser ──────────────────────────────────────────
-// Reads "근무표" (or fallback names), scans for month-header rows matching
-// "N월 검품담당 근무 일정", then parses day columns for 김민석 and 최승호 only.
-// Returns { ok, months: [{ month, label, days: [{ day, workers }] }] }
+// Reads the single schedule sheet, scans for month-header rows that contain
+// both a month number (N월) and a work-related keyword (근무).
+// Parses day-column maps and worker rows for 김민석 and 최승호 only.
+// Returns { ok, months: [{ month, label, days: [{ day, workers }], rawCells: {...} }] }
 function getFullSchedule_() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sheet = ss.getSheetByName("근무표")
-            || ss.getSheetByName("근무일정")
-            || ss.getSheetByName("work_schedule");
+  var sheetNames = ["근무표", "근무일정", "work_schedule"];
+  var sheet = null;
+  for (var sn = 0; sn < sheetNames.length; sn++) {
+    sheet = ss.getSheetByName(sheetNames[sn]);
+    if (sheet) { console.log("[getFullSchedule_] sheet: " + sheetNames[sn]); break; }
+  }
   if (!sheet || sheet.getLastRow() < 2) {
+    console.log("[getFullSchedule_] no sheet or empty");
     return { ok: true, months: [] };
   }
 
   var CORE = ["김민석", "최승호"];
   var data = sheet.getDataRange().getValues();
+  var totalRows = data.length;
+  var totalCols = data[0] ? data[0].length : 0;
+  console.log("[getFullSchedule_] total rows=" + totalRows + " cols=" + totalCols);
+
+  // ── Pass 1: find all month-header rows ─────────────────────────────────────
+  // A row is a month header if ANY cell in the row contains a digit followed by
+  // "월" AND (that same cell or another cell in the row) contains "근무".
+  var monthHeaders = []; // [{ rowIndex, monthNum }]
+  for (var ri = 0; ri < totalRows; ri++) {
+    var row = data[ri];
+    var rowText = row.map(function(c) { return String(c || "").trim(); }).join(" ");
+    var monthMatch = rowText.match(/(\d+)\s*월/);
+    var hasGeunmu  = /근무/.test(rowText);
+    if (monthMatch && hasGeunmu) {
+      var mNum = parseInt(monthMatch[1], 10);
+      console.log("[getFullSchedule_] month header found: row=" + ri + " text='" + rowText.slice(0, 60) + "' monthNum=" + mNum);
+      monthHeaders.push({ rowIndex: ri, monthNum: mNum });
+    }
+  }
+  if (monthHeaders.length === 0) {
+    // Log a few rows to help diagnose
+    console.log("[getFullSchedule_] WARNING: no month headers found. Dumping first 10 rows:");
+    for (var di = 0; di < Math.min(10, totalRows); di++) {
+      var preview = data[di].map(function(c) { return String(c || "").trim(); }).filter(Boolean).join(" | ");
+      console.log("  row[" + di + "]: " + preview.slice(0, 80));
+    }
+    return { ok: true, months: [] };
+  }
+
+  // ── Pass 2: parse each month block ─────────────────────────────────────────
   var months = [];
-  var i = 0;
 
-  while (i < data.length) {
-    var firstCell = String(data[i][0] || "").trim();
-    var monthMatch = firstCell.match(/^(\d+)월/);
+  for (var mhi = 0; mhi < monthHeaders.length; mhi++) {
+    var blockStart = monthHeaders[mhi].rowIndex + 1;
+    var blockEnd   = mhi + 1 < monthHeaders.length
+                     ? monthHeaders[mhi + 1].rowIndex
+                     : totalRows;
+    var monthNum   = monthHeaders[mhi].monthNum;
+    console.log("[getFullSchedule_] parsing month=" + monthNum + " rows [" + blockStart + "," + blockEnd + ")");
 
-    if (!monthMatch) { i++; continue; }
-
-    var monthNum = parseInt(monthMatch[1], 10);
-    i++; // advance past the month-header row
-
-    // Find the day-number header row: look for a row whose non-empty columns
-    // are mostly integers 1–31. Accept the first row that has ≥ 10 such values.
-    var dayColMap = {}; // "1".."31" → column index
-    while (i < data.length) {
-      var hrow = data[i];
-      // Stop if we've hit the next month header already
-      if (String(hrow[0] || "").trim().match(/^\d+월/)) break;
+    // ── Find day-column header row inside this block ──────────────────────────
+    // A day-header row has at least 10 cells whose value is an integer 1–31.
+    // Cells may be numbers or strings; handle both.
+    var dayColMap = {}; // "1".."31" → colIndex
+    var dayHeaderRow = -1;
+    for (var r = blockStart; r < blockEnd; r++) {
+      var hrow = data[r];
       var tempMap = {};
       for (var c = 0; c < hrow.length; c++) {
-        var v = String(hrow[c] || "").trim();
-        var n = parseInt(v, 10);
-        if (!isNaN(n) && n >= 1 && n <= 31 && String(n) === v) {
-          tempMap[String(n)] = c;
+        var raw = hrow[c];
+        var v = String(raw === null || raw === undefined ? "" : raw).trim();
+        // Accept both numeric type and string representation
+        var num = (typeof raw === "number") ? raw : parseInt(v, 10);
+        if (!isNaN(num) && num >= 1 && num <= 31 && (String(num) === v || raw === num)) {
+          tempMap[String(num)] = c;
         }
       }
       if (Object.keys(tempMap).length >= 10) {
         dayColMap = tempMap;
-        i++;
+        dayHeaderRow = r;
+        console.log("[getFullSchedule_] day-header row=" + r + " found " + Object.keys(tempMap).length + " day cols (1.." + Math.max.apply(null, Object.keys(tempMap).map(Number)) + ")");
         break;
       }
-      i++;
+    }
+    if (dayHeaderRow === -1) {
+      console.log("[getFullSchedule_] WARNING: no day-header row found for month=" + monthNum + ". Dumping block rows:");
+      for (var dr = blockStart; dr < Math.min(blockStart + 6, blockEnd); dr++) {
+        var dpreview = data[dr].map(function(c) { return String(c === null || c === undefined ? "" : c).trim(); }).filter(Boolean).slice(0, 8).join(" | ");
+        console.log("  row[" + dr + "]: " + dpreview);
+      }
+      continue;
     }
 
-    if (Object.keys(dayColMap).length === 0) continue;
-
-    // Collect raw cell values per core worker
+    // ── Find worker rows inside this block (after the day-header row) ─────────
+    // Worker name may appear in ANY column of the row (handles merged cells).
     var workerCells = {};
     CORE.forEach(function(n) { workerCells[n] = {}; });
+    var foundWorkers = {};
+    CORE.forEach(function(n) { foundWorkers[n] = false; });
 
-    while (i < data.length) {
-      var wrow = data[i];
-      var wname = String(wrow[0] || "").trim();
-      if (!wname) { i++; continue; }
-      if (wname.match(/^\d+월/)) break; // reached next month section
-
-      if (CORE.indexOf(wname) >= 0) {
-        for (var dayStr in dayColMap) {
-          var col = dayColMap[dayStr];
-          workerCells[wname][dayStr] = String(wrow[col] || "").trim();
-        }
+    for (var wr = dayHeaderRow + 1; wr < blockEnd; wr++) {
+      var wrow = data[wr];
+      // Find worker name by scanning all cells in the row
+      var wname = null;
+      for (var wc = 0; wc < wrow.length; wc++) {
+        var wcv = String(wrow[wc] === null || wrow[wc] === undefined ? "" : wrow[wc]).trim();
+        if (CORE.indexOf(wcv) >= 0) { wname = wcv; break; }
       }
-      i++;
+      if (!wname) continue;
+      foundWorkers[wname] = true;
+
+      // Read day cells
+      for (var dayStr in dayColMap) {
+        var dcol = dayColMap[dayStr];
+        var cellRaw = wrow[dcol];
+        workerCells[wname][dayStr] = String(cellRaw === null || cellRaw === undefined ? "" : cellRaw).trim();
+      }
+      console.log("[getFullSchedule_] month=" + monthNum + " worker=" + wname + " row=" + wr
+        + " sample day1=" + JSON.stringify(workerCells[wname]["1"])
+        + " day15=" + JSON.stringify(workerCells[wname]["15"]));
     }
 
-    // Build frontend-friendly day list
-    var maxDay = Math.max.apply(null, Object.keys(dayColMap).map(Number));
+    CORE.forEach(function(n) {
+      if (!foundWorkers[n]) {
+        console.log("[getFullSchedule_] WARNING: month=" + monthNum + " worker '" + n + "' NOT FOUND in block rows");
+      }
+    });
+
+    // ── Build frontend day list ───────────────────────────────────────────────
+    var maxDay = Object.keys(dayColMap).length > 0
+                 ? Math.max.apply(null, Object.keys(dayColMap).map(Number))
+                 : 31;
     var days = [];
     for (var d = 1; d <= maxDay; d++) {
       var ds = String(d);
       var working = CORE.filter(function(name) {
         var cell = workerCells[name][ds];
-        return cell !== undefined && cell !== "휴무";
+        if (cell === undefined) {
+          // data missing for this day — treat as working but note it
+          return true;
+        }
+        return cell !== "휴무";
       });
       days.push({ day: d, workers: working });
     }
 
-    months.push({ month: monthNum, label: monthNum + "월", days: days });
+    months.push({
+      month:    monthNum,
+      label:    monthNum + "월",
+      days:     days,
+      rawCells: workerCells, // kept for getWorkSchedule_ to read today's cell
+    });
   }
 
+  console.log("[getFullSchedule_] done. months parsed: " + months.map(function(m) { return m.month; }).join(", "));
   return { ok: true, months: months };
 }
 
