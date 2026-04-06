@@ -64,15 +64,15 @@ export default function BarcodeScanner({ onScan, onClose }) {
         const { BrowserMultiFormatReader } = await import('@zxing/browser');
         const reader = new BrowserMultiFormatReader();
 
-        // Always resolve to a specific deviceId so the browser cannot switch
-        // cameras between opens.
-        const rearDeviceId = await getRearDeviceId();
-
-        // Build constraints: prefer exact deviceId; fall back to environment
-        // facingMode only when no deviceId is available (e.g. desktop browser).
-        const videoConstraints = rearDeviceId
-          ? { deviceId: { exact: rearDeviceId }, width: { ideal: 1280 }, height: { ideal: 720 } }
-          : { facingMode: { exact: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } };
+        // Always use the wide rear camera via facingMode so the browser
+        // picks the main lens, not a telephoto. Adding zoom:1 asks the
+        // browser to start without any digital zoom applied.
+        const videoConstraints = {
+          facingMode: 'environment',
+          zoom: 1,
+          width:  { ideal: 1280 },
+          height: { ideal: 720 },
+        };
 
         const onResult = (result, err, controls) => {
           if (!active) return;
@@ -81,7 +81,11 @@ export default function BarcodeScanner({ onScan, onClose }) {
             const stream = videoRef.current?.srcObject;
             const track = stream?.getVideoTracks?.()[0] || null;
             trackRef.current = track;
+            // Reset zoom to 1 if the device exposes zoom as an adjustable cap.
             const caps = track?.getCapabilities?.() || {};
+            if ('zoom' in caps) {
+              track.applyConstraints({ advanced: [{ zoom: 1 }] }).catch(() => {});
+            }
             if ('torch' in caps) setTorchSupported(true);
             setStatus('바코드를 화면 안에 맞춰주세요');
           }
