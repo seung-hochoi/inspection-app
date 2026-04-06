@@ -427,6 +427,9 @@ function doGet(e) {
     const action = (e && e.parameter && e.parameter.action) || "bootstrap";
 
     if (action === "bootstrap") {
+      // Lean bootstrap: returns only what is needed for the first paint.
+      // happycall analytics and product images are fetched separately by bootstrapDeferred
+      // after first render so the initial loading spinner clears faster.
       return jsonOutput_({
         ok: true,
         data: {
@@ -442,6 +445,15 @@ function doGet(e) {
           rows: loadInspectionRows_(),
           worksheet_url: SpreadsheetApp.getActiveSpreadsheet().getUrl(),
           summary: getDashboardSummary_(),
+        },
+      });
+    }
+
+    if (action === "bootstrapDeferred") {
+      // Secondary load: analytics and thumbnails, requested after first paint.
+      return jsonOutput_({
+        ok: true,
+        data: {
           happycall: getHappycallAnalytics_(),
           product_images: loadProductImageMappings_(),
         },
@@ -755,14 +767,64 @@ function getFullSchedule_() {
 }
 
 function doPost(e) {
+  // Parse the request before acquiring the lock so auth actions can return immediately
+  // without waiting behind slow saves or CSV uploads.
+  const raw = e && e.postData && e.postData.contents ? e.postData.contents : "{}";
+  const body = JSON.parse(raw);
+  const action = body.action || "";
+
+  // Auth actions only access the users sheet — no lock needed.
+  // Keeping them outside the lock lets login/logout run concurrently with saves.
+  if (action === "login") {
+    return jsonOutput_(login_(body.payload || {}));
+  }
+
+  if (action === "validateSession") {
+    return jsonOutput_(validateSession_(body.sessionToken || ""));
+  }
+
+  if (action === "logout") {
+    return jsonOutput_(logout_(body.sessionToken || ""));
+  }
+
+  // Read-only or Drive-only actions that don't touch inspection/records sheets
+  // can run without the global lock, improving concurrency for 2+ simultaneous users.
+  if (action === "listSessions") {
+    return jsonOutput_(getActiveSessions_(body.sessionToken || ""));
+  }
+
+  if (action === "forceLogout") {
+    // Writes only to the users sheet (like logout) — no inspection data touched.
+    return jsonOutput_(forceLogout_(body.sessionToken || "", body.targetSessionToken || ""));
+  }
+
+  if (action === "downloadPhotoZip") {
+    var _authZ0 = requirePermission_(body.sessionToken, "DOWNLOAD_ZIP");
+    var _zipResult0 = createPhotoZip_(body.payload || {});
+    appendAuditLog_({ action: "DOWNLOAD_ZIP", userId: _authZ0.id, userName: _authZ0.name, role: _authZ0.role,
+      message: "mode=" + ((body.payload || {}).mode || ""), result: "SUCCESS" });
+    return jsonOutput_(Object.assign({ ok: true }, _zipResult0));
+  }
+
+  if (action === "uploadPhotos") {
+    // Uploads files to Google Drive only — no inspection sheet writes.
+    // Running outside the lock lets photo uploads proceed concurrently with saves.
+    var _authPh0 = requirePermission_(body.sessionToken, "UPLOAD_PHOTO");
+    var _phResult0 = uploadPhotos_(body.payload || {});
+    var _php0 = body.payload || {};
+    appendAuditLog_({ action: "UPLOAD_PHOTO", userId: _authPh0.id, userName: _authPh0.name, role: _authPh0.role,
+      jobKey: _php0.jobKey || "", productCode: _php0.productCode || "",
+      productName: _php0.productName || "", supplier: _php0.partnerName || "",
+      message: "photoType=" + (_php0.photoType || "") + " count=" + ((_php0.photos || []).length),
+      result: "SUCCESS" });
+    return jsonOutput_({ ok: true, data: _phResult0 });
+  }
+
+  // All write actions acquire the script lock to prevent concurrent sheet mutations.
   const lock = LockService.getScriptLock();
   lock.waitLock(30000);
 
   try {
-    const raw = e && e.postData && e.postData.contents ? e.postData.contents : "{}";
-    const body = JSON.parse(raw);
-    const action = body.action || "";
-
     // ── Diagnostic entry-point log ──────────────────────────────────────────
     if (DEBUG_WRITE_CONFLICTS) {
       var _rows = (body.rows || [body.payload]).filter(Boolean);
@@ -784,18 +846,6 @@ function doPost(e) {
       });
     }
     // ────────────────────────────────────────────────────────────────────────
-
-    if (action === "login") {
-      return jsonOutput_(login_(body.payload || {}));
-    }
-
-    if (action === "validateSession") {
-      return jsonOutput_(validateSession_(body.sessionToken || ""));
-    }
-
-    if (action === "logout") {
-      return jsonOutput_(logout_(body.sessionToken || ""));
-    }
 
     if (action === "cacheCsv") {
       var cachedJob = cacheCsvJob_(body.payload || {});
@@ -863,21 +913,9 @@ function doPost(e) {
     if (action === "saveBatch") {
       var _authU3 = requirePermission_(body.sessionToken, "EDIT_RETURN_EXCHANGE");
       var batchData = saveBatch_(body.rows || []);
-      // Auto-sync return sheets when movement rows were saved.
-      if (batchData.hasMovement) {
-        try {
-          syncReturnSheets_(SpreadsheetApp.getActiveSpreadsheet());
-        } catch (syncErr) {
-          console.error("[doPost] syncReturnSheets_ failed after saveBatch: " + syncErr.message);
-        }
-        // Include fresh records in the response so the client can update the Records tab
-        // without a full bootstrap reload. Falls back gracefully on failure.
-        try {
-          batchData.freshRecords = loadRecords_();
-        } catch (e) {
-          console.error("[doPost] loadRecords_ for freshRecords failed: " + e.message);
-        }
-      }
+      // Return sheets and fresh records are no longer synced here.
+      // The frontend fires postSaveSync in the background after receiving this fast response,
+      // so the user sees "저장됨" immediately while the heavier sync runs asynchronously.
       appendAuditLog_({ action: "SAVE_RETURN_EXCHANGE", userId: _authU3.id, userName: _authU3.name, role: _authU3.role,
         message: "batch rows=" + (body.rows || []).length, result: "SUCCESS" });
       return jsonOutput_({
@@ -914,6 +952,7 @@ function doPost(e) {
     }
 
     if (action === "downloadPhotoZip") {
+      // NOTE: handled before the lock — this branch is unreachable but kept as safety fallback.
       var _authZ = requirePermission_(body.sessionToken, "DOWNLOAD_ZIP");
       var _zipResult = createPhotoZip_(body.payload || {});
       appendAuditLog_({ action: "DOWNLOAD_ZIP", userId: _authZ.id, userName: _authZ.name, role: _authZ.role,
@@ -950,6 +989,7 @@ function doPost(e) {
     }
 
     if (action === "uploadPhotos") {
+      // NOTE: handled before the lock — this branch is unreachable but kept as safety fallback.
       var _authPh = requirePermission_(body.sessionToken, "UPLOAD_PHOTO");
       var _phResult = uploadPhotos_(body.payload || {});
       var _php = body.payload || {};
@@ -958,10 +998,7 @@ function doPost(e) {
         productName: _php.productName || "", supplier: _php.partnerName || "",
         message: "photoType=" + (_php.photoType || "") + " count=" + ((_php.photos || []).length),
         result: "SUCCESS" });
-      return jsonOutput_({
-        ok: true,
-        data: _phResult,
-      });
+      return jsonOutput_({ ok: true, data: _phResult });
     }
 
     if (action === "savePhotoMeta") {
@@ -978,6 +1015,8 @@ function doPost(e) {
       return jsonOutput_({ ok: true });
     }
 
+    // listSessions and forceLogout are handled before the lock.
+    // These branches are kept as safety fallbacks in case of future refactoring.
     if (action === "listSessions") {
       return jsonOutput_(getActiveSessions_(body.sessionToken || ""));
     }
@@ -1403,8 +1442,10 @@ function cacheCsvJob_(payload) {
     pruneJobCacheRows_(cacheSheet);
   }
 
+  // seedInspectionFromCsv_ is deferred out of the critical upload path.
+  // Inspection rows are created lazily on first save via upsertInspectionRow_,
+  // so the CSV upload response is no longer blocked by sheet writes.
   var job = loadJobRowsByKey_(ss, jobKey);
-  seedInspectionFromCsv_(parsedRows, jobKey);
   return job;
 }
 

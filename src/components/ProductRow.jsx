@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { motion } from 'framer-motion';
 import { Minus, Plus, ImagePlus, Truck, ArrowLeftRight,
@@ -59,6 +59,16 @@ const ProductRow = React.memo(function ProductRow({
   const thumbUrl  = thumbItem?.['파일ID']
     ? `https://drive.google.com/thumbnail?id=${thumbItem['파일ID']}&sz=w120`
     : null;
+
+  // Stable centers list for ReturnExchangeModal: row.__centerList takes precedence;
+  // the fallback maps the string array to { name, qty } objects. Memoized so the
+  // modal doesn't see a new array reference on every parent render.
+  const centersList = useMemo(
+    () => row.__centerList?.length
+      ? row.__centerList
+      : centers.map((c) => ({ name: c, qty: 0 })),
+    [row.__centerList, centers],
+  );
 
   const handleThumbUpload = useCallback(async (e) => {
     const file = e.target.files?.[0];
@@ -543,11 +553,7 @@ const ProductRow = React.memo(function ProductRow({
           }}
           jobKey={jobKey}
           initialType={movementType}
-          centers={
-            row.__centerList?.length
-              ? row.__centerList
-              : centers.map((c) => ({ name: c, qty: 0 }))
-          }
+          centers={centersList}
           accumulatedQty={accumulatedQty}
           returnQty={returnQty}
           exchangeQty={exchangeQty}

@@ -3,6 +3,8 @@ import { motion } from 'framer-motion';
 import { Search, ScanLine, ClipboardList, Upload, ArrowUp, ArrowDown, ArrowUpDown, X, RotateCcw } from 'lucide-react';
 import { C, radius, font, shadow, trans, inputStyle, btnPrimary } from './styles';
 import PartnerGroup from './PartnerGroup';
+import { fetchRecords } from '../api';
+import { scheduleSync } from '../utils/syncScheduler';
 
 // Lazy-load BarcodeScanner so @zxing/browser (~5 MB) is not in the initial bundle
 const BarcodeScanner = lazy(() => import('./BarcodeScanner'));
@@ -317,16 +319,21 @@ export default function InspectionPage({
   }, []);
 
   const handleError    = useCallback((msg) => { onError?.(msg); onToast?.(msg, 'error'); }, [onError, onToast]);
-  const handleMovSaved = useCallback((freshRecords) => {
+  const handleMovSaved = useCallback(async (freshRecords) => {
     onToast?.('저장되었습니다.', 'success');
-    // If the backend returned fresh records, update only records state (no loading flash).
-    // Fall back to full reload if fresh records are unavailable (e.g. backend error).
     if (Array.isArray(freshRecords) && onRecordsUpdate) {
+      // Backend provided fresh records in the response (legacy path).
       onRecordsUpdate(freshRecords);
-    } else {
-      onRefresh?.();
+    } else if (onRecordsUpdate) {
+      // saveBatch no longer returns freshRecords to keep the save response fast.
+      // Fetch records separately — much cheaper than triggering a full bootstrap reload.
+      fetchRecords().then(r => {
+        if (Array.isArray(r?.records)) onRecordsUpdate(r.records);
+      }).catch(() => {});
     }
-  }, [onToast, onRecordsUpdate, onRefresh]);
+    // Coalesce return-sheet syncs: multiple rapid saves share one backend call.
+    scheduleSync();
+  }, [onToast, onRecordsUpdate]);
 
   const handleScan = useCallback((code) => {
     setShowScanner(false);

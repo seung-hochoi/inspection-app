@@ -9,6 +9,7 @@ import LoginPage from './components/LoginPage';
 import WorkerPanel from './components/WorkerPanel';
 import ScheduleModal from './components/ScheduleModal';
 import { manualRecalc, syncHistory, resetCurrentJobInputData, fetchHistoryData, fetchWorkSchedule, fetchFullSchedule, login as apiLogin, validateSession, logout as apiLogout, setSessionToken, listSessions, forceLogoutSession } from './api'; // eslint-disable-line no-unused-vars
+import { flushSync as flushPendingSync } from './utils/syncScheduler';
 import { buildAndDownloadPhotoZips } from './utils/photoZipBuilder';
 import { LoadingScreen, LoadingBlock } from './components/Spinner';
 
@@ -1650,6 +1651,38 @@ function ActionStrip({
   );
 }
 
+// ── CSV Web Worker helpers (module-level — outside the React component) ────────
+
+// Ref to the currently-active parse worker so it can be cancelled if the user
+// picks a new file before the previous parse completes.
+let _csvWorker = null;
+
+/**
+ * Parse + normalize a CSV file entirely off the main thread.
+ * The ArrayBuffer is transferred to the worker (zero-copy).
+ * Returns Promise<{ normalized: Row[], jobKey: string }>.
+ */
+function parseCsvInWorker(buffer) {
+  return new Promise((resolve, reject) => {
+    // CRA 5 / webpack 5: new Worker(new URL(…, import.meta.url)) is the canonical syntax.
+    const worker = new Worker(new URL('./workers/csvWorker.js', import.meta.url));
+    _csvWorker = worker;
+    worker.onmessage = (ev) => {
+      _csvWorker = null;
+      worker.terminate();
+      if (ev.data.type === 'result') resolve(ev.data);
+      else reject(new Error(ev.data.message || 'CSV 처리 오류'));
+    };
+    worker.onerror = (ev) => {
+      _csvWorker = null;
+      worker.terminate();
+      reject(new Error(ev.message || 'CSV 워커 오류'));
+    };
+    // Transferring the buffer avoids copying up to several MB between threads.
+    worker.postMessage({ buffer }, [buffer]);
+  });
+}
+
 // ── Main App component ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 const AUTH_TOKEN_KEY = "insp_session_token";
 const AUTH_USER_KEY  = "insp_session_user";
@@ -1725,6 +1758,9 @@ function App() {
   }, []);
 
   const loadBootstrap = useCallback(async () => {
+    // Flush any pending postSaveSync before reloading so the backend data is fully
+    // up-to-date and we don't overwrite locally accumulated changes with stale state.
+    flushPendingSync();
     if (!SCRIPT_URL) {
       setLoadError("REACT_APP_GOOGLE_SCRIPT_URL 환경변수를 설정해 주세요.");
       setLoading(false);
@@ -1757,7 +1793,25 @@ function App() {
     }
   }, []);
 
-  useEffect(() => { loadBootstrap(); }, [loadBootstrap]);
+  // Deferred bootstrap: loads happycall analytics and product images after first paint.
+  // Fired in parallel with the main bootstrap so the loading spinner clears as soon as
+  // core data is ready, without waiting for the heavier analytic reads.
+  const loadDeferredBootstrap = useCallback(async () => {
+    if (!SCRIPT_URL) return;
+    try {
+      const resp = await fetch(`${SCRIPT_URL}?action=bootstrapDeferred`);
+      const result = await resp.json();
+      if (!resp.ok || result.ok === false) return;
+      const d = result.data || {};
+      if (d.happycall)       setHappycall(d.happycall);
+      if (d.product_images)  setProductImages(Array.isArray(d.product_images) ? d.product_images : []);
+    } catch (_e) { /* non-blocking — main app works fine without deferred data */ }
+  }, []);
+
+  useEffect(() => {
+    loadBootstrap();
+    loadDeferredBootstrap(); // fire in parallel; doesn't affect loading state
+  }, [loadBootstrap, loadDeferredBootstrap]);
 
   // ── Auth: restore session from localStorage on first mount ────────────────
   useEffect(() => {
@@ -1987,12 +2041,13 @@ function App() {
         showToast("SCRIPT_URL이 설정되지 않았습니다.", "error");
         return;
       }
+      // Cancel any in-progress parse so stale results don't race with this one.
+      if (_csvWorker) { _csvWorker.terminate(); _csvWorker = null; }
       showToast("CSV 처리 중...", "info");
       try {
-        const { text } = await decodeCsvFile(file);
-        const parsed = Papa.parse(text, { header: true, skipEmptyLines: true });
-        const normalized = buildNormalizedRows(parsed.data || []);
-        const key = computeJobKey(normalized);
+        const buffer = await file.arrayBuffer();
+        // Worker handles encoding detection + Papa.parse + buildNormalizedRows off the main thread.
+        const { normalized, jobKey: key } = await parseCsvInWorker(buffer);
         const jsonStr = JSON.stringify(normalized);
         const b64 = btoa(unescape(encodeURIComponent(jsonStr)));
         const result = await retryApi(() =>
@@ -2008,7 +2063,7 @@ function App() {
         );
         const job = result.job || {};
         setJobKey(job.job_key || key);
-        setJobRows(buildNormalizedRows(job.rows || normalized));
+        setJobRows(normalized);
         setSummary(result.summary || {});
         setCurrentFileName(file.name);
         showToast(`CSV 업로드 완료 (${normalized.length}행)`, "success");
@@ -2297,7 +2352,12 @@ function App() {
         {TABS.map((t) => (
           <button
             key={t.key}
-            onClick={() => setTab(t.key)}
+            onClick={() => {
+              // Flush any pending return-sheet sync before entering records/summary tab
+              // so the view shows data that includes the most recent movement saves.
+              if (t.key !== 'inspection') flushPendingSync();
+              setTab(t.key);
+            }}
             style={{
               ...S.tabBtn,
               ...(tab === t.key ? S.tabBtnActive : {}),
