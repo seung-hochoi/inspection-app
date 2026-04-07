@@ -6828,10 +6828,26 @@ function getInspectionCriteriaImages_(folderId) {
     var file = fileIter.next();
     var mime = file.getMimeType();
     if (mime !== 'image/png' && mime !== 'image/jpeg') continue;
+
+    // Criteria PNG files were uploaded manually and are not publicly shared by
+    // default.  Without ANYONE_WITH_LINK sharing the browser receives a Google
+    // login redirect instead of the image bytes, causing the <img> to fail.
+    // We set sharing here so the direct-link URL becomes embeddable.
+    try {
+      file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    } catch (sharingErr) {
+      // Domain policy or ownership may prevent changing sharing — log and
+      // continue; the URL will still be returned so the frontend can try.
+      console.warn('[getInspectionCriteriaImages_] setSharing failed for ' +
+        file.getId() + ': ' + sharingErr.message);
+    }
+
+    var fileId = file.getId();
     images.push({
-      id:   file.getId(),
+      id:   fileId,
       name: file.getName(),
-      url:  'https://drive.google.com/uc?export=view&id=' + file.getId(),
+      // Standard direct-view URL — works for ANYONE_WITH_LINK files.
+      url:  'https://drive.google.com/uc?export=view&id=' + fileId,
     });
   }
 

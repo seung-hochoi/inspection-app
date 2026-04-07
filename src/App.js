@@ -433,10 +433,6 @@ const buildNormalizedRows = (parsedRows) =>
     const row = {};
     Object.keys(rawRow || {}).forEach((k) => { row[normalizeKey(k)] = rawRow[k]; });
 
-    if (index === 0) {
-      console.log('[buildNormalizedRows] CSV headers detected:', Object.keys(row));
-    }
-
     const productCode = normalizeProductCode(
       getValue(row, ["상품코드", "상품 코드", "바코드", "코드"]) || row.__productCode || ""
     );
@@ -450,11 +446,6 @@ const buildNormalizedRows = (parsedRows) =>
     const partner = String(rawPartner).trim();
     const center = String(getValue(row, ["센터명", "센터"]) || row.__center || "").trim();
     const qty = parseQty(getValue(row, ["총 발주수량", "발주수량", "수량"]) || row.__qty || 0);
-
-    if (index === 0) {
-      console.log('[buildNormalizedRows] first row → partner raw:', rawPartner,
-        '| normalized:', partner, '| productCode:', productCode);
-    }
 
     return {
       ...row,

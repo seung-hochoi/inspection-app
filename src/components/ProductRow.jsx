@@ -7,6 +7,7 @@ import { Minus, Plus, ImagePlus, Truck, ArrowLeftRight,
 import { C, radius, font, shadow, trans } from './styles';
 import PhotoUploader from './PhotoUploader';
 import ReturnExchangeModal from './ReturnExchangeModal';
+import CriteriaModal from './CriteriaModal';
 import { saveBatch, saveProductImageMapping } from '../api';
 import { normalizeProductCode, fileToBase64 } from '../utils';
 import { buildInspPayload, buildMovPayload, buildDraftFingerprint } from '../savePayload';
@@ -27,6 +28,7 @@ const ProductRow = React.memo(function ProductRow({
   const [movementType, setMovementType]   = useState('RETURN');
   const [isExpanded, setIsExpanded]       = useState(false);
   const [lightboxId, setLightboxId]       = useState(null);
+  const [showCriteria, setShowCriteria]   = useState(false);
   const [thumbUploading, setThumbUploading] = useState(false);
   const saveTimerRef   = useRef(null);
   const latestDraftRef = useRef(draft);
@@ -331,13 +333,36 @@ const ProductRow = React.memo(function ProductRow({
               </div>
 
               <div style={{ flex: 1, minWidth: 0 }}>
-                <p style={{
-                  margin: '0 0 2px', fontSize: 13.5, fontWeight: 700, color: C.text,
-                  letterSpacing: '-0.015em', lineHeight: 1.3,
-                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                }}>
-                  {row['상품명'] || '—'}
-                </p>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 2 }}>
+                  <p style={{
+                    margin: 0, fontSize: 13.5, fontWeight: 700, color: C.text,
+                    letterSpacing: '-0.015em', lineHeight: 1.3,
+                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                    flex: 1, minWidth: 0,
+                  }}>
+                    {row['상품명'] || '—'}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); setShowCriteria(true); }}
+                    title="검품기준 보기"
+                    style={{
+                      flexShrink: 0,
+                      height: 18, padding: '0 6px',
+                      fontSize: 10, fontWeight: 700, lineHeight: 1,
+                      color: C.primary,
+                      background: C.primaryLight,
+                      border: `1px solid ${C.primaryMid}`,
+                      borderRadius: radius.xs || 3,
+                      cursor: 'pointer',
+                      fontFamily: font.base,
+                      whiteSpace: 'nowrap',
+                      display: 'inline-flex', alignItems: 'center',
+                    }}
+                  >
+                    기준
+                  </button>
+                </div>
                 <p style={{
                   margin: 0, fontSize: 11, color: C.muted, lineHeight: 1.3,
                   overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
@@ -596,6 +621,14 @@ const ProductRow = React.memo(function ProductRow({
             <XIcon size={18} strokeWidth={2.5} />
           </button>
         </div>,
+        document.body,
+      )}
+      {/* CriteriaModal — per-product inspection criteria quick-open */}
+      {showCriteria && createPortal(
+        <CriteriaModal
+          productName={row['상품명'] || ''}
+          onClose={() => setShowCriteria(false)}
+        />,
         document.body,
       )}
     </>

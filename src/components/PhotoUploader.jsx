@@ -42,16 +42,13 @@ export default function PhotoUploader({ jobKey, product, existingFileIds = [], o
 
   // Core upload routine — accepts explicit file list and their matching blob URLs
   const doUpload = useCallback(async (files, urls) => {
-    console.log('[PhotoUploader] doUpload called, files:', files.length);
-    if (!files.length) { console.log('[PhotoUploader] doUpload: no files, returning early'); return; }
+    if (!files.length) return;
     setError('');
     setUploading(true);
     try {
       const photos = [];
       for (const file of files) {
-        console.log('[PhotoUploader] encoding file:', file.name, file.type, file.size);
         const encoded = await fileToBase64(file);
-        console.log('[PhotoUploader] encoded result:', encoded ? 'ok' : 'null', encoded?.imageBase64?.length);
         // Use field names matching what Code.gs savePhotosToDrive_ expects:
         // photo.imageBase64, photo.fileName, photo.mimeType
         if (encoded) photos.push({
@@ -60,7 +57,6 @@ export default function PhotoUploader({ jobKey, product, existingFileIds = [], o
           imageBase64: encoded.imageBase64,
         });
       }
-      console.log('[PhotoUploader] photos array built, count:', photos.length);
       const payload = {
         itemKey: `${jobKey}||${normalizeProductCode(product.productCode) || ''}||${product.partnerName || ''}`,
         productName: product.productName || '',
@@ -68,22 +64,17 @@ export default function PhotoUploader({ jobKey, product, existingFileIds = [], o
         '협력사명': product.partnerName || '',
         photos,
       };
-      console.log('[PhotoUploader] calling uploadPhotos, itemKey:', payload.itemKey, 'photos:', photos.length);
       const result = await uploadPhotos(payload);
-      console.log('[PhotoUploader] uploadPhotos result:', result?.ok, result?.data?.photos?.length);
       const photosArr = Array.isArray(result.data?.photos) ? result.data.photos
         : Array.isArray(result.data) ? result.data : [];
       const newIds = photosArr.map((item) => String(item.fileId || '').trim()).filter(Boolean);
-      console.log('[PhotoUploader] newIds:', newIds);
       const merged = [...new Set([...existingFileIds, ...newIds])];
       // Revoke blob URLs now that Drive IDs are in hand — also clear tracking ref
       urls.forEach((u) => { try { URL.revokeObjectURL(u); } catch (_) {} });
       blobUrlsRef.current = blobUrlsRef.current.filter((u) => !urls.includes(u));
-      console.log('[PhotoUploader] calling onDone with merged IDs:', merged.length);
       onDone(merged);
       onClose();
     } catch (err) {
-      console.error('[PhotoUploader] upload error:', err);
       const raw = err.message || '';
       setError(
         raw.includes('지원하지 않는 action')
@@ -99,9 +90,8 @@ export default function PhotoUploader({ jobKey, product, existingFileIds = [], o
 
   // Called when the user picks files — creates blob previews immediately then auto-uploads
   const handleFiles = useCallback((files) => {
-    console.log('[PhotoUploader] handleFiles called, files:', files?.length);
     const list = Array.from(files || []);
-    if (!list.length) { console.log('[PhotoUploader] handleFiles: empty list, returning'); return; }
+    if (!list.length) return;
     // Revoke any previously displayed blob URLs before replacing them
     blobUrlsRef.current.forEach((u) => { try { URL.revokeObjectURL(u); } catch (_) {} });
     const urls = list.map((f) => URL.createObjectURL(f));
@@ -110,7 +100,6 @@ export default function PhotoUploader({ jobKey, product, existingFileIds = [], o
     pendingFilesRef.current = list;
     setLocalUrls(urls);
     setError('');
-    console.log('[PhotoUploader] calling doUpload');
     doUpload(list, urls);
   }, [doUpload]);
 

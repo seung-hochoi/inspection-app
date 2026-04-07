@@ -7,8 +7,8 @@ import React, {
   useMemo,
 } from 'react';
 import { ScanLine } from 'lucide-react';
-import { fetchCriteriaSearch, fetchCriteriaImages } from '../api';
 import { C, radius, font, shadow, inputStyle, btnPrimary } from './styles';
+import { useCriteriaSearch, normalizeCriteriaKeyword } from '../utils/useCriteriaSearch';
 
 // Lazy-load BarcodeScanner so @zxing/browser (~5 MB) is not in the initial bundle
 const BarcodeScanner = lazy(() => import('./BarcodeScanner'));
@@ -64,17 +64,6 @@ const st = {
     marginRight: '6px',
     verticalAlign: 'middle',
   }),
-  imgBlock: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '10px',
-  },
-  slideImg: {
-    width: '100%',
-    borderRadius: radius.sm,
-    border: `1px solid ${C.border}`,
-    display: 'block',
-  },
   notice: {
     color: C.muted2 || '#94a3b8',
     fontSize: '13px',
@@ -105,37 +94,65 @@ const searchInputStyle = {
   fontSize: 13,
 };
 
+// ─── SlideImage ───────────────────────────────────────────────────────────────
+
+function SlideImage({ img }) {
+  const [failed, setFailed] = React.useState(false);
+  return (
+    <div style={{ marginBottom: 10 }}>
+      {failed ? (
+        <div style={{
+          ...st.notice,
+          border: `1px solid ${C.border}`,
+          borderRadius: radius.sm,
+          padding: '12px',
+        }}>
+          이미지를 불러올 수 없습니다
+        </div>
+      ) : (
+        <img
+          src={img.url}
+          alt={img.name}
+          style={{ width: '100%', display: 'block', borderRadius: radius.sm, border: `1px solid ${C.border}` }}
+          loading="lazy"
+          onError={() => setFailed(true)}
+        />
+      )}
+      <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: '3px', textAlign: 'center' }}>
+        {img.name}
+      </div>
+    </div>
+  );
+}
+
 // ─── CriteriaPage ─────────────────────────────────────────────────────────────
 
 /**
  * Props
- *   jobRows  – normalized inspection rows from App.js (barcode → productName lookup)
+ *   jobRows  – normalized inspection rows from App.js (barcode -> productName lookup)
  */
 export default function CriteriaPage({ jobRows = [] }) {
 
-  // ── search state ─────────────────────────────────────────────────────────
-  const [nameQuery,    setNameQuery]    = useState('');
-  const [barcodeQuery, setBarcodeQuery] = useState('');
-  const [searchError,  setSearchError]  = useState('');
-  const [searching,    setSearching]    = useState(false);
-  const [results,      setResults]      = useState(null);   // null = never searched
+  // ── criteria search/image states from shared hook ─────────────────────────
+  const {
+    searching, results, searchErr,
+    loadingImages, imageData, imageErr, selectedFolder,
+    search, loadImages, clearImages, reset,
+  } = useCriteriaSearch();
 
-  // ── barcode ───────────────────────────────────────────────────────────────
+  // ── UI-local state ────────────────────────────────────────────────────────
+  const [nameQuery,      setNameQuery]      = useState('');
+  const [barcodeQuery,   setBarcodeQuery]   = useState('');
+  const [barcodeMatches, setBarcodeMatches] = useState([]); // ambiguous barcode results
+  const [barcodeError,   setBarcodeError]   = useState('');
   const [showScanner,    setShowScanner]    = useState(false);
-  const [barcodeMatches, setBarcodeMatches] = useState([]); // [{productName}] when ambiguous
 
-  // ── image viewer ──────────────────────────────────────────────────────────
-  const [selectedFolder, setSelectedFolder] = useState(null);
-  const [loadingImages,  setLoadingImages]  = useState(false);
-  const [imageData,      setImageData]      = useState(null); // {folderName, images:[]}
-  const [imageError,     setImageError]     = useState('');
-
-  // ── barcode → [productName, …] lookup built from jobRows ─────────────────
+  // ── barcode -> [productName, ...] lookup ──────────────────────────────────
   const barcodeToNames = useMemo(() => {
     const map = {};
     for (const row of jobRows) {
       const code = (row.barcode || row['바코드'] || '').toString().trim();
-      const name = (row.productName || row['품목명'] || '').toString().trim();
+      const name = (row['상품명'] || row.productName || row['품목명'] || '').toString().trim();
       if (!code || !name) continue;
       if (!map[code]) map[code] = new Set();
       map[code].add(name);
@@ -145,104 +162,60 @@ export default function CriteriaPage({ jobRows = [] }) {
     return out;
   }, [jobRows]);
 
-  // ── core search API call — stable, receives keyword as parameter ──────────
-  const executeSearch = useCallback(async (keyword) => {
-    const q = keyword.trim();
-    if (!q) return;
-    setSearching(true);
-    setSearchError('');
-    setResults(null);
-    setImageData(null);
-    setSelectedFolder(null);
-    setBarcodeMatches([]);
-    try {
-      const res = await fetchCriteriaSearch(q);
-      // Backend returns { ok: true, data: [...] }
-      setResults(res.data || []);
-    } catch (e) {
-      setSearchError(e.message || '검색 중 오류가 발생했습니다.');
-      setResults([]);
-    } finally {
-      setSearching(false);
-    }
-  }, []);
-
-  // ── auto-search: fires 300 ms after the user stops typing ────────────────
+  // ── auto-search: debounced 300 ms after typing stops ─────────────────────
   useEffect(() => {
-    const q = nameQuery.trim();
+    const q = normalizeCriteriaKeyword(nameQuery);
     if (!q) {
-      // Clear results and viewer when the input is emptied
-      setResults(null);
-      setImageData(null);
-      setSelectedFolder(null);
-      setSearchError('');
+      reset();
+      setBarcodeMatches([]);
+      setBarcodeError('');
       return;
     }
-    const timer = setTimeout(() => executeSearch(q), 300);
+    const timer = setTimeout(() => search(q), 300);
     return () => clearTimeout(timer);
-  }, [nameQuery, executeSearch]);
+  }, [nameQuery, search, reset]);
 
   // ── barcode manual submit ─────────────────────────────────────────────────
   const handleBarcodeSubmit = useCallback(() => {
     const code = barcodeQuery.trim();
     if (!code) return;
     setBarcodeMatches([]);
-    setResults(null);
-    setImageData(null);
-    setSelectedFolder(null);
-    setSearchError('');
+    setBarcodeError('');
+    reset();
 
     const names = barcodeToNames[code];
     if (!names || names.length === 0) {
-      setSearchError(`바코드 "${code}"에 해당하는 제품을 찾을 수 없습니다.`);
+      setBarcodeError(`바코드 "${code}"에 해당하는 제품을 찾을 수 없습니다.`);
       return;
     }
     if (names.length === 1) {
       setNameQuery(names[0]);
-      // executeSearch will be triggered by the nameQuery change via useEffect
+      // auto-search fires via the nameQuery useEffect
     } else {
       setBarcodeMatches(names.map((n) => ({ productName: n })));
     }
-  }, [barcodeQuery, barcodeToNames]);
+  }, [barcodeQuery, barcodeToNames, reset]);
 
   // ── barcode scanner callback ──────────────────────────────────────────────
   const handleScan = useCallback((code) => {
     setShowScanner(false);
     setBarcodeQuery(code);
-    const names = barcodeToNames[code];
     setBarcodeMatches([]);
-    setResults(null);
-    setImageData(null);
-    setSelectedFolder(null);
-    setSearchError('');
+    setBarcodeError('');
+    reset();
+
+    const names = barcodeToNames[code];
     if (!names || names.length === 0) {
-      setSearchError(`바코드 "${code}"에 해당하는 제품을 찾을 수 없습니다.`);
+      setBarcodeError(`바코드 "${code}"에 해당하는 제품을 찾을 수 없습니다.`);
       return;
     }
     if (names.length === 1) {
       setNameQuery(names[0]);
-      // executeSearch triggered by nameQuery change
+      // auto-search fires via the nameQuery useEffect
     } else {
       setBarcodeMatches(names.map((n) => ({ productName: n })));
     }
-  }, [barcodeToNames]);
-
-  // ── load images for a result folder ──────────────────────────────────────
-  const handleSelectFolder = useCallback(async (folder) => {
-    setSelectedFolder(folder);
-    setLoadingImages(true);
-    setImageData(null);
-    setImageError('');
-    try {
-      const res = await fetchCriteriaImages(folder.id);
-      // Backend returns { ok: true, data: { folderId, folderName, images: [...] } }
-      setImageData(res.data);
-    } catch (e) {
-      setImageError(e.message || '이미지 로딩 중 오류가 발생했습니다.');
-    } finally {
-      setLoadingImages(false);
-    }
-  }, []);
+  }, [barcodeToNames, reset]);
 
   // ─── render ───────────────────────────────────────────────────────────────
   return (
@@ -258,17 +231,17 @@ export default function CriteriaPage({ jobRows = [] }) {
             placeholder="예) 가지, 감자, 깐마늘 …"
             value={nameQuery}
             onChange={(e) => setNameQuery(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && executeSearch(nameQuery)}
+            onKeyDown={(e) => e.key === 'Enter' && search(normalizeCriteriaKeyword(nameQuery))}
           />
           <button
             style={{ ...scanBtnStyle, background: searching ? C.muted : C.primary }}
-            onClick={() => executeSearch(nameQuery)}
+            onClick={() => search(normalizeCriteriaKeyword(nameQuery))}
             disabled={searching || !nameQuery.trim()}
           >
             {searching ? '…' : '검색'}
           </button>
         </div>
-        {searchError && !barcodeQuery && <div style={st.errorMsg}>{searchError}</div>}
+        {searchErr && <div style={st.errorMsg}>{searchErr}</div>}
       </div>
 
       {/* ── Barcode search ── */}
@@ -292,7 +265,7 @@ export default function CriteriaPage({ jobRows = [] }) {
             스캔
           </button>
         </div>
-        {searchError && barcodeQuery && <div style={st.errorMsg}>{searchError}</div>}
+        {barcodeError && <div style={st.errorMsg}>{barcodeError}</div>}
       </div>
 
       {/* ── Barcode disambiguation list ── */}
@@ -308,7 +281,6 @@ export default function CriteriaPage({ jobRows = [] }) {
               onClick={() => {
                 setBarcodeMatches([]);
                 setNameQuery(m.productName);
-                // auto-search fires via useEffect
               }}
             >
               {m.productName}
@@ -318,7 +290,7 @@ export default function CriteriaPage({ jobRows = [] }) {
       )}
 
       {/* ── Search results list ── */}
-      {results !== null && (
+      {results !== null && !selectedFolder && (
         <div style={st.card}>
           <span style={{ ...st.sectionLabel, marginBottom: '8px', display: 'block' }}>
             검색 결과 {results.length}건
@@ -329,8 +301,8 @@ export default function CriteriaPage({ jobRows = [] }) {
           {results.map((r) => (
             <div
               key={r.id}
-              style={st.resultItem(selectedFolder && selectedFolder.id === r.id)}
-              onClick={() => handleSelectFolder(r)}
+              style={st.resultItem(false)}
+              onClick={() => loadImages(r)}
             >
               <span style={st.tag(false)}>{r.category}</span>
               {r.groupName && <span style={st.tag(true)}>{r.groupName}</span>}
@@ -343,31 +315,38 @@ export default function CriteriaPage({ jobRows = [] }) {
       )}
 
       {/* ── Criteria image viewer ── */}
-      {(loadingImages || imageData || imageError) && (
+      {(loadingImages || imageData || imageErr) && (
         <div style={st.card}>
           {selectedFolder && (
-            <div style={{ fontWeight: 700, fontSize: '15px', marginBottom: '12px' }}>
-              {selectedFolder.name}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+              {results && results.length > 1 && (
+                <button
+                  onClick={clearImages}
+                  style={{
+                    background: 'none', border: 'none',
+                    color: C.primary, fontSize: 12, fontWeight: 600,
+                    cursor: 'pointer', padding: 0, fontFamily: font.base,
+                    flexShrink: 0,
+                  }}
+                >
+                  ←
+                </button>
+              )}
+              <div style={{ fontWeight: 700, fontSize: '15px', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {selectedFolder.name}
+              </div>
             </div>
           )}
           {loadingImages && <div style={st.notice}>이미지 로딩 중…</div>}
-          {imageError && <div style={st.errorMsg}>{imageError}</div>}
+          {imageErr && <div style={st.errorMsg}>{imageErr}</div>}
           {imageData && imageData.images && imageData.images.length === 0 && (
             <div style={st.notice}>이미지가 없습니다.</div>
           )}
-          {imageData && imageData.images && imageData.images.length > 0 && (
-            <div style={st.imgBlock}>
-              {imageData.images.map((img) => (
-                <img
-                  key={img.id}
-                  src={img.url}
-                  alt={img.name}
-                  style={st.slideImg}
-                  loading="lazy"
-                />
-              ))}
-            </div>
-          )}
+          {imageData && imageData.images && imageData.images.length > 0 &&
+            imageData.images.map((img) => (
+              <SlideImage key={img.id} img={img} />
+            ))
+          }
         </div>
       )}
 
@@ -383,4 +362,3 @@ export default function CriteriaPage({ jobRows = [] }) {
     </div>
   );
 }
-
