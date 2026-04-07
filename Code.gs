@@ -5638,21 +5638,15 @@ function syncHistorySheet_(ss) {
     skuCovNonExcl,
   ];
 
-  // Delete ALL rows for today's date, then append a fresh row.
-  // This ensures the "이력관리" sheet keeps exactly one row per date.
+  // Clear ALL data rows (keep only header in row 1), then write the single
+  // latest-state row.  "이력관리" is not a historical archive — it always holds
+  // exactly one data row: the most recently registered summary snapshot.
   var lastRow = histSheet.getLastRow();
   if (lastRow >= 2) {
-    var dateCol = histSheet.getRange(2, 1, lastRow - 1, 1).getValues();
-    // Iterate in reverse so deleting rows doesn't shift indices.
-    for (var di = dateCol.length - 1; di >= 0; di--) {
-      if (String(dateCol[di][0]).trim() === dateStr) {
-        histSheet.deleteRow(di + 2); // convert to 1-based sheet row number
-      }
-    }
+    histSheet.deleteRows(2, lastRow - 1);
   }
-  // Append the fresh row for today.
   histSheet.appendRow(rowValues);
-  console.log("[syncHistorySheet_] wrote fresh row for date=" + dateStr);
+  console.log("[syncHistorySheet_] replaced all data rows with single latest row, date=" + dateStr);
 }
 
 // ── Daily scheduled jobs ───────────────────────────────────
