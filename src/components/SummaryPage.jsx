@@ -189,17 +189,17 @@ export default function SummaryPage({ summary = {}, happycall = {}, jobRows = []
   };
 
   // Format percentage: always 1 decimal place. Returns '-' only when value is truly null.
-  const fmtPct = (v) => v != null ? v.toFixed(1) + '%' : '-';
+  const fmtPct = (v) => v != null ? (v * 100).toFixed(1) + '%' : '-';
 
   // Format quantity: comma-separated integers.
   const fmtQty = (v) => v != null ? Math.round(v).toLocaleString('ko-KR') : '-';
 
   // Format monetary amount:
-  //   >= 100,000,000 → "X.X억원"  (1 decimal)
+  //   >= 100,000,000 → "X.X억"  (unit "원" is shown in the card's sub label)
   //   otherwise      → comma-separated number
   const fmtAmt = (v) => {
     if (v == null) return '-';
-    if (v >= 100_000_000) return (v / 100_000_000).toFixed(1) + '억원';
+    if (v >= 100_000_000) return (v / 100_000_000).toFixed(1) + '억';
     return Math.round(v).toLocaleString('ko-KR');
   };
 

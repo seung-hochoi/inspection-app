@@ -7125,54 +7125,73 @@ function searchInspectionCriteriaFolders_(keyword, productName) {
     return [];
   }
 
-  // ── Step 3: search only within the mapped category folder ────────────────────
-  var isLivestock  = (mappedCategory === '축산');
-  var isSeafood    = (mappedCategory === '수산');
-  var lstCandidates = isLivestock ? getLivestockSpecialCandidates_(rawName) : null;
-
-  var results = [];
-
+  // ── Step 3: flatten all actual product folders regardless of depth ───────────
+  // Structure varies by category:
+  //   채소 / 과일 : targetCatFolder -> product folders   (1 level)
+  //   축산 / 수산 : targetCatFolder -> container folder -> product folders (2 levels)
+  //
+  // Strategy: iterate targetCatFolder children.
+  //   If a child has no sub-folders  → it IS a product folder (flat structure).
+  //   If a child has sub-folders     → it is a container; descend one level.
+  var productFolders = []; // [{ folder, groupName }]
   var lvl2Iter = targetCatFolder.getFolders();
   while (lvl2Iter.hasNext()) {
     var lvl2Folder = lvl2Iter.next();
-    var lvl2Name   = lvl2Folder.getName();
-
-    var childIter = lvl2Folder.getFolders();
+    var childIter  = lvl2Folder.getFolders();
     if (childIter.hasNext()) {
-      // Grouped container
+      // Container level (e.g. 품질관리팀_상품검수기준표_축산) — descend into it.
+      var containerName = lvl2Folder.getName();
       do {
-        var childFolder = childIter.next();
-        var childName   = childFolder.getName();
-        var score       = matchesCriteriaFolder_(childName, variants);
-
-        if (score === 0 && isLivestock && lstCandidates) {
-          score = matchesCriteriaFolder_(childName, lstCandidates);
-          if (score > 0) score += 10;
-        }
-
-        if (score > 0) {
-          results.push({ id: childFolder.getId(), name: childName,
-                         category: mappedCategory, groupName: lvl2Name, _score: score });
-        }
+        productFolders.push({ folder: childIter.next(), groupName: containerName });
       } while (childIter.hasNext());
-
     } else {
-      // Direct product folder
-      var score2 = matchesCriteriaFolder_(lvl2Name, variants);
+      // Direct product folder (채소, 과일).
+      productFolders.push({ folder: lvl2Folder, groupName: null });
+    }
+  }
 
-      if (score2 === 0 && isLivestock && lstCandidates) {
-        score2 = matchesCriteriaFolder_(lvl2Name, lstCandidates);
-        if (score2 > 0) score2 += 10;
-      }
+  // ── Step 4: score each product folder ────────────────────────────────────────
+  var isLivestock   = (mappedCategory === '축산');
+  var isSeafood     = (mappedCategory === '수산');
+  var lstCandidates = isLivestock ? getLivestockSpecialCandidates_(rawName) : null;
 
-      // Seafood: include 종합 as a low-priority fallback when product is seafood
-      if (score2 === 0 && isSeafood && lvl2Name === '종합') {
-        score2 = 25;
-      }
+  var results = [];
+  for (var pi = 0; pi < productFolders.length; pi++) {
+    var pf      = productFolders[pi];
+    var pfName  = pf.folder.getName();
+    var sc      = matchesCriteriaFolder_(pfName, variants);
 
-      if (score2 > 0) {
-        results.push({ id: lvl2Folder.getId(), name: lvl2Name,
-                       category: mappedCategory, groupName: null, _score: score2 });
+    if (sc === 0 && isLivestock && lstCandidates) {
+      sc = matchesCriteriaFolder_(pfName, lstCandidates);
+      if (sc > 0) sc += 10; // deprioritise livestock-candidate matches vs direct hits
+    }
+
+    if (sc > 0) {
+      results.push({ id: pf.folder.getId(), name: pfName,
+                     category: mappedCategory, groupName: pf.groupName, _score: sc });
+    }
+  }
+
+  // ── Step 5: category-specific hard fallback when scoring found nothing ────────
+  // For 축산: always return 종합 / 한돈 / 한우 (in that order) so the user never
+  //            sees an empty list for a livestock product.
+  // For 수산: always return 종합 as a fallback.
+  if (results.length === 0) {
+    var fallbackNames = isLivestock ? LIVESTOCK_FALLBACK_FOLDERS_
+                      : isSeafood  ? ['종합']
+                      : [];
+    if (fallbackNames.length > 0) {
+      var seenIds = {};
+      for (var fbi = 0; fbi < productFolders.length; fbi++) {
+        var fp     = productFolders[fbi];
+        var fpName = fp.folder.getName().trim();
+        var fbIdx  = fallbackNames.indexOf(fpName);
+        if (fbIdx >= 0 && !seenIds[fp.folder.getId()]) {
+          results.push({ id: fp.folder.getId(), name: fpName,
+                         category: mappedCategory, groupName: fp.groupName,
+                         _score: 100 + fbIdx }); // preserve declared order
+          seenIds[fp.folder.getId()] = true;
+        }
       }
     }
   }
