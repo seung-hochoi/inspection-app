@@ -437,18 +437,14 @@ export default function InspectionPage({
     setOpenPartner((prev) => (prev === name ? null : name));
   }, []);
 
-  // Auto-scroll the opened partner card to the top of the scroll container
+  // Auto-scroll the opened partner card into view using window scroll
   useEffect(() => {
     if (!openPartner) return;
-    const el        = partnerCardRefs.current[openPartner];
-    const container = scrollContainerRef.current;
-    if (!el || !container) return;
-    // Wait one frame for the DOM to settle before measuring
+    const el = partnerCardRefs.current[openPartner];
+    if (!el) return;
     const raf = requestAnimationFrame(() => {
-      const containerRect = container.getBoundingClientRect();
-      const elRect        = el.getBoundingClientRect();
-      const scrollAdjust  = elRect.top - containerRect.top - 8;
-      container.scrollBy({ top: scrollAdjust, behavior: 'smooth' });
+      const elRect = el.getBoundingClientRect();
+      window.scrollBy({ top: elRect.top - 8, behavior: 'smooth' });
     });
     return () => cancelAnimationFrame(raf);
   }, [openPartner]);
@@ -468,11 +464,10 @@ export default function InspectionPage({
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       transition={{ duration: 0.2 }}
-      style={{ display: 'flex', flexDirection: 'column', height: '100%' }}
+      style={{ display: 'flex', flexDirection: 'column' }}
     >
-      {/* ── Sticky toolbar ── */}
+      {/* ── Toolbar ── */}
       <div style={{
-        position: 'sticky', top: 0, zIndex: 100,
         background: C.card,
         borderBottom: `1px solid ${C.border}`,
         boxShadow: shadow.sm,
@@ -606,7 +601,7 @@ export default function InspectionPage({
       </div>
 
       {/* ── Product list ── */}
-      <div ref={scrollContainerRef} style={{ flex: 1, overflowY: 'auto', padding: '12px 12px 80px' }}>
+      <div ref={scrollContainerRef} style={{ padding: '12px 12px 80px' }}>
         {activeRows.length === 0 ? <EmptyState /> : (
           searchFilteredPartners.map(([partnerName, partnerRows]) => {
             const counts = partnerDoneCounts[partnerName] || { done: 0, total: partnerRows.length };

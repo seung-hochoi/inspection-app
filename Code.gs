@@ -21,6 +21,7 @@ const SHEET_NAMES = {
   photoAssets: "photo_assets",
   dangjdo: "당도",
   history: "이력관리",
+  historyArchive: "이력",
   writeConflictLog: "_write_conflict_log",  // diagnostic sheet (temporary)
   users: "USERS",
   userSessions: "user_sessions",
@@ -565,7 +566,9 @@ function doGet(e) {
 
     if (action === "getHistoryData") {
       var ss = SpreadsheetApp.getActiveSpreadsheet();
-      var histSheet = ss.getSheetByName(SHEET_NAMES.history);
+      // "이력" is the hidden archive sheet with one row per date (used for trend/charts).
+      // "이력관리" is the visible latest-summary sheet (only one data row).
+      var histSheet = ss.getSheetByName(SHEET_NAMES.historyArchive);
       if (!histSheet || histSheet.getLastRow() < 2) {
         return jsonOutput_({ ok: true, data: [] });
       }
@@ -5480,20 +5483,40 @@ function runDailyReset_() {
 }
 
 // ── History sync ───────────────────────────────────────────
-// ─── 이력관리 sheet sync ───────────────────────────────────────────────────────
+// ─── History sheet sync ────────────────────────────────────────────────────────
 // Called ONLY by the manual "이력관리 기록" button in the 요약 tab.
 // Never auto-triggered by save actions, photo uploads, or app load.
-function syncHistorySheet_(ss) {
-  // ── 1. Load current job ───────────────────────────────────────────────────
+
+// Shared column headers used by both history sheets.
+var HIST_HEADERS_ = [
+  "일자",
+  "총 입고금액",
+  "총 입고수량(개)",
+  "총 입고금액 (냉동/가공/계란 제외)",
+  "총 입고수량(개) (냉동/가공/계란 제외)",
+  "검품수량(개)",
+  "검품률 (전체)",
+  "검품률 (냉동/가공/계란 제외)",
+  "입고 SKU (전체)",
+  "검품입고 SKU (검품불가 제외)",
+  "검품 SKU (실진행)",
+  "SKU 커버리지 (전체)",
+  "SKU 커버리지 (냉동/가공/계란 제외)",
+];
+
+/**
+ * Builds the snapshot row values from the current job and inspection data.
+ * Returns { rowValues, dateStr } or null when there is no active job with rows.
+ */
+function buildHistorySnapshot_(ss) {
   var latestJob = loadLatestJob_();
   if (!latestJob || !latestJob.job_key || !Array.isArray(latestJob.rows) || latestJob.rows.length === 0) {
-    console.log("[syncHistorySheet_] No active job with rows — skipping.");
-    return;
+    console.log("[buildHistorySnapshot_] No active job with rows — skipping.");
+    return null;
   }
   var jobKey  = latestJob.job_key;
-  var csvRows = latestJob.rows; // one row per CSV line (center-level)
+  var csvRows = latestJob.rows;
 
-  // ── 2. Build exclusion index (reuses existing helper) ────────────────────
   var excl = buildExclusionIndex_();
   var isRowExcluded = function(productCode, partnerName) {
     return (
@@ -5503,21 +5526,17 @@ function syncHistorySheet_(ss) {
     );
   };
 
-  // ── 3. Load inspection rows for this job ─────────────────────────────────
   var allInspRows = loadInspectionRows_();
   var inspRows = allInspRows.filter(function(ir) {
     return String(ir["작업기준일또는CSV식별값"] || "").trim() === jobKey;
   });
 
-  // ── 4. Accumulate CSV-based totals ───────────────────────────────────────
-  // Distinct SKU key = normalizeCode_(상품코드)  — partner is NOT part of SKU key.
-  var totalInboundAmount    = 0;  // B
-  var totalInboundQty       = 0;  // C
-  var nonExclInboundAmount  = 0;  // D
-  var nonExclInboundQty     = 0;  // E
-  var totalSkuSet           = {}; // I — all distinct codes
-  var nonExclSkuSet         = {}; // J — non-excluded distinct codes
-  // Code+partner -> excluded flag: used later for inspection numerator of H
+  var totalInboundAmount    = 0;
+  var totalInboundQty       = 0;
+  var nonExclInboundAmount  = 0;
+  var nonExclInboundQty     = 0;
+  var totalSkuSet           = {};
+  var nonExclSkuSet         = {};
   var codePartnerExclMap    = {};
 
   csvRows.forEach(function(row) {
@@ -5529,29 +5548,26 @@ function syncHistorySheet_(ss) {
 
     totalInboundAmount += qty * cost;
     totalInboundQty    += qty;
-    totalSkuSet[code + "||" + partner]   = true;
-    codePartnerExclMap[code + "||" + partner] = excluded;
+    totalSkuSet[code + "||" + partner]            = true;
+    codePartnerExclMap[code + "||" + partner]     = excluded;
 
     if (!excluded) {
-      nonExclInboundAmount  += qty * cost;
-      nonExclInboundQty     += qty;
-      nonExclSkuSet[code + "||" + partner]    = true;
+      nonExclInboundAmount += qty * cost;
+      nonExclInboundQty    += qty;
+      nonExclSkuSet[code + "||" + partner]        = true;
     }
   });
 
-  // ── 5. Accumulate inspection totals ──────────────────────────────────────
-  // inspection_data is keyed at productCode + partnerName level (no center).
-  var totalInspectedQty      = 0;  // F
-  var nonExclInspectedQty    = 0;  // H numerator
-  var inspectedSkuSet        = {}; // K — any qty > 0
-  var nonExclInspectedSkuSet = {}; // M numerator
+  var totalInspectedQty      = 0;
+  var nonExclInspectedQty    = 0;
+  var inspectedSkuSet        = {};
+  var nonExclInspectedSkuSet = {};
 
   inspRows.forEach(function(ir) {
     var code    = normalizeCode_(ir["상품코드"] || "");
     var partner = normalizeText_(ir["협력사명"] || "");
     var qty     = parseNumber_(ir["검품수량"] || 0);
     var key     = code + "||" + partner;
-    // Use CSV-derived excluded flag; fall back to direct exclusion check
     var excluded = (codePartnerExclMap[key] !== undefined)
       ? codePartnerExclMap[key]
       : isRowExcluded(code, partner);
@@ -5565,62 +5581,24 @@ function syncHistorySheet_(ss) {
     }
   });
 
-  // ── 6. Derived counts ────────────────────────────────────────────────────
-  var totalSkuCount         = Object.keys(totalSkuSet).length;          // I
-  var nonExclSkuCount       = Object.keys(nonExclSkuSet).length;        // J
-  var inspectedSkuCount     = Object.keys(inspectedSkuSet).length;      // K
-  var nonExclInspSkuCount   = Object.keys(nonExclInspectedSkuSet).length; // M num
+  var totalSkuCount       = Object.keys(totalSkuSet).length;
+  var nonExclSkuCount     = Object.keys(nonExclSkuSet).length;
+  var inspectedSkuCount   = Object.keys(inspectedSkuSet).length;
+  var nonExclInspSkuCount = Object.keys(nonExclInspectedSkuSet).length;
 
-  // ── 7. Rate calculations ──────────────────────────────────────────────────
   var fmtRate = function(num, den) {
     if (!den || den === 0) return "0.0%";
     var pct = num / den * 100;
-    // Show at least 1 decimal; avoid rounding non-zero values to 0
     if (pct > 0 && pct < 0.05) return "0.0%";
     return pct.toFixed(1) + "%";
   };
-  var overallInspRate = fmtRate(totalInspectedQty, totalInboundQty);     // G
-  var nonExclInspRate = fmtRate(nonExclInspectedQty, nonExclInboundQty); // H
-  var skuCovAll       = fmtRate(inspectedSkuCount, totalSkuCount);       // L
-  var skuCovNonExcl   = fmtRate(nonExclInspSkuCount, nonExclSkuCount);  // M
 
-  // ── 8. Date string ────────────────────────────────────────────────────────
-  // Use today's date in Asia/Seoul timezone (the day the recalc button was pressed).
+  var overallInspRate = fmtRate(totalInspectedQty, totalInboundQty);
+  var nonExclInspRate = fmtRate(nonExclInspectedQty, nonExclInboundQty);
+  var skuCovAll       = fmtRate(inspectedSkuCount, totalSkuCount);
+  var skuCovNonExcl   = fmtRate(nonExclInspSkuCount, nonExclSkuCount);
+
   var dateStr = Utilities.formatDate(new Date(), "Asia/Seoul", "MM/dd");
-
-  // ── 9. Write to 이력관리 sheet ──────────────────────────────────────────────
-  // Keep exactly: Row 1 = header, Row 2 = latest result.
-  // Every recalculation clears old data rows and rewrites a single fresh row so
-  // the sheet never accumulates duplicate or stale history rows.
-  var HIST_HEADERS = [
-    "일자",
-    "총 입고금액",
-    "총 입고수량(개)",
-    "총 입고금액 (냉동/가공/계란 제외)",
-    "총 입고수량(개) (냉동/가공/계란 제외)",
-    "검품수량(개)",
-    "검품률 (전체)",
-    "검품률 (냉동/가공/계란 제외)",
-    "입고 SKU (전체)",
-    "검품입고 SKU (검품불가 제외)",
-    "검품 SKU (실진행)",
-    "SKU 커버리지 (전체)",
-    "SKU 커버리지 (냉동/가공/계란 제외)",
-  ];
-
-  var histSheet = getOrCreateSheet_(ss, SHEET_NAMES.history);
-
-  // Ensure header row exists in row 1.
-  var needsHeader = histSheet.getLastRow() < 1 ||
-      String(histSheet.getRange(1, 1).getValue()).trim() !== "일자";
-  if (needsHeader) {
-    if (histSheet.getLastRow() >= 1 &&
-        String(histSheet.getRange(1, 1).getValue()).trim() !== "일자") {
-      histSheet.insertRowBefore(1);
-    }
-    histSheet.getRange(1, 1, 1, HIST_HEADERS.length).setValues([HIST_HEADERS]);
-    histSheet.getRange(1, 1, 1, HIST_HEADERS.length).setFontWeight("bold");
-  }
 
   var rowValues = [
     dateStr,
@@ -5638,15 +5616,91 @@ function syncHistorySheet_(ss) {
     skuCovNonExcl,
   ];
 
-  // Clear ALL data rows (keep only header in row 1), then write the single
-  // latest-state row.  "이력관리" is not a historical archive — it always holds
-  // exactly one data row: the most recently registered summary snapshot.
-  var lastRow = histSheet.getLastRow();
-  if (lastRow >= 2) {
-    histSheet.deleteRows(2, lastRow - 1);
+  return { rowValues: rowValues, dateStr: dateStr };
+}
+
+/**
+ * Syncs the visible summary sheet "이력관리".
+ * Always keeps exactly: Row 1 = header, Row 2 = latest snapshot.
+ * Every sync clears all previous data rows and writes a single fresh row.
+ * This is the user-facing sheet — not used as a historical archive.
+ */
+function syncVisibleSummarySheet_(ss, snapshot) {
+  var sheet = getOrCreateSheet_(ss, SHEET_NAMES.history);
+
+  var needsHeader = sheet.getLastRow() < 1 ||
+      String(sheet.getRange(1, 1).getValue()).trim() !== "일자";
+  if (needsHeader) {
+    if (sheet.getLastRow() >= 1 &&
+        String(sheet.getRange(1, 1).getValue()).trim() !== "일자") {
+      sheet.insertRowBefore(1);
+    }
+    sheet.getRange(1, 1, 1, HIST_HEADERS_.length).setValues([HIST_HEADERS_]);
+    sheet.getRange(1, 1, 1, HIST_HEADERS_.length).setFontWeight("bold");
   }
-  histSheet.appendRow(rowValues);
-  console.log("[syncHistorySheet_] replaced all data rows with single latest row, date=" + dateStr);
+
+  var lastRow = sheet.getLastRow();
+  if (lastRow >= 2) {
+    sheet.deleteRows(2, lastRow - 1);
+  }
+  sheet.appendRow(snapshot.rowValues);
+  console.log("[syncVisibleSummarySheet_] wrote single latest row, date=" + snapshot.dateStr);
+}
+
+/**
+ * Syncs the hidden archive sheet "이력".
+ * Creates and hides the sheet if it does not exist.
+ * Keeps one row per date: updates the row if today's date already exists,
+ * or appends a new row if it does not. All previous date rows are preserved.
+ */
+function syncHiddenArchiveSheet_(ss, snapshot) {
+  var sheet = getOrCreateSheet_(ss, SHEET_NAMES.historyArchive);
+
+  if (!sheet.isSheetHidden()) {
+    sheet.hideSheet();
+  }
+
+  var needsHeader = sheet.getLastRow() < 1 ||
+      String(sheet.getRange(1, 1).getValue()).trim() !== "일자";
+  if (needsHeader) {
+    if (sheet.getLastRow() >= 1 &&
+        String(sheet.getRange(1, 1).getValue()).trim() !== "일자") {
+      sheet.insertRowBefore(1);
+    }
+    sheet.getRange(1, 1, 1, HIST_HEADERS_.length).setValues([HIST_HEADERS_]);
+    sheet.getRange(1, 1, 1, HIST_HEADERS_.length).setFontWeight("bold");
+  }
+
+  var lastRow = sheet.getLastRow();
+  var todayRow = -1;
+  if (lastRow >= 2) {
+    var dateColValues = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
+    for (var i = 0; i < dateColValues.length; i++) {
+      if (String(dateColValues[i][0]).trim() === snapshot.dateStr) {
+        todayRow = i + 2; // 1-indexed, offset past the header row
+        break;
+      }
+    }
+  }
+
+  if (todayRow > 0) {
+    sheet.getRange(todayRow, 1, 1, snapshot.rowValues.length).setValues([snapshot.rowValues]);
+    console.log("[syncHiddenArchiveSheet_] updated row " + todayRow + " for date=" + snapshot.dateStr);
+  } else {
+    sheet.appendRow(snapshot.rowValues);
+    console.log("[syncHiddenArchiveSheet_] appended new row for date=" + snapshot.dateStr);
+  }
+}
+
+/**
+ * Main entry point called by the manual "이력관리 기록" button.
+ * Orchestrates: build snapshot → sync visible summary → sync hidden archive.
+ */
+function syncHistorySheet_(ss) {
+  var snapshot = buildHistorySnapshot_(ss);
+  if (!snapshot) return;
+  syncVisibleSummarySheet_(ss, snapshot);
+  syncHiddenArchiveSheet_(ss, snapshot);
 }
 
 // ── Daily scheduled jobs ───────────────────────────────────

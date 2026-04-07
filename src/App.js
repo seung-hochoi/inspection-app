@@ -72,8 +72,6 @@ const S = {
     flexDirection: "column",
   },
   header: {
-    position: "fixed",
-    top: 0, left: 0, right: 0, zIndex: 100,
     background: C.cardWhite,
     boxShadow: `0 2px 14px ${C.shadow}`,
     borderBottom: `1px solid ${C.borderLight}`,
@@ -127,7 +125,7 @@ const S = {
   },
   tabBtnActive: { color: C.accent },
   tabIcon: { fontSize: 20 },
-  content: { flex: 1, paddingTop: 130, paddingBottom: 68 },
+  content: { flex: 1, paddingBottom: 68 },
   card: {
     background: C.cardWhite,
     borderRadius: 14,
