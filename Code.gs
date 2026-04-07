@@ -611,10 +611,11 @@ function doGet(e) {
     // No sheet reads — pure Drive API. No auth required (public reference data).
 
     if (action === "searchInspectionCriteria") {
-      var keyword = String((e && e.parameter && e.parameter.keyword) || "").trim();
+      var keyword     = String((e && e.parameter && e.parameter.keyword)     || "").trim();
+      var productName = String((e && e.parameter && e.parameter.productName) || "").trim();
       return jsonOutput_({
         ok: true,
-        data: searchInspectionCriteriaFolders_(keyword),
+        data: searchInspectionCriteriaFolders_(keyword, productName),
       });
     }
 
@@ -4688,7 +4689,7 @@ function syncReturnSheets_(ss) {
         return null;
       }
 
-      var defectRate = inboundQty > 0 ? (exchangeQty + returnQty) / inboundQty : 0;
+      var defectRate = inspectionQty > 0 ? (exchangeQty + returnQty) / inspectionQty : 0;
       var inspectionRate = inboundQty > 0 ? inspectionQty / inboundQty : 0;
       var memo = memoMap[key] || "";
 
@@ -6807,54 +6808,187 @@ function ensureHeaderRow_(sheet, headers) {
   }
 }
 
+
 // ============================================================
 // SECTION: INSPECTION CRITERIA SEARCH (검품 기준 검색)
 // ============================================================
-// These functions search the CRITERIA_ROOT_FOLDER_ID folder tree by
-// folder name only.  No OCR, no PNG text parsing.
+// Searches the CRITERIA_ROOT_FOLDER_ID folder tree by folder name.
+// Supports all four major categories: 과일, 채소, 축산, 수산.
 //
 // Folder structure:
 //   CRITERIA_ROOT_FOLDER_ID/
 //     <category>/           e.g. 채소, 과일, 수산, 축산
 //       <product folder>    direct product folder  → contains PNG slides
-//       <grouped folder>    e.g. [채소]검품기준표_기타종합
+//       <grouped folder>    container folder
 //         <product folder>  nested product folder  → contains PNG slides
-//
-// A "grouped container" folder is identified by the presence of sub-folders
-// inside it.  A direct product folder has no sub-folders, only image files.
 
-/**
- * Search inspection criteria folders by keyword (folder name matching).
- * Returns an array of matched product folder descriptors:
- *   { id, name, category, groupName }
- *
- * @param {string} keyword  - The search keyword (case-insensitive, partial match).
- * @returns {Array}
- */
-function searchInspectionCriteriaFolders_(keyword) {
-  if (!keyword) return [];
+// ─── Criteria search constants ────────────────────────────────────────────────
 
-  // Build multiple normalized query variants so partial / decorated names match.
-  // 1. original (lowercased + trimmed)
-  // 2. whitespace removed
-  // 3. brackets, parentheses, dots, hyphens, underscores removed
-  var q1 = keyword.toLowerCase().trim();
-  var q2 = q1.replace(/\s+/g, '');
-  var q3 = q1.replace(/[\[\]\(\)\.\-_]/g, '').replace(/\s+/g, '');
-  // Deduplicate and discard empty strings
-  var queries = [q1, q2, q3].filter(function (q, i, arr) {
-    return q.length > 0 && arr.indexOf(q) === i;
-  });
+// Origin/country prefixes to strip from product names before matching.
+var CRITERIA_ORIGIN_PREFIXES_ = [
+  '미국', '칠레', '호주', '뉴질랜드', '중국', '일본', '캐나다', '브라질',
+  '페루', '남아공', '스페인', '이탈리아', '이집트', '터키',
+  '국산', '국내산', '수입',
+  '경북', '전남', '충남', '충북', '전북', '경남', '경기', '강원', '제주',
+];
 
-  var matchesAny = function (name) {
-    var lower = name.toLowerCase();
-    for (var qi = 0; qi < queries.length; qi++) {
-      if (lower.indexOf(queries[qi]) >= 0) return true;
+// Fallback folder names always appended as low-priority candidates for 축산.
+var LIVESTOCK_FALLBACK_FOLDERS_ = ['종합', '한돈', '한우'];
+
+// ─── buildCriteriaQueryVariants_ ─────────────────────────────────────────────
+// Build an ordered deduplicated list of search terms from the raw product name
+// and the frontend-extracted keyword.  Lower index = higher priority.
+function buildCriteriaQueryVariants_(rawProductName, keyword) {
+  var seen     = {};
+  var variants = [];
+  function addVariant(s) {
+    s = String(s || '').toLowerCase().trim();
+    if (s.length >= 1 && !seen[s]) { seen[s] = true; variants.push(s); }
+  }
+
+  // 1. Frontend-extracted keyword (already cleaned by extractCriteriaKeyword)
+  addVariant(keyword);
+
+  var name = String(rawProductName || keyword || '').toLowerCase().trim();
+
+  // 2. Strip leading [bracket] groups
+  var nobrack = name.replace(/^(?:\[[^\]]*\]\s*)+/, '').trim();
+  addVariant(nobrack);
+
+  // 3. Strip leading origin/country prefix (one level only)
+  var stripped = nobrack;
+  for (var pi = 0; pi < CRITERIA_ORIGIN_PREFIXES_.length; pi++) {
+    var pfx = CRITERIA_ORIGIN_PREFIXES_[pi];
+    if (stripped.indexOf(pfx) === 0 && stripped.length > pfx.length) {
+      stripped = stripped.slice(pfx.length).trim();
+      break;
+    }
+  }
+  addVariant(stripped);
+
+  // 4. Strip trailing parenthetical: (국산), (수입), (벌크), (박스) …
+  var notrail = stripped.replace(/\s*\([^)]*\)\s*$/, '').trim();
+  addVariant(notrail);
+
+  // 5. Remove all spaces
+  addVariant(notrail.replace(/\s+/g, ''));
+
+  // 6. Remove special characters, keep Korean + alphanumeric
+  addVariant(notrail.replace(/[^\uac00-\ud7a3a-z0-9\s]/gi, '').trim());
+  addVariant(notrail.replace(/[^\uac00-\ud7a3a-z0-9]/gi, ''));
+
+  return variants.filter(function(v) { return v.length >= 1; });
+}
+
+// ─── matchesCriteriaFolder_ ───────────────────────────────────────────────────
+// Score how well a Drive folder name matches the given query variants.
+// Returns integer score (lower = better); 0 = no match.
+//   1  exact full name match
+//   2  exact match of a comma/slash-separated part
+//   3  folder name contains query as substring
+//   4  a comma-separated part contains query as substring
+//   5  query contains a comma-separated part (>= 2 chars) as substring
+function matchesCriteriaFolder_(folderName, variants) {
+  if (!variants || variants.length === 0) return 0;
+  var lower     = folderName.toLowerCase();
+  var lowerNoSp = lower.replace(/\s+/g, '');
+
+  // Split comma/slash-separated names: "대봉,연시" -> ["대봉", "연시"]
+  var parts     = lower.split(/[,\/]/).map(function(p) { return p.trim(); });
+  var partsNoSp = lowerNoSp.split(/[,\/]/).map(function(p) { return p.trim(); });
+
+  var best = 0;
+  function keep(s) { if (best === 0 || s < best) best = s; }
+
+  for (var vi = 0; vi < variants.length; vi++) {
+    var q     = variants[vi];
+    var qNoSp = q.replace(/\s+/g, '');
+
+    if (lower === q || lowerNoSp === qNoSp) return 1; // exact — best possible
+
+    for (var pi = 0; pi < parts.length; pi++) {
+      if (parts[pi] === q || partsNoSp[pi] === qNoSp) { keep(2); break; }
+    }
+
+    if (lower.indexOf(q) >= 0 || lowerNoSp.indexOf(qNoSp) >= 0) keep(3);
+
+    for (var pi2 = 0; pi2 < parts.length; pi2++) {
+      if (parts[pi2].indexOf(q)         >= 0 ||
+          partsNoSp[pi2].indexOf(qNoSp) >= 0) { keep(4); break; }
+    }
+    for (var pi3 = 0; pi3 < parts.length; pi3++) {
+      if (q.length >= 2 &&
+          (q.indexOf(parts[pi3]) >= 0 || qNoSp.indexOf(partsNoSp[pi3]) >= 0)) keep(5);
+    }
+  }
+  return best;
+}
+
+// ─── detectCriteriaCategory_ ─────────────────────────────────────────────────
+// Heuristically guess the major product category from the raw product name.
+// Returns '축산' | '수산' | '과일' | '채소' | null
+function detectCriteriaCategory_(name) {
+  var n = String(name || '').toLowerCase();
+  function has(words) {
+    for (var i = 0; i < words.length; i++) {
+      if (n.indexOf(words[i]) >= 0) return true;
     }
     return false;
-  };
+  }
+  if (has(['한우','한돈','삼겹','등심','갈비','목살','항정','앞다리','부채살',
+           '불고기','차돌','다짐','계란','달걀','계육','닭고기','오리',
+           'map','진공팩','진공포장','냉동육','냉장육'])) return '축산';
+  if (has(['갈치','고등어','굴','꽁치','꽃게','낙지','민어','바지락','오징어',
+           '전복','조개','조기','골뱅이','명태','동태','새우','참치','연어',
+           '멸치','임연수'])) return '수산';
+  if (has(['딸기','바나나','수박','참외','복숭아','포도','사과','귤','망고',
+           '키위','멜론','체리','자두','블루베리','오렌지','레몬','파인애플',
+           '자몽','대봉','연시','단감','수입포도','국산포도'])) return '과일';
+  if (has(['마늘','쪽파','대파','양파','당근','감자','고구마','배추','상추',
+           '브로콜리','시금치','오이','저장무','포장무','부추','봄동','호박',
+           '고추','파프리카','가지','가시오이'])) return '채소';
+  return null;
+}
 
-  var results = [];
+// ─── getLivestockSpecialCandidates_ ──────────────────────────────────────────
+// For 축산 products: return ordered special candidate folder names derived from
+// the product name, followed by the standard fallbacks.
+function getLivestockSpecialCandidates_(name) {
+  var n     = String(name || '').toLowerCase();
+  var cands = [];
+  function push(s) { if (cands.indexOf(s) === -1) cands.push(s); }
+
+  if (n.indexOf('한우')  >= 0) push('한우');
+  if (n.indexOf('한돈')  >= 0) push('한돈');
+  if (n.indexOf('진공')  >= 0) { push('진공포장상품'); push('진공'); }
+  if (n.indexOf('map')   >= 0) push('종합');  // MAP packaging -> 종합 criteria
+  if (n.indexOf('다짐')  >= 0) push('다짐육');
+  if (n.indexOf('삼겹')  >= 0) push('삼겹살');
+  if (n.indexOf('등심')  >= 0) push('등심');
+  if (n.indexOf('차돌')  >= 0) push('차돌박이');
+  if (n.indexOf('계란')  >= 0 || n.indexOf('달걀') >= 0) push('계란');
+  if (n.indexOf('계육')  >= 0 || n.indexOf('닭')   >= 0) push('계육');
+
+  // Always add fallbacks last (lowest priority within livestock)
+  for (var i = 0; i < LIVESTOCK_FALLBACK_FOLDERS_.length; i++) push(LIVESTOCK_FALLBACK_FOLDERS_[i]);
+  return cands;
+}
+
+/**
+ * Smart criteria folder search supporting all four major categories.
+ *
+ * @param {string} keyword     - Pre-processed keyword from frontend.
+ * @param {string} productName - Raw CSV product name (enriches matching).
+ * @returns {Array} Matched folder descriptors: { id, name, category, groupName }
+ */
+function searchInspectionCriteriaFolders_(keyword, productName) {
+  if (!keyword && !productName) return [];
+
+  var rawName  = String(productName || keyword || '').trim();
+  var variants = buildCriteriaQueryVariants_(rawName, keyword);
+  if (variants.length === 0) return [];
+
+  var detectedCategory = detectCriteriaCategory_(rawName);
 
   var rootFolder;
   try {
@@ -6863,48 +6997,71 @@ function searchInspectionCriteriaFolders_(keyword) {
     throw new Error('검품 기준 폴더에 접근할 수 없습니다: ' + e.message);
   }
 
-  // Level 1: category folders (채소, 과일, 수산, 축산, …)
+  var results = [];
+
   var catIter = rootFolder.getFolders();
   while (catIter.hasNext()) {
     var catFolder = catIter.next();
-    var catName = catFolder.getName();
+    var catName   = catFolder.getName();
+    var isLivestock = (catName === '축산');
+    var isSeafood   = (catName === '수산');
 
-    // Level 2: direct product folders or grouped container folders
+    var lstCandidates = isLivestock ? getLivestockSpecialCandidates_(rawName) : null;
+
     var lvl2Iter = catFolder.getFolders();
     while (lvl2Iter.hasNext()) {
       var lvl2Folder = lvl2Iter.next();
-      var lvl2Name = lvl2Folder.getName();
+      var lvl2Name   = lvl2Folder.getName();
 
       var childIter = lvl2Folder.getFolders();
       if (childIter.hasNext()) {
-        // ── Grouped container ──────────────────────────────────────────────
+        // Grouped container
         do {
           var childFolder = childIter.next();
-          var childName = childFolder.getName();
-          if (matchesAny(childName)) {
-            results.push({
-              id:        childFolder.getId(),
-              name:      childName,
-              category:  catName,
-              groupName: lvl2Name,
-            });
+          var childName   = childFolder.getName();
+          var score       = matchesCriteriaFolder_(childName, variants);
+
+          if (score === 0 && isLivestock && lstCandidates) {
+            score = matchesCriteriaFolder_(childName, lstCandidates);
+            if (score > 0) score += 10; // livestock special = lower priority
+          }
+
+          if (score > 0) {
+            results.push({ id: childFolder.getId(), name: childName,
+                           category: catName, groupName: lvl2Name, _score: score });
           }
         } while (childIter.hasNext());
+
       } else {
-        // ── Direct product folder ─────────────────────────────────────────
-        if (matchesAny(lvl2Name)) {
-          results.push({
-            id:        lvl2Folder.getId(),
-            name:      lvl2Name,
-            category:  catName,
-            groupName: null,
-          });
+        // Direct product folder
+        var score2 = matchesCriteriaFolder_(lvl2Name, variants);
+
+        if (score2 === 0 && isLivestock && lstCandidates) {
+          score2 = matchesCriteriaFolder_(lvl2Name, lstCandidates);
+          if (score2 > 0) score2 += 10;
+        }
+
+        // Seafood fallback: include 종합 when product appears to be seafood
+        if (score2 === 0 && isSeafood && detectedCategory === '수산' && lvl2Name === '종합') {
+          score2 = 25;
+        }
+
+        if (score2 > 0) {
+          results.push({ id: lvl2Folder.getId(), name: lvl2Name,
+                         category: catName, groupName: null, _score: score2 });
         }
       }
     }
   }
 
-  return results;
+  results.sort(function(a, b) {
+    if (a._score !== b._score) return a._score - b._score;
+    return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+  });
+
+  return results.map(function(r) {
+    return { id: r.id, name: r.name, category: r.category, groupName: r.groupName };
+  });
 }
 
 /**

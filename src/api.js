@@ -214,8 +214,8 @@ export const forceLogoutSession = (targetSessionToken) =>
 
 // ── Inspection criteria search (검품 기준 검색) ───────────────────────────────
 // Searches Drive folder names — no preloading, on-demand only.
-export const fetchCriteriaSearch = (keyword) =>
-  getWithParams("searchInspectionCriteria", { keyword });
+export const fetchCriteriaSearch = (keyword, productName) =>
+  getWithParams("searchInspectionCriteria", { keyword, productName: productName || '' });
 
 export const fetchCriteriaImages = (folderId) =>
   getWithParams("getInspectionCriteriaImages", { folderId });

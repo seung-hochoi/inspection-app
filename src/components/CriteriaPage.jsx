@@ -171,7 +171,7 @@ export default function CriteriaPage({ jobRows = [] }) {
       setBarcodeError('');
       return;
     }
-    const timer = setTimeout(() => search(q), 300);
+    const timer = setTimeout(() => search(q, nameQuery), 300);
     return () => clearTimeout(timer);
   }, [nameQuery, search, reset]);
 
@@ -231,11 +231,11 @@ export default function CriteriaPage({ jobRows = [] }) {
             placeholder="예) 가지, 감자, 깐마늘 …"
             value={nameQuery}
             onChange={(e) => setNameQuery(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && search(normalizeCriteriaKeyword(nameQuery))}
+            onKeyDown={(e) => e.key === 'Enter' && search(normalizeCriteriaKeyword(nameQuery), nameQuery)}
           />
           <button
             style={{ ...scanBtnStyle, background: searching ? C.muted : C.primary }}
-            onClick={() => search(normalizeCriteriaKeyword(nameQuery))}
+            onClick={() => search(normalizeCriteriaKeyword(nameQuery), nameQuery)}
             disabled={searching || !nameQuery.trim()}
           >
             {searching ? '…' : '검색'}

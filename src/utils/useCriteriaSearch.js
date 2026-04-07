@@ -31,11 +31,12 @@ export function normalizeCriteriaKeyword(name) {
  *
  * Rules applied in order:
  *   1. Strip leading bracket groups like [행사], [냉장], [특가]
- *   2. Strip trailing parenthetical groups like (국산), (수입), (벌크), (박스)
- *   3. Strip trailing unit patterns like 500g, 1kg, 100ml, 2box, 3팩, 10개
- *   4. Collapse internal whitespace
+ *   2. Strip leading origin/country prefixes like 미국, 칠레, 국산
+ *   3. Strip trailing parenthetical groups like (국산), (수입), (벌크), (박스)
+ *   4. Strip trailing unit patterns like 500g, 1kg, 100ml, 2box, 3팩, 10개
+ *   5. Collapse internal whitespace
  *
- * Safety: only leading brackets and TRAILING parentheses/units are removed.
+ * Safety: only leading brackets/prefixes and TRAILING parentheses/units are removed.
  * Mid-word parentheses (e.g. 봄동(박스)겉절이) and leading parentheses are preserved.
  *
  * Examples:
@@ -43,18 +44,32 @@ export function normalizeCriteriaKeyword(name) {
  *   "[행사] 사과 1kg"         → "사과"
  *   "딸기 500g"               → "딸기"
  *   "깐마늘(벌크)"            → "깐마늘"
- *   "봄동겉절이"              → "봄동겉절이"  (unchanged)
+ *   "미국네이블오렌지"        → "오렌지"
+ *   "칠레산포도"              → "포도"
  */
 export function extractCriteriaKeyword(productName) {
   let s = String(productName || '').trim();
   // 1. Remove one or more leading [bracket] groups (with optional trailing space)
   s = s.replace(/^(?:\[[^\]]*\]\s*)+/, '').trim();
-  // 2. Remove trailing parenthetical group (국산), (수입), etc.
+  // 2. Strip leading country/origin word-prefixes (without spaces in Korean compound names)
+  //    e.g. "미국네이블오렌지" → "네이블오렌지", "칠레산포도" → "포도"
+  const ORIGIN_PREFIXES = [
+    '미국', '칠레', '호주', '뉴질랜드', '중국', '일본', '캐나다', '브라질',
+    '페루', '남아공', '스페인', '이탈리아', '그리스', '이집트', '터키',
+    '국산', '국내산', '수입', '경북', '전남', '충남', '충북', '전북',
+    '경남', '경기', '강원', '제주', '충청', '영남', '호남',
+  ];
+  for (const pfx of ORIGIN_PREFIXES) {
+    if (s.startsWith(pfx) && s.length > pfx.length) {
+      s = s.slice(pfx.length).trim();
+    }
+  }
+  // 3. Remove trailing parenthetical group (국산), (수입), etc.
   //    Only removes the LAST group at the end of the string.
   s = s.replace(/\s*\([^)]*\)\s*$/, '').trim();
-  // 3. Remove trailing weight/unit pattern: optional space + digits + unit
+  // 4. Remove trailing weight/unit pattern: optional space + digits + unit
   s = s.replace(/\s*\d+\s*(g|kg|ml|l|box|개|봉|팩)$/i, '').trim();
-  // 4. Collapse any internal whitespace runs
+  // 5. Collapse any internal whitespace runs
   s = s.replace(/\s+/g, ' ');
   return s;
 }
@@ -116,6 +131,16 @@ const BROAD_KEYWORD_RULES = [
   { match: ['체리'],                                             search: '체리' },
   { match: ['자두'],                                             search: '자두' },
   { match: ['블루베리'],                                         search: '블루베리' },
+  { match: ['네이블오렌지', '오렌지'],                           search: '오렌지' },
+  { match: ['레몬'],                                             search: '레몬' },
+  { match: ['자몽'],                                             search: '자몽' },
+  { match: ['라임'],                                             search: '라임' },
+  { match: ['아보카도'],                                         search: '아보카도' },
+  { match: ['파인애플'],                                         search: '파인애플' },
+  { match: ['코코넛'],                                           search: '코코넛' },
+  { match: ['용과'],                                             search: '용과' },
+  { match: ['무화과'],                                           search: '무화과' },
+  { match: ['석류'],                                             search: '석류' },
 ];
 
 /**
@@ -194,16 +219,20 @@ export function useCriteriaSearch() {
   }, []);
 
   // ── search Drive criteria folder names ─────────────────────────────────────
-  const search = useCallback(async (keyword) => {
+  const search = useCallback(async (keyword, productName) => {
     const q = normalizeCriteriaKeyword(keyword);
     if (!q) {
       reset();
       return;
     }
 
+    // Cache key includes productName so same keyword typed manually vs. from a
+    // product row returns appropriately enriched results independently.
+    const cacheKey = q + (productName ? '\x00' + productName : '');
+
     // Serve from cache if available
-    if (searchResultsCache.has(q)) {
-      setResults(searchResultsCache.get(q));
+    if (searchResultsCache.has(cacheKey)) {
+      setResults(searchResultsCache.get(cacheKey));
       setImageData(null);
       setSelectedFolder(null);
       setSearchErr('');
@@ -217,9 +246,9 @@ export function useCriteriaSearch() {
     setSelectedFolder(null);
 
     try {
-      const res = await fetchCriteriaSearch(q);
+      const res = await fetchCriteriaSearch(q, productName || '');
       const data = res.data || [];
-      searchResultsCache.set(q, data);
+      searchResultsCache.set(cacheKey, data);
       setResults(data);
     } catch (e) {
       setSearchErr(e.message || '검색 오류가 발생했습니다.');

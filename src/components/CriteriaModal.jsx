@@ -60,13 +60,12 @@ export default function CriteriaModal({ productName, onClose }) {
   } = useCriteriaSearch();
 
   // Search on mount.
-  // Priority: broad family keyword (e.g. "깐마늘100G" → "마늘") so the user
-  // sees all related criteria folders.  Falls back to the cleaned product name
-  // (extractCriteriaKeyword) if no broad rule matches.
+  // Pass both the extracted keyword AND the raw productName so the backend can
+  // apply category-specific rules (livestock fallbacks, comma-folder matching, etc.)
   useEffect(() => {
     if (productName) {
       const keyword = getBroadCriteriaKeyword(productName) || extractCriteriaKeyword(productName);
-      search(keyword);
+      search(keyword, productName);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

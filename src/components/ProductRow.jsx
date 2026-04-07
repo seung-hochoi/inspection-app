@@ -352,41 +352,16 @@ const ProductRow = React.memo(function ProductRow({
                     {row['상품명'] || '—'}
                   </p>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <p style={{
-                    margin: 0, fontSize: 11, color: C.muted, lineHeight: 1.3,
-                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                    flex: 1, minWidth: 0,
-                  }}>
-                    <span style={{ fontFamily: "'Menlo','Consolas',monospace", letterSpacing: '-0.01em' }}>
-                      {cleanCode}
-                    </span>
-                    {row['협력사명'] && <span style={{ color: C.muted2 }}> · {row['협력사명']}</span>}
-                    {orderedQty > 0 && <span style={{ color: C.muted2 }}> · 발주 {orderedQty}</span>}
-                  </p>
-                  {/* Criteria button — far right of the supplier/qty subtitle row */}
-                  <button
-                    type="button"
-                    onClick={(e) => { e.stopPropagation(); setShowCriteria(true); }}
-                    title="검품기준 보기"
-                    className="action-btn"
-                    style={{
-                      height: 22, padding: '0 7px',
-                      fontSize: 10, fontWeight: 700,
-                      color: C.primary,
-                      background: C.primaryLight,
-                      border: `1px solid ${C.primaryMid}`,
-                      borderRadius: radius.sm,
-                      cursor: 'pointer',
-                      fontFamily: font.base,
-                      whiteSpace: 'nowrap',
-                      display: 'inline-flex', alignItems: 'center',
-                      flex: '0 0 auto',
-                    }}
-                  >
-                    기준
-                  </button>
-                </div>
+                <p style={{
+                  margin: 0, fontSize: 11, color: C.muted, lineHeight: 1.3,
+                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                }}>
+                  <span style={{ fontFamily: "'Menlo','Consolas',monospace", letterSpacing: '-0.01em' }}>
+                    {cleanCode}
+                  </span>
+                  {row['협력사명'] && <span style={{ color: C.muted2 }}> · {row['협력사명']}</span>}
+                  {orderedQty > 0 && <span style={{ color: C.muted2 }}> · 발주 {orderedQty}</span>}
+                </p>
               </div>
               {/* Tags + animated save-status badge */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
@@ -404,8 +379,17 @@ const ProductRow = React.memo(function ProductRow({
               </div>
             </div>
 
-            {/* ── Row 2: Qty · result chip · defect reason · photos · movement ── */}
-            <div style={{ display: 'flex', alignItems: 'flex-end', gap: 7, flexWrap: 'wrap' }}>
+            {/* ── Row 2: supplier info · qty stepper · criteria button ── */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 6 }}>
+              {/* supplier / orderedQty info */}
+              <p style={{
+                margin: 0, fontSize: 11, color: C.muted, lineHeight: 1.3,
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                flex: 1, minWidth: 0,
+              }}>
+                {row['협력사명'] && <span>{row['협력사명']}</span>}
+                {orderedQty > 0 && <span style={{ color: C.muted2 }}>{row['협력사명'] ? ' · ' : ''}발주 {orderedQty}</span>}
+              </p>
 
               {/* 검품수량 stepper */}
               <div style={{
@@ -459,10 +443,33 @@ const ProductRow = React.memo(function ProductRow({
                 </div>
               )}
 
-              {/* 불량 사유 — removed from inline row; entered via 회송/교환 modal */}
+              {/* Criteria button — rightmost of the supplier/qty row */}
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); setShowCriteria(true); }}
+                title="검품기준 보기"
+                className="action-btn"
+                style={{
+                  height: 32, padding: '0 9px',
+                  fontSize: 11, fontWeight: 700,
+                  color: C.primary,
+                  background: C.primaryLight,
+                  border: `1px solid ${C.primaryMid}`,
+                  borderRadius: radius.sm,
+                  cursor: 'pointer',
+                  fontFamily: font.base,
+                  whiteSpace: 'nowrap',
+                  display: 'inline-flex', alignItems: 'center',
+                  flex: '0 0 auto',
+                  marginLeft: 'auto',
+                }}
+              >
+                기준
+              </button>
+            </div>
 
-              {/* Photos + movement actions — pushed to far right (desktop), full-width 2-row on mobile */}
-              <div className="action-btn-row" style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0 }}>
+            {/* ── Row 3: photos · movement actions ── */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
                 {/* Primary photo slots: 검품 + 불량 — higher usage, show up to 3 thumbs */}
                 {canUploadPhoto && (
                   <>
@@ -530,9 +537,8 @@ const ProductRow = React.memo(function ProductRow({
                 >
                   <Eye size={13} strokeWidth={2} />
                 </button>
-              </div>
-
             </div>
+
           </div>
         </div>
 

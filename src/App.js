@@ -1764,28 +1764,42 @@ function App() {
     }
     setLoading(true);
     setLoadError("");
-    try {
-      // Fire getConfig / getCurrentJob / getRecords / getInspectionRows / getDashboard
-      // in parallel. Wall-clock time is max(each request) instead of their sum.
-      const result = await fetchBootstrapParallel();
-      const d = result.data || {};
-      const job = d.current_job || {};
-      setJobKey(job.job_key || "");
-      setJobRows(buildNormalizedRows(job.rows || []));
-      setInspectionRows(Array.isArray(d.rows) ? d.rows : []);
-      setRecords(Array.isArray(d.records) ? d.records : []);
-      setConfig(d.config || {});
-      setSummary(d.summary || {});
-      setHappycall(d.happycall || {});
-      setWorksheetUrl(d.worksheet_url || "");
-      setCurrentFileName(job.source_file_name || "");
-      setProductImages(Array.isArray(d.product_images) ? d.product_images : []);
-      setInitialLoadDone(true);
-    } catch (e) {
-      setLoadError(e.message || "초기 데이터 로드 실패");
-    } finally {
-      setLoading(false);
+    // Retry up to 3 times with exponential backoff (800 ms, 2 s, 4 s) so that
+    // a transient network failure (e.g. screen wake-up on mobile) doesn't
+    // immediately show "load failed" to the user.
+    const DELAYS = [800, 2000, 4000];
+    let lastErr = null;
+    for (let attempt = 0; attempt <= DELAYS.length; attempt++) {
+      try {
+        // Fire getConfig / getCurrentJob / getRecords / getInspectionRows / getDashboard
+        // in parallel. Wall-clock time is max(each request) instead of their sum.
+        const result = await fetchBootstrapParallel();
+        const d = result.data || {};
+        const job = d.current_job || {};
+        setJobKey(job.job_key || "");
+        setJobRows(buildNormalizedRows(job.rows || []));
+        setInspectionRows(Array.isArray(d.rows) ? d.rows : []);
+        setRecords(Array.isArray(d.records) ? d.records : []);
+        setConfig(d.config || {});
+        setSummary(d.summary || {});
+        setHappycall(d.happycall || {});
+        setWorksheetUrl(d.worksheet_url || "");
+        setCurrentFileName(job.source_file_name || "");
+        setProductImages(Array.isArray(d.product_images) ? d.product_images : []);
+        setInitialLoadDone(true);
+        setLoading(false);
+        return; // success
+      } catch (e) {
+        lastErr = e;
+        if (attempt < DELAYS.length) {
+          await new Promise((r) => setTimeout(r, DELAYS[attempt]));
+        }
+      }
     }
+    // All retries exhausted: show error but DO NOT clear existing data so the
+    // user can still see the last successfully loaded state.
+    setLoadError((lastErr && lastErr.message) || "데이터 로드 실패 — 잠시 후 다시 시도합니다");
+    setLoading(false);
   }, []);
 
   // Deferred bootstrap: loads happycall analytics and product images after first paint.
@@ -1807,6 +1821,37 @@ function App() {
     loadBootstrap();
     loadDeferredBootstrap(); // fire in parallel; doesn't affect loading state
   }, [loadBootstrap, loadDeferredBootstrap]);
+
+  // ── Recover from screen-off / background tab on mobile ───────────────────
+  // When the page becomes visible again (e.g. user unlocks phone), silently
+  // re-fetch inspection rows if the page was hidden long enough for stale state.
+  useEffect(() => {
+    let hiddenAt = 0;
+    const STALE_MS = 60_000; // re-fetch if hidden for ≥ 60 s
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') {
+        hiddenAt = Date.now();
+        return;
+      }
+      // Page became visible
+      const wasHiddenMs = Date.now() - hiddenAt;
+      if (hiddenAt > 0 && wasHiddenMs >= STALE_MS && SCRIPT_URL && authUser) {
+        // Silently refresh rows — do NOT set loading=true or clear existing state
+        fetchBootstrapParallel()
+          .then((result) => {
+            const d = result.data || {};
+            const job = d.current_job || {};
+            if (job.job_key) setJobKey(job.job_key);
+            if (Array.isArray(d.rows)) setInspectionRows(d.rows);
+            if (Array.isArray(d.records)) setRecords(d.records);
+          })
+          .catch(() => { /* screen-wake refresh is best-effort */ });
+      }
+      hiddenAt = 0;
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
+  }, [authUser]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Auth: restore session from localStorage on first mount ────────────────
   useEffect(() => {

@@ -163,7 +163,16 @@ export default function SummaryPage({ summary = {}, happycall = {}, jobRows = []
   // Pull the most recent history row for live metrics (검품수량, 검품률, SKU 커버리지, etc.)
   const latestHistory = useMemo(() => {
     if (!Array.isArray(historyData) || historyData.length === 0) return null;
-    return [...historyData].sort((a, b) => String(b['일자']).localeCompare(String(a['일자'])))[0];
+    // Sanitize 일자 before sorting so timezone strings don't break order
+    const safe = (d) => {
+      const s = String(d || '');
+      const m = s.match(/(\d{1,2})\/(\d{1,2})/);
+      if (m) return String(m[1]).padStart(2, '0') + '/' + String(m[2]).padStart(2, '0');
+      const iso = s.match(/(\d{4})-(\d{2})-(\d{2})/);
+      if (iso) return iso[2] + '/' + iso[3];
+      return s;
+    };
+    return [...historyData].sort((a, b) => safe(b['일자']).localeCompare(safe(a['일자'])))[0];
   }, [historyData]);
 
   // Read a field from the latest history row. Tries multiple key aliases.
