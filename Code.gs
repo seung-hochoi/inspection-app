@@ -6846,8 +6846,12 @@ function getInspectionCriteriaImages_(folderId) {
     images.push({
       id:   fileId,
       name: file.getName(),
-      // Standard direct-view URL — works for ANYONE_WITH_LINK files.
-      url:  'https://drive.google.com/uc?export=view&id=' + fileId,
+      // Use the thumbnail endpoint — consistent with every other Drive image in
+      // the app (ProductRow, PhotoUploader, RecordsPage all use this format).
+      // The uc?export=view URL redirects through Google's download flow and
+      // frequently fails to load in <img> tags from web apps.
+      // sz=w1600 gives slide-quality resolution without hitting size warnings.
+      url:  'https://drive.google.com/thumbnail?id=' + fileId + '&sz=w1600',
     });
   }
 

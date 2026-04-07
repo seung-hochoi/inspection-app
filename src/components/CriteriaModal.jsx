@@ -2,7 +2,7 @@ import React, { useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { X as XIcon } from 'lucide-react';
 import { C, radius, font, shadow } from './styles';
-import { useCriteriaSearch, extractCriteriaKeyword } from '../utils/useCriteriaSearch';
+import { useCriteriaSearch, extractCriteriaKeyword, getBroadCriteriaKeyword } from '../utils/useCriteriaSearch';
 
 // ─── SlideImage ───────────────────────────────────────────────────────────────
 // Individual criteria slide with error fallback and filename label.
@@ -59,12 +59,15 @@ export default function CriteriaModal({ productName, onClose }) {
     search, loadImages, clearImages,
   } = useCriteriaSearch();
 
-  // Search on mount — use extractCriteriaKeyword to strip CSV decorations
-  // (bracket prefixes, trailing parentheses, unit suffixes) before searching,
-  // so that a product name like "[냉장] 당근 (국산) 500g" correctly finds
-  // the Drive folder named "당근".
+  // Search on mount.
+  // Priority: broad family keyword (e.g. "깐마늘100G" → "마늘") so the user
+  // sees all related criteria folders.  Falls back to the cleaned product name
+  // (extractCriteriaKeyword) if no broad rule matches.
   useEffect(() => {
-    if (productName) search(extractCriteriaKeyword(productName));
+    if (productName) {
+      const keyword = getBroadCriteriaKeyword(productName) || extractCriteriaKeyword(productName);
+      search(keyword);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
