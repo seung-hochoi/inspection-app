@@ -5586,11 +5586,14 @@ function buildHistorySnapshot_(ss) {
   var inspectedSkuCount   = Object.keys(inspectedSkuSet).length;
   var nonExclInspSkuCount = Object.keys(nonExclInspectedSkuSet).length;
 
+  // Returns a plain number (e.g. 87.6) so Sheets does not auto-convert to a
+  // fraction on write.  fromHist() on the frontend expects a numeric percentage
+  // value that can be passed directly to fmtPct().
   var fmtRate = function(num, den) {
-    if (!den || den === 0) return "0.0%";
+    if (!den || den === 0) return 0;
     var pct = num / den * 100;
-    if (pct > 0 && pct < 0.05) return "0.0%";
-    return pct.toFixed(1) + "%";
+    if (pct > 0 && pct < 0.05) return 0;
+    return parseFloat(pct.toFixed(1));
   };
 
   var overallInspRate = fmtRate(totalInspectedQty, totalInboundQty);
@@ -7023,9 +7026,62 @@ function getLivestockSpecialCandidates_(name) {
 }
 
 /**
- * Smart criteria folder search supporting all four major categories.
+ * Look up the Drive criteria category folder name for a given 소분류명 keyword
+ * using the "매핑" sheet (column 1: 소분류명, column 2: 대분류).
+ * Returns the 대분류 string (e.g. '과일', '채소', '축산', '수산') or null if
+ * no matching entry is found.
  *
- * @param {string} keyword     - Pre-processed keyword from frontend.
+ * Matching strategy (in order):
+ *   1. Exact case-insensitive match on 소분류명 == keyword.
+ *   2. 소분류명 is a substring of keyword (for compound product names).
+ *
+ * Results are cached for 5 minutes to reduce sheet read traffic.
+ */
+function getCriteriaCategory_(keyword) {
+  var q = String(keyword || '').trim().toLowerCase();
+  if (!q) return null;
+
+  var cache    = CacheService.getScriptCache();
+  var cacheKey = 'criteriaCategory_' + q;
+  var cached   = cache.get(cacheKey);
+  if (cached !== null) return cached === '' ? null : cached;
+
+  var ss    = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = getOperationalMappingSheet_(ss);
+  if (!sheet || sheet.getLastRow() < 2) {
+    try { cache.put(cacheKey, '', 300); } catch (_) {}
+    return null;
+  }
+
+  var data   = sheet.getRange(2, 1, sheet.getLastRow() - 1, 2).getValues();
+  var result = null;
+
+  // Pass 1: exact match on 소분류명
+  for (var i = 0; i < data.length; i++) {
+    var sub = String(data[i][0] || '').trim().toLowerCase();
+    var cat = String(data[i][1] || '').trim();
+    if (!sub || !cat) continue;
+    if (sub === q) { result = cat; break; }
+  }
+
+  // Pass 2: 소분류명 is contained within keyword (e.g. "네이블오렌지" contains "오렌지")
+  if (!result) {
+    for (var j = 0; j < data.length; j++) {
+      var sub2 = String(data[j][0] || '').trim().toLowerCase();
+      var cat2 = String(data[j][1] || '').trim();
+      if (!sub2 || !cat2 || sub2.length < 2) continue;
+      if (q.indexOf(sub2) >= 0) { result = cat2; break; }
+    }
+  }
+
+  try { cache.put(cacheKey, result || '', 300); } catch (_) {}
+  return result;
+}
+
+/**
+ * Smart criteria folder search scoped to the category derived from the "매핑" sheet.
+ *
+ * @param {string} keyword     - Pre-processed keyword from frontend (소분류명).
  * @param {string} productName - Raw CSV product name (enriches matching).
  * @returns {Array} Matched folder descriptors: { id, name, category, groupName }
  */
@@ -7036,8 +7092,17 @@ function searchInspectionCriteriaFolders_(keyword, productName) {
   var variants = buildCriteriaQueryVariants_(rawName, keyword);
   if (variants.length === 0) return [];
 
-  var detectedCategory = detectCriteriaCategory_(rawName);
+  // ── Step 1: resolve category from "매핑" sheet (source of truth) ────────────
+  // Only search inside the folder that matches the mapped 대분류.
+  // If the keyword is not in the mapping sheet, return empty rather than
+  // falling back to a broad search across all category folders.
+  var mappedCategory = getCriteriaCategory_(keyword);
+  if (!mappedCategory) {
+    console.warn('[searchInspectionCriteriaFolders_] No category mapping found for keyword: ' + keyword);
+    return [];
+  }
 
+  // ── Step 2: open the Drive root and find the target category folder ──────────
   var rootFolder;
   try {
     rootFolder = DriveApp.getFolderById(CRITERIA_ROOT_FOLDER_ID);
@@ -7045,59 +7110,69 @@ function searchInspectionCriteriaFolders_(keyword, productName) {
     throw new Error('검품 기준 폴더에 접근할 수 없습니다: ' + e.message);
   }
 
-  var results = [];
-
+  var targetCatFolder = null;
   var catIter = rootFolder.getFolders();
   while (catIter.hasNext()) {
-    var catFolder = catIter.next();
-    var catName   = catFolder.getName();
-    var isLivestock = (catName === '축산');
-    var isSeafood   = (catName === '수산');
+    var cf = catIter.next();
+    if (cf.getName().trim() === mappedCategory.trim()) {
+      targetCatFolder = cf;
+      break;
+    }
+  }
 
-    var lstCandidates = isLivestock ? getLivestockSpecialCandidates_(rawName) : null;
+  if (!targetCatFolder) {
+    console.warn('[searchInspectionCriteriaFolders_] Category folder not found in Drive: ' + mappedCategory);
+    return [];
+  }
 
-    var lvl2Iter = catFolder.getFolders();
-    while (lvl2Iter.hasNext()) {
-      var lvl2Folder = lvl2Iter.next();
-      var lvl2Name   = lvl2Folder.getName();
+  // ── Step 3: search only within the mapped category folder ────────────────────
+  var isLivestock  = (mappedCategory === '축산');
+  var isSeafood    = (mappedCategory === '수산');
+  var lstCandidates = isLivestock ? getLivestockSpecialCandidates_(rawName) : null;
 
-      var childIter = lvl2Folder.getFolders();
-      if (childIter.hasNext()) {
-        // Grouped container
-        do {
-          var childFolder = childIter.next();
-          var childName   = childFolder.getName();
-          var score       = matchesCriteriaFolder_(childName, variants);
+  var results = [];
 
-          if (score === 0 && isLivestock && lstCandidates) {
-            score = matchesCriteriaFolder_(childName, lstCandidates);
-            if (score > 0) score += 10; // livestock special = lower priority
-          }
+  var lvl2Iter = targetCatFolder.getFolders();
+  while (lvl2Iter.hasNext()) {
+    var lvl2Folder = lvl2Iter.next();
+    var lvl2Name   = lvl2Folder.getName();
 
-          if (score > 0) {
-            results.push({ id: childFolder.getId(), name: childName,
-                           category: catName, groupName: lvl2Name, _score: score });
-          }
-        } while (childIter.hasNext());
+    var childIter = lvl2Folder.getFolders();
+    if (childIter.hasNext()) {
+      // Grouped container
+      do {
+        var childFolder = childIter.next();
+        var childName   = childFolder.getName();
+        var score       = matchesCriteriaFolder_(childName, variants);
 
-      } else {
-        // Direct product folder
-        var score2 = matchesCriteriaFolder_(lvl2Name, variants);
-
-        if (score2 === 0 && isLivestock && lstCandidates) {
-          score2 = matchesCriteriaFolder_(lvl2Name, lstCandidates);
-          if (score2 > 0) score2 += 10;
+        if (score === 0 && isLivestock && lstCandidates) {
+          score = matchesCriteriaFolder_(childName, lstCandidates);
+          if (score > 0) score += 10;
         }
 
-        // Seafood fallback: include 종합 when product appears to be seafood
-        if (score2 === 0 && isSeafood && detectedCategory === '수산' && lvl2Name === '종합') {
-          score2 = 25;
+        if (score > 0) {
+          results.push({ id: childFolder.getId(), name: childName,
+                         category: mappedCategory, groupName: lvl2Name, _score: score });
         }
+      } while (childIter.hasNext());
 
-        if (score2 > 0) {
-          results.push({ id: lvl2Folder.getId(), name: lvl2Name,
-                         category: catName, groupName: null, _score: score2 });
-        }
+    } else {
+      // Direct product folder
+      var score2 = matchesCriteriaFolder_(lvl2Name, variants);
+
+      if (score2 === 0 && isLivestock && lstCandidates) {
+        score2 = matchesCriteriaFolder_(lvl2Name, lstCandidates);
+        if (score2 > 0) score2 += 10;
+      }
+
+      // Seafood: include 종합 as a low-priority fallback when product is seafood
+      if (score2 === 0 && isSeafood && lvl2Name === '종합') {
+        score2 = 25;
+      }
+
+      if (score2 > 0) {
+        results.push({ id: lvl2Folder.getId(), name: lvl2Name,
+                       category: mappedCategory, groupName: null, _score: score2 });
       }
     }
   }

@@ -1937,7 +1937,7 @@ function App() {
     setSyncing(true);
     try {
       await syncHistory();
-      // Reload history data for charts
+      // Reload 이력 archive; latestHistory recalculates and drives all KPI cards.
       const res = await fetchHistoryData();
       setHistoryData(Array.isArray(res.data) ? res.data : []);
       showToast("이력관리 기록 완료", "success");

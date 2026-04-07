@@ -203,9 +203,10 @@ export default function SummaryPage({ summary = {}, happycall = {}, jobRows = []
     return Math.round(v).toLocaleString('ko-KR');
   };
 
-  // ── Step 1: read from "이력" archive (latest history row) ──────────────────
-  // History rates are stored as percentage strings e.g. "87.6%" — fromHist
-  // strips the "%" and returns the numeric value 87.6 ready for fmtPct.
+  // ── Values from the latest "이력" archive row — sole source of truth for KPI cards ──
+  // All 12 KPI cards read exclusively from the latest history snapshot.
+  // Rates are stored as plain numbers (e.g. 87.6) after the fmtRate fix in Code.gs.
+  // fromHist() strips any stray "%" and returns a parsed number, or null if absent.
   const histTotalAmt     = fromHist('총 입고금액');
   const histTargetAmt    = fromHist('총 입고금액 (냉동/가공/계란 제외)');
   const histTotalQty     = fromHist('총 입고수량(개)');
@@ -214,125 +215,92 @@ export default function SummaryPage({ summary = {}, happycall = {}, jobRows = []
   const histInspRate     = fromHist('검품률 (전체)', '검품률');
   const histInspRateExcl = fromHist('검품률 (냉동/가공/계란 제외)');
   const histTotalSku     = fromHist('입고 SKU (전체)');
-  const histTargetSku    = fromHist('검품입고 SKU (검품불가 제외)');
+  const histTargetSku    = fromHist('검품입고 SKU (검품불가 제외)', '검품대상 SKU');
   const histInspSku      = fromHist('검품 SKU (실진행)');
   const histSkuCovAll    = fromHist('SKU 커버리지 (전체)');
   const histSkuCovExcl   = fromHist('SKU 커버리지 (냉동/가공/계란 제외)');
 
-  // ── Step 2: live-data fallback from backend summary (getDashboardSummary_) ──
-  // Summary rates are fractions (0.0–1.0); multiply × 100 for fmtPct.
-  // Summary keys from inspection_summary sheet written by updateInspectionDashboard_:
-  //   '검품 수량'        → inspectionQtyTotal
-  //   '검품 입고금액'    → targetInboundAmount
-  //   '검품 입고수량'    → targetInboundQty
-  //   '검품 SKU'         → inspectedSkuCount
-  //   '검품입고 SKU'     → targetSkuCount
-  //   '검품률'           → overall rate (fraction)
-  //   '실검품률'         → target-basis rate (fraction)
-  //   'SKU 커버리지'     → overall SKU coverage (fraction)
-  //   '실제 SKU 커버리지'→ target-basis SKU coverage (fraction)
-  const fromSum = (key) => {
-    const v = s[key];
-    if (v == null || v === '') return null;
-    const n = typeof v === 'number' ? v : Number(String(v).replace(/,/g, ''));
-    return isFinite(n) ? n : null;
-  };
-  const fromSumRate = (key) => {
-    const v = fromSum(key);
-    return v != null ? v * 100 : null;
-  };
-
-  // ── Step 3: resolved values — history first, live summary as fallback ───────
-  const resolvedTargetAmt    = histTargetAmt    ?? fromSum('검품 입고금액');
-  const resolvedTargetQty    = histTargetQty    ?? fromSum('검품 입고수량');
-  const resolvedInspQty      = histInspQty      ?? fromSum('검품 수량');
-  const resolvedInspSku      = histInspSku      ?? fromSum('검품 SKU');
-  const resolvedInspRate     = histInspRate     ?? fromSumRate('검품률');
-  const resolvedInspRateExcl = histInspRateExcl ?? fromSumRate('실검품률');
-  const resolvedSkuCovAll    = histSkuCovAll    ?? fromSumRate('SKU 커버리지');
-  const resolvedSkuCovExcl   = histSkuCovExcl  ?? fromSumRate('실제 SKU 커버리지');
-
   const kpis = [
     {
       label: '총 금액',
-      value: fmtAmt(histTotalAmt ?? (hasPriceData ? totalAmount : null)),
+      value: fmtAmt(histTotalAmt),
       sub: '원',
       color: C.primary, bg: C.primaryLight, border: C.primaryMid,
       icon: <BarChart3 size={16} strokeWidth={2} />,
     },
     {
       label: '검품대상 금액',
-      value: fmtAmt(resolvedTargetAmt),
+      value: fmtAmt(histTargetAmt),
       sub: '원 (제외목록 제외)',
       color: C.primary, bg: C.primaryLight, border: C.primaryMid,
       icon: <BarChart3 size={16} strokeWidth={2} />,
     },
     {
       label: '총 SKU',
-      value: histTotalSku != null ? String(Math.round(histTotalSku)) : String(totalSku),
+      value: histTotalSku != null ? String(Math.round(histTotalSku)) : '-',
       sub: '품목',
       color: C.textSec || '#64748b', bg: C.bgAlt, border: C.border,
       icon: <Package size={16} strokeWidth={2} />,
     },
     {
       label: '검품대상 SKU',
-      value: histTargetSku != null ? String(Math.round(histTargetSku)) : String(resolvedInspTargetSku),
+      value: histTargetSku != null ? String(Math.round(histTargetSku)) : '-',
       sub: '품목 (제외목록 제외)',
       color: C.orange, bg: C.orangeLight, border: C.orangeMid,
       icon: <ClipboardList size={16} strokeWidth={2} />,
     },
     {
       label: '총 수량',
-      value: fmtQty(histTotalQty ?? totalOrderedQty),
+      value: fmtQty(histTotalQty),
       sub: '개',
       color: C.green, bg: C.greenLight, border: C.greenMid,
       icon: <TrendingUp size={16} strokeWidth={2} />,
     },
     {
       label: '검품대상 수량',
-      value: fmtQty(resolvedTargetQty),
+      value: fmtQty(histTargetQty),
       sub: '개 (제외목록 제외)',
       color: C.green, bg: C.greenLight, border: C.greenMid,
       icon: <TrendingUp size={16} strokeWidth={2} />,
     },
     {
       label: '검품수량',
-      value: fmtQty(resolvedInspQty),
+      value: fmtQty(histInspQty),
       sub: '개',
       color: C.primary, bg: C.primaryLight, border: C.primaryMid,
       icon: <ClipboardList size={16} strokeWidth={2} />,
     },
     {
       label: '검품 SKU (실진행)',
-      value: resolvedInspSku != null ? String(Math.round(resolvedInspSku)) : '-',
+      value: histInspSku != null ? String(Math.round(histInspSku)) : '-',
       sub: '품목',
       color: C.orange, bg: C.orangeLight, border: C.orangeMid,
       icon: <Package size={16} strokeWidth={2} />,
     },
     {
       label: '검품률 (전체)',
-      value: fmtPct(resolvedInspRate),
+      value: fmtPct(histInspRate),
       sub: '검품수량 / 총 수량',
       color: C.primary, bg: C.primaryLight, border: C.primaryMid,
       icon: <TrendingUp size={16} strokeWidth={2} />,
     },
     {
       label: '검품률 (대상기준)',
-      value: fmtPct(resolvedInspRateExcl),
+      value: fmtPct(histInspRateExcl),
       sub: '검품수량 / 검품대상 수량',
       color: C.primary, bg: C.primaryLight, border: C.primaryMid,
       icon: <TrendingUp size={16} strokeWidth={2} />,
     },
     {
       label: 'SKU 커버리지 (전체)',
-      value: fmtPct(resolvedSkuCovAll),
+      value: fmtPct(histSkuCovAll),
       sub: '검품SKU / 총SKU',
       color: C.orange, bg: C.orangeLight, border: C.orangeMid,
       icon: <BarChart3 size={16} strokeWidth={2} />,
     },
     {
       label: 'SKU 커버리지 (대상기준)',
-      value: fmtPct(resolvedSkuCovExcl),
+      value: fmtPct(histSkuCovExcl),
       sub: '검품SKU / 검품대상SKU',
       color: C.orange, bg: C.orangeLight, border: C.orangeMid,
       icon: <BarChart3 size={16} strokeWidth={2} />,
