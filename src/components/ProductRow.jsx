@@ -105,8 +105,17 @@ const ProductRow = React.memo(function ProductRow({
     // Rate limiter: never fire more than once per 2 s for the same row, regardless
     // of other guards.  Prevents timer-collision loops from versionConflict retries.
     const now = Date.now();
-    if (now - lastSaveAttemptTimeRef.current < 2000) {
+    const elapsed = now - lastSaveAttemptTimeRef.current;
+    if (elapsed < 2000) {
       pendingSaveRef.current = true;
+      // Schedule a deferred retry so this pending save is never lost.
+      const waitMs = 2000 - elapsed + 50;
+      if (!saveTimerRef.current) {
+        saveTimerRef.current = setTimeout(() => {
+          saveTimerRef.current = null;
+          runSaveRef.current?.();
+        }, waitMs);
+      }
       return;
     }
 
@@ -342,26 +351,6 @@ const ProductRow = React.memo(function ProductRow({
                   }}>
                     {row['상품명'] || '—'}
                   </p>
-                  <button
-                    type="button"
-                    onClick={(e) => { e.stopPropagation(); setShowCriteria(true); }}
-                    title="검품기준 보기"
-                    style={{
-                      flexShrink: 0,
-                      height: 18, padding: '0 6px',
-                      fontSize: 10, fontWeight: 700, lineHeight: 1,
-                      color: C.primary,
-                      background: C.primaryLight,
-                      border: `1px solid ${C.primaryMid}`,
-                      borderRadius: radius.xs || 3,
-                      cursor: 'pointer',
-                      fontFamily: font.base,
-                      whiteSpace: 'nowrap',
-                      display: 'inline-flex', alignItems: 'center',
-                    }}
-                  >
-                    기준
-                  </button>
                 </div>
                 <p style={{
                   margin: 0, fontSize: 11, color: C.muted, lineHeight: 1.3,
@@ -516,6 +505,28 @@ const ProductRow = React.memo(function ProductRow({
                 >
                   <Eye size={13} strokeWidth={2} />
                 </button>
+                {/* Criteria button — far right of the supplier/qty row */}
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); setShowCriteria(true); }}
+                  title="검품기준 보기"
+                  className="action-btn"
+                  style={{
+                    height: 32, padding: '0 9px',
+                    fontSize: 11, fontWeight: 700,
+                    color: C.primary,
+                    background: C.primaryLight,
+                    border: `1px solid ${C.primaryMid}`,
+                    borderRadius: radius.sm,
+                    cursor: 'pointer',
+                    fontFamily: font.base,
+                    whiteSpace: 'nowrap',
+                    display: 'inline-flex', alignItems: 'center',
+                    flex: '0 0 auto',
+                  }}
+                >
+                  기준
+                </button>
               </div>
 
             </div>
@@ -551,6 +562,7 @@ const ProductRow = React.memo(function ProductRow({
             productName: row['상품명'] || '',
             partnerName: row['협력사명'] || '',
           }}
+          photoType={showPhotoType}
           existingFileIds={
             showPhotoType === 'insp'   ? inspPhotoIds   :
             showPhotoType === 'defect' ? defectPhotoIds :

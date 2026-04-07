@@ -161,19 +161,26 @@ export default function InspectionPage({
           }
         }
 
-        const inspQty = String(ir['검품수량'] || '');
-        if (inspQty && inspQty !== '0' && !existing.inspQty) {
-          updates.inspQty = inspQty;
+        // Always apply non-empty server values so data stays consistent across
+        // devices. The server is the authoritative source; the local draft is only
+        // a temporary staging area until the save round-trips.  We only skip the
+        // update when local already matches the server value (nothing changed).
+        const srvInspQty = String(ir['검품수량'] || '');
+        if (srvInspQty && srvInspQty !== '0' && existing.inspQty !== srvInspQty) {
+          updates.inspQty = srvInspQty;
           changed = true;
         }
-        const defectReason = String(ir['불량사유'] || '').trim();
-        if (defectReason && !existing.defectReason) {
-          updates.defectReason = defectReason;
+        const srvDefectReason = String(ir['불량사유'] || '').trim();
+        if (srvDefectReason && existing.defectReason !== srvDefectReason) {
+          updates.defectReason = srvDefectReason;
           changed = true;
         }
-        if (ir['BRIX최저'] && !existing.brixMin) { updates.brixMin = String(ir['BRIX최저']); changed = true; }
-        if (ir['BRIX최고'] && !existing.brixMax) { updates.brixMax = String(ir['BRIX최고']); changed = true; }
-        if (ir['BRIX평균'] && !existing.brixAvg) { updates.brixAvg = String(ir['BRIX평균']); changed = true; }
+        const srvBrixMin = String(ir['BRIX최저'] || '').trim();
+        if (srvBrixMin && existing.brixMin !== srvBrixMin) { updates.brixMin = srvBrixMin; changed = true; }
+        const srvBrixMax = String(ir['BRIX최고'] || '').trim();
+        if (srvBrixMax && existing.brixMax !== srvBrixMax) { updates.brixMax = srvBrixMax; changed = true; }
+        const srvBrixAvg = String(ir['BRIX평균'] || '').trim();
+        if (srvBrixAvg && existing.brixAvg !== srvBrixAvg) { updates.brixAvg = srvBrixAvg; changed = true; }
 
         if (Object.keys(updates).length > 0) {
           next[key] = { ...existing, ...updates };

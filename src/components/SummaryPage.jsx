@@ -99,9 +99,10 @@ export default function SummaryPage({ summary = {}, happycall = {}, jobRows = []
       const code    = r.__productCode || '';
       const qty     = Number(r.__qty) || 0;
       const partner = r.__partner || r['협력사명'] || '';
+      const skuKey  = code + '||' + partner;
       csvQtySum += qty;
-      if (code) codes.add(code);
-      if (code && qty > 0 && !isExcludedRow(code, partner)) inspCodes.add(code);
+      if (code) codes.add(skuKey);
+      if (code && qty > 0 && !isExcludedRow(code, partner)) inspCodes.add(skuKey);
 
       let rowAmount = NaN;
       for (const col of PRICE_COLS) {
@@ -131,9 +132,10 @@ export default function SummaryPage({ summary = {}, happycall = {}, jobRows = []
       const code    = String(getField(CODE_COLS) || '').trim();
       const qty     = toNumber(getField(QTY_COLS) || '0') || 0;
       const partner = String(r['협력사명'] || r['협력사'] || '').trim();
+      const skuKey  = code + '||' + partner;
       csvQtySum += qty;
-      if (code) codes.add(code);
-      if (code && qty > 0 && !isExcludedRow(code, partner)) inspCodes.add(code);
+      if (code) codes.add(skuKey);
+      if (code && qty > 0 && !isExcludedRow(code, partner)) inspCodes.add(skuKey);
       const rawCost = getField(COST_COLS);
       if (rawCost !== '') {
         const cost = toNumber(rawCost);
@@ -158,6 +160,24 @@ export default function SummaryPage({ summary = {}, happycall = {}, jobRows = []
   // so the KPI card always matches the header SKU badge exactly.
   const resolvedInspTargetSku = inspTargetSkuProp != null ? inspTargetSkuProp : inspTargetSku;
 
+  // Pull the most recent history row for live metrics (검품수량, 검품률, SKU 커버리지, etc.)
+  const latestHistory = useMemo(() => {
+    if (!Array.isArray(historyData) || historyData.length === 0) return null;
+    return [...historyData].sort((a, b) => String(b['일자']).localeCompare(String(a['일자'])))[0];
+  }, [historyData]);
+
+  const fromHist = (key) => {
+    if (!latestHistory) return null;
+    const v = latestHistory[key];
+    if (v == null || v === '') return null;
+    const n = typeof v === 'number' ? v : Number(String(v).replace(/[%,]/g, ''));
+    return isFinite(n) ? n : null;
+  };
+
+  // History rate values are stored as "XX.XX%" strings → parse to 0-100 scale number.
+  // fmtPct returns them formatted back as percentage strings.
+  const fmtPct = (v) => v != null ? v.toFixed(1) + '%' : '-';
+
   const formatKoreanAmount = (value) => {
     if (value >= 100_000_000) return (value / 100_000_000).toFixed(2) + '억';
     if (value >= 10_000)      return Math.round(value / 10_000) + '만';
@@ -173,11 +193,11 @@ export default function SummaryPage({ summary = {}, happycall = {}, jobRows = []
       icon: <BarChart3 size={16} strokeWidth={2} />,
     },
     {
-      label: '총 상품수량',
-      value: totalOrderedQty.toLocaleString(),
-      sub: '개',
-      color: C.green, bg: C.greenLight, border: C.greenMid,
-      icon: <TrendingUp size={16} strokeWidth={2} />,
+      label: '검품대상 금액',
+      value: (() => { const v = fromHist('총 입고금액 (냉동/가공/계란 제외)'); return v != null && v > 0 ? formatKoreanAmount(v) : '-'; })(),
+      sub: '원 (제외목록 제외)',
+      color: C.primary, bg: C.primaryLight, border: C.primaryMid,
+      icon: <BarChart3 size={16} strokeWidth={2} />,
     },
     {
       label: '총 SKU',
@@ -189,9 +209,65 @@ export default function SummaryPage({ summary = {}, happycall = {}, jobRows = []
     {
       label: '검품대상 SKU',
       value: String(resolvedInspTargetSku),
-      sub: '품목',
+      sub: '품목 (제외목록 제외)',
       color: C.orange, bg: C.orangeLight, border: C.orangeMid,
       icon: <ClipboardList size={16} strokeWidth={2} />,
+    },
+    {
+      label: '총 상품수량',
+      value: totalOrderedQty.toLocaleString(),
+      sub: '개',
+      color: C.green, bg: C.greenLight, border: C.greenMid,
+      icon: <TrendingUp size={16} strokeWidth={2} />,
+    },
+    {
+      label: '검품대상 수량',
+      value: (() => { const v = fromHist('총 입고수량(개) (냉동/가공/계란 제외)'); return v != null ? v.toLocaleString() : '-'; })(),
+      sub: '개 (제외목록 제외)',
+      color: C.green, bg: C.greenLight, border: C.greenMid,
+      icon: <TrendingUp size={16} strokeWidth={2} />,
+    },
+    {
+      label: '검품수량',
+      value: (() => { const v = fromHist('검품수량(개)'); return v != null ? v.toLocaleString() : '-'; })(),
+      sub: '개',
+      color: C.primary, bg: C.primaryLight, border: C.primaryMid,
+      icon: <ClipboardList size={16} strokeWidth={2} />,
+    },
+    {
+      label: '검품 SKU (실진행)',
+      value: (() => { const v = fromHist('검품 SKU (실진행)'); return v != null ? String(v) : '-'; })(),
+      sub: '품목',
+      color: C.orange, bg: C.orangeLight, border: C.orangeMid,
+      icon: <Package size={16} strokeWidth={2} />,
+    },
+    {
+      label: '검품률 (전체)',
+      value: fmtPct(fromHist('검품률 (전체)')),
+      sub: '검품수량 / 총 수량',
+      color: C.primary, bg: C.primaryLight, border: C.primaryMid,
+      icon: <TrendingUp size={16} strokeWidth={2} />,
+    },
+    {
+      label: '검품률 (대상기준)',
+      value: fmtPct(fromHist('검품률 (냉동/가공/계란 제외)')),
+      sub: '검품수량 / 검품대상 수량',
+      color: C.primary, bg: C.primaryLight, border: C.primaryMid,
+      icon: <TrendingUp size={16} strokeWidth={2} />,
+    },
+    {
+      label: 'SKU 커버리지 (전체)',
+      value: fmtPct(fromHist('SKU 커버리지 (전체)')),
+      sub: '검품SKU / 총SKU',
+      color: C.orange, bg: C.orangeLight, border: C.orangeMid,
+      icon: <BarChart3 size={16} strokeWidth={2} />,
+    },
+    {
+      label: 'SKU 커버리지 (대상기준)',
+      value: fmtPct(fromHist('SKU 커버리지 (냉동/가공/계란 제외)')),
+      sub: '검품SKU / 검품대상SKU',
+      color: C.orange, bg: C.orangeLight, border: C.orangeMid,
+      icon: <BarChart3 size={16} strokeWidth={2} />,
     },
   ];
 
@@ -204,7 +280,7 @@ export default function SummaryPage({ summary = {}, happycall = {}, jobRows = []
       transition={{ duration: 0.2 }}
       style={{ padding: '14px 12px 80px' }}
     >
-      {/* ── 4 KPI cards ── */}
+      {/* ── 12 KPI cards (3 per row) ── */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 9, marginBottom: 18 }}>
         {kpis.map((k, i) => (
           <motion.div
@@ -283,10 +359,18 @@ export default function SummaryPage({ summary = {}, happycall = {}, jobRows = []
 
 // ── Trend chart sub-component ──────────────────────────────────────────────────
 const CHART_METRICS = [
-  { key: '총 입고금액',                 label: '총 금액',      color: '#5876a4' },
-  { key: '총 입고수량(개)',              label: '입고수량',     color: '#16a34a' },
-  { key: '입고 SKU (전체)',              label: '총 SKU',       color: '#d97706' },
-  { key: '검품입고 SKU (검품불가 제외)', label: '검품대상 SKU', color: '#e11d48' },
+  { key: '총 입고금액',                              label: '총 금액',          color: '#5876a4' },
+  { key: '총 입고금액 (냉동/가공/계란 제외)',          label: '검품대상 금액',     color: '#8b5cf6' },
+  { key: '총 입고수량(개)',                           label: '총 수량',           color: '#16a34a' },
+  { key: '총 입고수량(개) (냉동/가공/계란 제외)',       label: '검품대상 수량',     color: '#059669' },
+  { key: '검품수량(개)',                              label: '검품수량',           color: '#2563eb' },
+  { key: '입고 SKU (전체)',                           label: '총 SKU',            color: '#d97706' },
+  { key: '검품입고 SKU (검품불가 제외)',               label: '검품대상 SKU',      color: '#e11d48' },
+  { key: '검품 SKU (실진행)',                         label: '검품 SKU',           color: '#f59e0b' },
+  { key: '검품률 (전체)',                             label: '검품률(전체)',        color: '#06b6d4' },
+  { key: '검품률 (냉동/가공/계란 제외)',               label: '검품률(대상)',        color: '#0284c7' },
+  { key: 'SKU 커버리지 (전체)',                       label: 'SKU 커버리지(전체)', color: '#84cc16' },
+  { key: 'SKU 커버리지 (냉동/가공/계란 제외)',         label: 'SKU 커버리지(대상)', color: '#65a30d' },
 ];
 
 const PERIODS = ['일별', '주별', '월별'];

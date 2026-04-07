@@ -1966,18 +1966,22 @@ function App() {
 
   // ── Header summary chips ─────────────────────────────────────────────────────
   const headerSkuCount = useMemo(() => {
-    const codes = new Set((jobRows || []).map((r) => r.__productCode).filter(Boolean));
-    return codes.size;
+    const keys = new Set(
+      (jobRows || [])
+        .filter((r) => r.__productCode)
+        .map((r) => `${r.__productCode}||${r.__partner || r['협력사명'] || ''}`)
+    );
+    return keys.size;
   }, [jobRows]);
 
   const headerInspCount = useMemo(() => {
-    const codes = new Set();
+    const keys = new Set();
     for (const r of (inspectionRows || [])) {
       if (parseInt(r['검품수량'], 10) > 0 && r['상품코드']) {
-        codes.add(String(r['상품코드']).trim());
+        keys.add(`${String(r['상품코드']).trim()}||${String(r['협력사명'] || '').trim()}`);
       }
     }
-    return codes.size;
+    return keys.size;
   }, [inspectionRows]);
 
   // eslint-disable-next-line no-unused-vars

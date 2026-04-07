@@ -3580,8 +3580,19 @@ function syncInspectionMovementTotals_(inspectionSheet, recordsSheet) {
 function uploadPhotos_(payload) {
   var itemKey = String(payload.itemKey || "").trim();
   var productName = String(payload.productName || payload.baseName || "상품").trim();
+  var partnerName = String(payload["협력사명"] || payload.partnerName || "").trim();
+
+  // Map photo type to Korean filename prefix — no fallback to "기타" for known types.
+  var photoType = String(payload.photoType || "insp").trim().toLowerCase();
+  var categoryPrefixMap = { insp: "검품", defect: "불량", weight: "중량", brix: "당도" };
+  var categoryPrefix = categoryPrefixMap[photoType] || categoryPrefixMap["insp"];
+
+  // Build baseName: {prefix}_{productName}_{supplier}
+  var baseName = categoryPrefix + "_" + productName;
+  if (partnerName) baseName += "_" + partnerName;
+
   var photos = Array.isArray(payload.photos) ? payload.photos : [];
-  var uploaded = savePhotosToDrive_(photos, productName, "");
+  var uploaded = savePhotosToDrive_(photos, baseName, "");
 
   return {
     itemKey: itemKey,
@@ -4889,8 +4900,19 @@ function upsertPhotoAsset_(assetKey, fileIdsText, preloadedMap, categoriesJSON) 
   var sheet = getPhotoAssetSheet_(ss);
   var map = preloadedMap !== undefined ? preloadedMap : loadPhotoAssetMap_(ss);
   var photoCount = splitPhotoSourceText_(normalizedFileIds).length;
-  var rowValues = [[key, normalizedFileIds, photoCount, new Date().toISOString(), categoriesJSON || ""]];
   var existing = map[key];
+
+  // Preserve the previously stored categoriesJSON when the current save does not
+  // include category data (e.g. a qty-only save where no new photos were attached).
+  // Only overwrite when a non-empty categoriesJSON is explicitly provided.
+  var finalCategoriesJSON = categoriesJSON || "";
+  if (!finalCategoriesJSON && existing && existing.categories) {
+    try {
+      finalCategoriesJSON = JSON.stringify(existing.categories);
+    } catch (_) {}
+  }
+
+  var rowValues = [[key, normalizedFileIds, photoCount, new Date().toISOString(), finalCategoriesJSON]];
 
   if (existing && existing.rowNumber) {
     sheet.getRange(existing.rowNumber, 1, 1, rowValues[0].length).setValues(rowValues);
@@ -4988,11 +5010,9 @@ function savePhotoToDrive_(photo, baseName, index, preferredFileName) {
 }
 
 function buildPreferredPhotoFileName_(photo, baseName, index) {
-  var rawName = sanitizeFileName_(String((photo && photo.fileName) || "").trim());
-  if (rawName) {
-    return rawName;
-  }
-
+  // Always derive the filename from baseName (which already contains the category prefix,
+  // product name, and supplier).  Using the raw device filename (e.g. "IMG_1234.jpg")
+  // would strip the category prefix and break the naming rule.
   var safeBaseName = sanitizeFileName_(baseName || "상품");
   var extension =
     getExtensionFromMimeType_((photo && photo.mimeType) || "") ||
@@ -5447,13 +5467,13 @@ function syncHistorySheet_(ss) {
 
     totalInboundAmount += qty * cost;
     totalInboundQty    += qty;
-    totalSkuSet[code]   = true;
+    totalSkuSet[code + "||" + partner]   = true;
     codePartnerExclMap[code + "||" + partner] = excluded;
 
     if (!excluded) {
       nonExclInboundAmount  += qty * cost;
       nonExclInboundQty     += qty;
-      nonExclSkuSet[code]    = true;
+      nonExclSkuSet[code + "||" + partner]    = true;
     }
   });
 
@@ -5475,11 +5495,11 @@ function syncHistorySheet_(ss) {
       : isRowExcluded(code, partner);
 
     totalInspectedQty += qty;
-    if (qty > 0) inspectedSkuSet[code] = true;
+    if (qty > 0) inspectedSkuSet[code + "||" + partner] = true;
 
     if (!excluded) {
       nonExclInspectedQty += qty;
-      if (qty > 0) nonExclInspectedSkuSet[code] = true;
+      if (qty > 0) nonExclInspectedSkuSet[code + "||" + partner] = true;
     }
   });
 
@@ -5491,8 +5511,11 @@ function syncHistorySheet_(ss) {
 
   // ── 7. Rate calculations ──────────────────────────────────────────────────
   var fmtRate = function(num, den) {
-    if (!den) return "0%";
-    return (Math.round(num / den * 10000) / 100) + "%";
+    if (!den || den === 0) return "0.0%";
+    var pct = num / den * 100;
+    // Show at least 1 decimal; avoid rounding non-zero values to 0
+    if (pct > 0 && pct < 0.05) return "0.0%";
+    return pct.toFixed(1) + "%";
   };
   var overallInspRate = fmtRate(totalInspectedQty, totalInboundQty);     // G
   var nonExclInspRate = fmtRate(nonExclInspectedQty, nonExclInboundQty); // H
@@ -5553,27 +5576,21 @@ function syncHistorySheet_(ss) {
     skuCovNonExcl,
   ];
 
-  // Append or update today's row. Deduplicate by date so multiple runs on the
-  // same day overwrite the existing row instead of creating duplicates.
+  // Delete ALL rows for today's date, then append a fresh row.
+  // This ensures the "이력관리" sheet keeps exactly one row per date.
   var lastRow = histSheet.getLastRow();
-  var existingDateRow = -1;
   if (lastRow >= 2) {
     var dateCol = histSheet.getRange(2, 1, lastRow - 1, 1).getValues();
-    for (var di = 0; di < dateCol.length; di++) {
+    // Iterate in reverse so deleting rows doesn't shift indices.
+    for (var di = dateCol.length - 1; di >= 0; di--) {
       if (String(dateCol[di][0]).trim() === dateStr) {
-        existingDateRow = di + 2; // convert to 1-based sheet row number
-        break;
+        histSheet.deleteRow(di + 2); // convert to 1-based sheet row number
       }
     }
   }
-  if (existingDateRow > 0) {
-    // Update the existing row for today
-    histSheet.getRange(existingDateRow, 1, 1, rowValues.length).setValues([rowValues]);
-  } else {
-    // No row for today yet — append a new one
-    histSheet.appendRow(rowValues);
-  }
-  console.log("[syncHistorySheet_] wrote row for date=" + dateStr + (existingDateRow > 0 ? " (updated)" : " (appended)"));
+  // Append the fresh row for today.
+  histSheet.appendRow(rowValues);
+  console.log("[syncHistorySheet_] wrote fresh row for date=" + dateStr);
 }
 
 // ── Daily scheduled jobs ───────────────────────────────────
@@ -6746,7 +6763,27 @@ function ensureHeaderRow_(sheet, headers) {
  */
 function searchInspectionCriteriaFolders_(keyword) {
   if (!keyword) return [];
-  var q = keyword.toLowerCase();
+
+  // Build multiple normalized query variants so partial / decorated names match.
+  // 1. original (lowercased + trimmed)
+  // 2. whitespace removed
+  // 3. brackets, parentheses, dots, hyphens, underscores removed
+  var q1 = keyword.toLowerCase().trim();
+  var q2 = q1.replace(/\s+/g, '');
+  var q3 = q1.replace(/[\[\]\(\)\.\-_]/g, '').replace(/\s+/g, '');
+  // Deduplicate and discard empty strings
+  var queries = [q1, q2, q3].filter(function (q, i, arr) {
+    return q.length > 0 && arr.indexOf(q) === i;
+  });
+
+  var matchesAny = function (name) {
+    var lower = name.toLowerCase();
+    for (var qi = 0; qi < queries.length; qi++) {
+      if (lower.indexOf(queries[qi]) >= 0) return true;
+    }
+    return false;
+  };
+
   var results = [];
 
   var rootFolder;
@@ -6768,17 +6805,13 @@ function searchInspectionCriteriaFolders_(keyword) {
       var lvl2Folder = lvl2Iter.next();
       var lvl2Name = lvl2Folder.getName();
 
-      // Check whether this level-2 folder is a grouped container by probing
-      // for sub-folders.  getFolders() is lazy, so hasNext() is the only call
-      // needed when there are no matches.
       var childIter = lvl2Folder.getFolders();
       if (childIter.hasNext()) {
-        // ── Grouped container (e.g. [채소]검품기준표_기타종합) ──────────────
-        // Search its direct children (the actual product folders).
+        // ── Grouped container ──────────────────────────────────────────────
         do {
           var childFolder = childIter.next();
           var childName = childFolder.getName();
-          if (childName.toLowerCase().indexOf(q) >= 0) {
+          if (matchesAny(childName)) {
             results.push({
               id:        childFolder.getId(),
               name:      childName,
@@ -6789,7 +6822,7 @@ function searchInspectionCriteriaFolders_(keyword) {
         } while (childIter.hasNext());
       } else {
         // ── Direct product folder ─────────────────────────────────────────
-        if (lvl2Name.toLowerCase().indexOf(q) >= 0) {
+        if (matchesAny(lvl2Name)) {
           results.push({
             id:        lvl2Folder.getId(),
             name:      lvl2Name,

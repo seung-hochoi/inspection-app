@@ -21,7 +21,7 @@ import { uploadPhotos } from '../api';
  *   3. On success → onDone(merged Drive IDs) + onClose()
  *   4. On error → preview kept visible + error message + retry button
  */
-export default function PhotoUploader({ jobKey, product, existingFileIds = [], onDone, onClose }) {
+export default function PhotoUploader({ jobKey, product, photoType = 'insp', existingFileIds = [], onDone, onClose }) {
   const [localUrls, setLocalUrls] = useState([]);   // blob URL previews shown before upload
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState('');
@@ -39,6 +39,8 @@ export default function PhotoUploader({ jobKey, product, existingFileIds = [], o
       blobUrlsRef.current = [];
     };
   }, []);
+
+  const PHOTO_TYPE_LABEL = { insp: '검품', defect: '불량', weight: '중량', brix: '당도' };
 
   // Core upload routine — accepts explicit file list and their matching blob URLs
   const doUpload = useCallback(async (files, urls) => {
@@ -62,6 +64,7 @@ export default function PhotoUploader({ jobKey, product, existingFileIds = [], o
         productName: product.productName || '',
         '상품코드': normalizeProductCode(product.productCode) || '',
         '협력사명': product.partnerName || '',
+        photoType,
         photos,
       };
       const result = await uploadPhotos(payload);
@@ -141,7 +144,7 @@ export default function PhotoUploader({ jobKey, product, existingFileIds = [], o
         {/* Header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
           <div>
-            <p style={{ margin: 0, fontSize: 16, fontWeight: 700, color: C.text, letterSpacing: '-0.01em' }}>사진 업로드</p>
+            <p style={{ margin: 0, fontSize: 16, fontWeight: 700, color: C.text, letterSpacing: '-0.01em' }}>{PHOTO_TYPE_LABEL[photoType] || '사진'} 사진 업로드</p>
             <p style={{ margin: '3px 0 0', fontSize: 12, color: C.muted }}>
               {product.productName} · {product.partnerName}
             </p>
