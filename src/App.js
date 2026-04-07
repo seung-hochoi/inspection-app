@@ -1964,6 +1964,34 @@ function App() {
       .catch(() => {}); // silently ignore if backend not reachable
   }, []);
 
+  // ── Lightweight auto-refresh: detect changes from other users every 12 s ────
+  // Polls only a tiny timestamp endpoint (no sheet reads on the backend).
+  // Only refetches inspection rows when the timestamp has actually changed.
+  // Never overwrites an input that the user is currently editing (the
+  // InspectionPage hydration effect already guards against that).
+  const lastKnownSaveTs = useRef('');
+  useEffect(() => {
+    if (!authUser || !SCRIPT_URL) return;
+    const poll = setInterval(async () => {
+      try {
+        const res = await fetch(`${SCRIPT_URL}?action=getLastUpdated`, { cache: 'no-store' });
+        if (!res.ok) return;
+        const data = await res.json();
+        const ts = data.lastUpdated || '';
+        if (!ts || ts === lastKnownSaveTs.current) return;
+        lastKnownSaveTs.current = ts;
+        // Fetch fresh inspection rows without triggering a full-page loading state
+        const rowRes = await fetch(`${SCRIPT_URL}?action=getInspectionRows`, { cache: 'no-store' });
+        if (!rowRes.ok) return;
+        const rowData = await rowRes.json();
+        if (Array.isArray(rowData.rows)) {
+          setInspectionRows(rowData.rows);
+        }
+      } catch (_) { /* network hiccup — skip tick */ }
+    }, 12_000);
+    return () => clearInterval(poll);
+  }, [authUser]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // ── Header summary chips ─────────────────────────────────────────────────────
   const headerSkuCount = useMemo(() => {
     const keys = new Set(

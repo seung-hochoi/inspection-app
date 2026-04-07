@@ -598,6 +598,14 @@ function doGet(e) {
       return jsonOutput_(fsr);
     }
 
+    // ── Lightweight sync-check endpoint ──────────────────────────────────────
+    // Returns only the last-saved-at timestamp stored in ScriptProperties.
+    // The frontend polls this every 12 s and only refetches rows when changed.
+    if (action === "getLastUpdated") {
+      var ts = PropertiesService.getScriptProperties().getProperty('last_saved_at') || '';
+      return jsonOutput_({ ok: true, lastUpdated: ts });
+    }
+
     // ── Inspection criteria search (검품 기준 검색) ───────────────────────────
     // Searches folder names inside CRITERIA_ROOT_FOLDER_ID.
     // No sheet reads — pure Drive API. No auth required (public reference data).
@@ -3258,6 +3266,14 @@ function saveBatch_(rows) {
     }
   });
 
+  // Stamp the last-saved timestamp in ScriptProperties so the lightweight
+  // getLastUpdated poll can detect changes without reading any sheets.
+  try {
+    PropertiesService.getScriptProperties().setProperty(
+      'last_saved_at', new Date().toISOString()
+    );
+  } catch (_) {}
+
   return {
     inspectionRows: inspectionRows,
     movementRows: movementRows,
@@ -3592,7 +3608,9 @@ function uploadPhotos_(payload) {
   if (partnerName) baseName += "_" + partnerName;
 
   var photos = Array.isArray(payload.photos) ? payload.photos : [];
-  var uploaded = savePhotosToDrive_(photos, baseName, "");
+  // Route upload to the correct category subfolder inside 검품 사진.
+  var subFolderId = getOrCreatePhotoSubFolder_(photoType);
+  var uploaded = savePhotosToDrive_(photos, baseName, "", subFolderId);
 
   return {
     itemKey: itemKey,
@@ -4939,7 +4957,7 @@ function buildDriveViewUrl_(fileId) {
 }
 
 // ── Drive upload ───────────────────────────────────────────
-function savePhotosToDrive_(photos, baseName, existingFileIdsText) {
+function savePhotosToDrive_(photos, baseName, existingFileIdsText, folderId) {
   const list = Array.isArray(photos) ? photos : [];
   const saved = [];
   const existingNames = getExistingPhotoNameMap_(existingFileIdsText);
@@ -4954,11 +4972,53 @@ function savePhotosToDrive_(photos, baseName, existingFileIdsText) {
       }
 
       incomingNames[dedupeKey] = true;
-      saved.push(savePhotoToDrive_(photo, baseName, saved.length, preferredFileName));
+      saved.push(savePhotoToDrive_(photo, baseName, saved.length, preferredFileName, folderId));
     }
   });
 
   return saved;
+}
+
+// ── Photo subfolder routing ────────────────────────────────
+// Cache subfolder IDs within one script execution to avoid repeated Drive API calls.
+var photoSubFolderCache_ = {};
+
+/**
+ * Returns the Korean folder name for a given photoType code.
+ * insp/inspection → 검품
+ * defect/exchange/return → 불량
+ * weight → 중량
+ * brix/sugar → 당도
+ */
+function getPhotoSubFolderName_(photoType) {
+  var t = String(photoType || 'insp').toLowerCase();
+  if (t === 'insp' || t === 'inspection') return '검품';
+  if (t === 'defect' || t === 'exchange' || t === 'return') return '불량';
+  if (t === 'weight') return '중량';
+  if (t === 'brix' || t === 'sugar') return '당도';
+  return '검품';
+}
+
+/**
+ * Returns the Drive folder ID for a given photoType's subfolder,
+ * creating it inside PHOTO_UPLOAD_FOLDER_ID if it doesn't exist yet.
+ */
+function getOrCreatePhotoSubFolder_(photoType) {
+  var folderName = getPhotoSubFolderName_(photoType);
+  if (photoSubFolderCache_[folderName]) return photoSubFolderCache_[folderName];
+
+  var parent;
+  try {
+    parent = DriveApp.getFolderById(PHOTO_UPLOAD_FOLDER_ID);
+  } catch (e) {
+    throw new Error('[getOrCreatePhotoSubFolder_] 부모 폴더에 접근할 수 없습니다: ' + e.message);
+  }
+
+  var iter = parent.getFoldersByName(folderName);
+  var sub = iter.hasNext() ? iter.next() : parent.createFolder(folderName);
+  var id = sub.getId();
+  photoSubFolderCache_[folderName] = id;
+  return id;
 }
 
 function getOrCreatePhotoFolder_() {
@@ -4978,8 +5038,9 @@ function getOrCreatePhotoFolder_() {
   return PHOTO_UPLOAD_FOLDER_ID;
 }
 
-function savePhotoToDrive_(photo, baseName, index, preferredFileName) {
-  const folderId = getOrCreatePhotoFolder_();
+function savePhotoToDrive_(photo, baseName, index, preferredFileName, folderId) {
+  // Use the provided subfolder ID; fall back to the legacy single folder.
+  if (!folderId) folderId = getOrCreatePhotoFolder_();
 
   const folder = DriveApp.getFolderById(folderId);
   const safeBaseName = sanitizeFileName_(baseName || "상품");
@@ -5740,42 +5801,51 @@ function setupDailyTriggers() {
 // ── Photo ZIP creation ─────────────────────────────────────
 function createPhotoZip_(payload) {
   var mode = String(payload.mode || "movement").trim();
-  // sugar and weight photos live in inspection rows (photo type columns), not movement records
-  var usesInspectionSheet = mode === "inspection" || mode === "sugar" || mode === "weight";
-  var records = usesInspectionSheet ? loadInspectionRows_() : loadRecords_();
+  // All category photo ID fields (inspPhotoIds, defectPhotoIds, weightPhotoIds, brixPhotoIds)
+  // live in the inspection sheet rows.  Only "movement" (old alias) keeps its legacy path.
+  var records = loadInspectionRows_();
   var maxZipBytes = 20 * 1024 * 1024;
   var baseFileName = zipFileName_(mode);
 
   // ── Phase 1: Pre-compute reference maps ONCE (avoids per-file sheet read) ──
   var refMaps = readOperationalReferenceMaps_(SpreadsheetApp.getActiveSpreadsheet());
 
-  // ── Phase 2: Collect photo entries without fetching any blobs ──
-  var photoEntries = []; // { record, source, index }
+  // ── Phase 2: Collect photo entries per category ──────────────────────────
+  var photoEntries = []; // { record, source, index, modeHint }
   records.forEach(function (record) {
-    var photos = getPhotoSourcesFromRecord_(record);
-    if (!photos.length) return;
-
+    var sources;
     if (mode === "inspection") {
-      var hasInspPh =
-        !!String(record["사진링크"] || "").trim() ||
-        !!String(record["사진링크목록"] || "").trim() ||
-        !!String(record["사진파일ID목록"] || "").trim();
-      if (!hasInspPh) return;
-    } else if (mode === "sugar") {
-      // brixPhotoIds is a newline-separated string of Drive file IDs set by applyPhotoAssetFieldsToRow_
-      photos = splitPhotoSourceText_(record["brixPhotoIds"] || "");
-      if (!photos.length) return;
+      // Use ONLY the inspection-category photo IDs — not the combined list.
+      var inspIds = splitPhotoSourceText_(record["inspPhotoIds"] || "");
+      // Legacy fallback: if per-category not available, use combined list.
+      if (!inspIds.length) {
+        inspIds = getPhotoSourcesFromRecord_(record);
+        if (!inspIds.length) return;
+      }
+      sources = inspIds;
+    } else if (mode === "movement" || mode === "defect") {
+      // Defect-category photos stored on inspection rows.
+      sources = splitPhotoSourceText_(record["defectPhotoIds"] || "");
+      if (!sources.length) return;
     } else if (mode === "weight") {
-      photos = splitPhotoSourceText_(record["weightPhotoIds"] || "");
-      if (!photos.length) return;
+      sources = splitPhotoSourceText_(record["weightPhotoIds"] || "");
+      if (!sources.length) return;
+    } else if (mode === "sugar" || mode === "brix") {
+      sources = splitPhotoSourceText_(record["brixPhotoIds"] || "");
+      if (!sources.length) return;
     } else {
-      var isMov = isMovementRecord_(record);
-      if (mode === "movement" && !isMov) return;
-      if (mode !== "movement" && isMov) return;
+      // Unknown mode — skip
+      return;
     }
 
-    photos.forEach(function (source, index) {
-      photoEntries.push({ record: record, source: source, index: index, modeHint: (mode === "sugar" || mode === "weight") ? mode : null });
+    sources.forEach(function (source, index) {
+      photoEntries.push({
+        record: record,
+        source: source,
+        index: index,
+        modeHint: (mode === "sugar" || mode === "brix") ? "sugar" :
+                  (mode === "weight") ? "weight" : null,
+      });
     });
   });
 

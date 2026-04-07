@@ -36,10 +36,12 @@ export function buildDraftFingerprint(d) {
 export function buildInspPayload(row, jobKey, draft) {
   const cleanCode = normalizeProductCode(row['상품코드']) || '';
 
-  // Merge all photo categories into one ordered, deduplicated list
-  const inspIds   = (draft.inspPhotoIds   || draft.photoFileIds    || []).filter(Boolean);
-  const defectIds = (draft.defectPhotoIds ||
-    [...(draft.returnPhotoIds || []), ...(draft.exchangePhotoIds || [])]).filter(Boolean);
+  // Per-category arrays — each type is strictly isolated.
+  // Do NOT merge photoFileIds (combined list) into inspIds; that would include
+  // all categories. The combined list is kept only in the flat 사진파일ID목록 field
+  // for legacy display, not for per-type reconstruction.
+  const inspIds   = (draft.inspPhotoIds   || []).filter(Boolean);
+  const defectIds = (draft.defectPhotoIds || []).filter(Boolean);
   const weightIds = (draft.weightPhotoIds || []).filter(Boolean);
   const brixIds   = (draft.brixPhotoIds   || []).filter(Boolean);
   const allPhotoIds = [...new Set([...inspIds, ...defectIds, ...weightIds, ...brixIds])];

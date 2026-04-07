@@ -166,105 +166,130 @@ export default function SummaryPage({ summary = {}, happycall = {}, jobRows = []
     return [...historyData].sort((a, b) => String(b['일자']).localeCompare(String(a['일자'])))[0];
   }, [historyData]);
 
-  const fromHist = (key) => {
+  // Read a field from the latest history row. Tries multiple key aliases.
+  // Returns a parsed number if valid (including 0), or null if the cell is truly empty.
+  const fromHist = (...keys) => {
     if (!latestHistory) return null;
-    const v = latestHistory[key];
-    if (v == null || v === '') return null;
-    const n = typeof v === 'number' ? v : Number(String(v).replace(/[%,]/g, ''));
-    return isFinite(n) ? n : null;
+    for (const key of keys) {
+      const v = latestHistory[key];
+      if (v == null || v === '') continue;
+      const n = typeof v === 'number' ? v : Number(String(v).replace(/[%,]/g, '').trim());
+      if (isFinite(n)) return n;
+    }
+    return null;
   };
 
-  // History rate values are stored as "XX.XX%" strings → parse to 0-100 scale number.
-  // fmtPct returns them formatted back as percentage strings.
+  // Format percentage: always 1 decimal place. Returns '-' only when value is truly null.
   const fmtPct = (v) => v != null ? v.toFixed(1) + '%' : '-';
 
-  const formatKoreanAmount = (value) => {
-    if (value >= 100_000_000) return (value / 100_000_000).toFixed(2) + '억';
-    if (value >= 10_000)      return Math.round(value / 10_000) + '만';
-    return value.toLocaleString('ko-KR');
+  // Format quantity: comma-separated integers.
+  const fmtQty = (v) => v != null ? Math.round(v).toLocaleString('ko-KR') : '-';
+
+  // Format monetary amount:
+  //   >= 100,000,000 → "X.X억원"  (1 decimal)
+  //   otherwise      → comma-separated number
+  const fmtAmt = (v) => {
+    if (v == null) return '-';
+    if (v >= 100_000_000) return (v / 100_000_000).toFixed(1) + '억원';
+    return Math.round(v).toLocaleString('ko-KR');
   };
+
+  // All KPI values read from the latest "이력관리" row as the single source of truth.
+  // Fall back to client-side computed values only when no history row exists yet.
+  const histTotalAmt      = fromHist('총 입고금액');
+  const histTargetAmt     = fromHist('총 입고금액 (냉동/가공/계란 제외)');
+  const histTotalQty      = fromHist('총 입고수량(개)');
+  const histTargetQty     = fromHist('총 입고수량(개) (냉동/가공/계란 제외)');
+  const histInspQty       = fromHist('검품수량(개)');
+  const histInspRate      = fromHist('검품률 (전체)', '검품률');
+  const histInspRateExcl  = fromHist('검품률 (냉동/가공/계란 제외)');
+  const histTotalSku      = fromHist('입고 SKU (전체)');
+  const histTargetSku     = fromHist('검품입고 SKU (검품불가 제외)');
+  const histInspSku       = fromHist('검품 SKU (실진행)');
+  const histSkuCovAll     = fromHist('SKU 커버리지 (전체)');
+  const histSkuCovExcl    = fromHist('SKU 커버리지 (냉동/가공/계란 제외)');
 
   const kpis = [
     {
       label: '총 금액',
-      value: hasPriceData ? formatKoreanAmount(totalAmount) : '-',
-      sub: hasPriceData ? '원' : '가격 데이터 없음',
+      value: fmtAmt(histTotalAmt ?? (hasPriceData ? totalAmount : null)),
+      sub: '원',
       color: C.primary, bg: C.primaryLight, border: C.primaryMid,
       icon: <BarChart3 size={16} strokeWidth={2} />,
     },
     {
       label: '검품대상 금액',
-      value: (() => { const v = fromHist('총 입고금액 (냉동/가공/계란 제외)'); return v != null && v > 0 ? formatKoreanAmount(v) : '-'; })(),
+      value: fmtAmt(histTargetAmt),
       sub: '원 (제외목록 제외)',
       color: C.primary, bg: C.primaryLight, border: C.primaryMid,
       icon: <BarChart3 size={16} strokeWidth={2} />,
     },
     {
       label: '총 SKU',
-      value: String(totalSku),
+      value: histTotalSku != null ? String(Math.round(histTotalSku)) : String(totalSku),
       sub: '품목',
       color: C.textSec || '#64748b', bg: C.bgAlt, border: C.border,
       icon: <Package size={16} strokeWidth={2} />,
     },
     {
       label: '검품대상 SKU',
-      value: String(resolvedInspTargetSku),
+      value: histTargetSku != null ? String(Math.round(histTargetSku)) : String(resolvedInspTargetSku),
       sub: '품목 (제외목록 제외)',
       color: C.orange, bg: C.orangeLight, border: C.orangeMid,
       icon: <ClipboardList size={16} strokeWidth={2} />,
     },
     {
-      label: '총 상품수량',
-      value: totalOrderedQty.toLocaleString(),
+      label: '총 수량',
+      value: fmtQty(histTotalQty ?? totalOrderedQty),
       sub: '개',
       color: C.green, bg: C.greenLight, border: C.greenMid,
       icon: <TrendingUp size={16} strokeWidth={2} />,
     },
     {
       label: '검품대상 수량',
-      value: (() => { const v = fromHist('총 입고수량(개) (냉동/가공/계란 제외)'); return v != null ? v.toLocaleString() : '-'; })(),
+      value: fmtQty(histTargetQty),
       sub: '개 (제외목록 제외)',
       color: C.green, bg: C.greenLight, border: C.greenMid,
       icon: <TrendingUp size={16} strokeWidth={2} />,
     },
     {
       label: '검품수량',
-      value: (() => { const v = fromHist('검품수량(개)'); return v != null ? v.toLocaleString() : '-'; })(),
+      value: fmtQty(histInspQty),
       sub: '개',
       color: C.primary, bg: C.primaryLight, border: C.primaryMid,
       icon: <ClipboardList size={16} strokeWidth={2} />,
     },
     {
       label: '검품 SKU (실진행)',
-      value: (() => { const v = fromHist('검품 SKU (실진행)'); return v != null ? String(v) : '-'; })(),
+      value: histInspSku != null ? String(Math.round(histInspSku)) : '-',
       sub: '품목',
       color: C.orange, bg: C.orangeLight, border: C.orangeMid,
       icon: <Package size={16} strokeWidth={2} />,
     },
     {
       label: '검품률 (전체)',
-      value: fmtPct(fromHist('검품률 (전체)')),
+      value: fmtPct(histInspRate),
       sub: '검품수량 / 총 수량',
       color: C.primary, bg: C.primaryLight, border: C.primaryMid,
       icon: <TrendingUp size={16} strokeWidth={2} />,
     },
     {
       label: '검품률 (대상기준)',
-      value: fmtPct(fromHist('검품률 (냉동/가공/계란 제외)')),
+      value: fmtPct(histInspRateExcl),
       sub: '검품수량 / 검품대상 수량',
       color: C.primary, bg: C.primaryLight, border: C.primaryMid,
       icon: <TrendingUp size={16} strokeWidth={2} />,
     },
     {
       label: 'SKU 커버리지 (전체)',
-      value: fmtPct(fromHist('SKU 커버리지 (전체)')),
+      value: fmtPct(histSkuCovAll),
       sub: '검품SKU / 총SKU',
       color: C.orange, bg: C.orangeLight, border: C.orangeMid,
       icon: <BarChart3 size={16} strokeWidth={2} />,
     },
     {
       label: 'SKU 커버리지 (대상기준)',
-      value: fmtPct(fromHist('SKU 커버리지 (냉동/가공/계란 제외)')),
+      value: fmtPct(histSkuCovExcl),
       sub: '검품SKU / 검품대상SKU',
       color: C.orange, bg: C.orangeLight, border: C.orangeMid,
       icon: <BarChart3 size={16} strokeWidth={2} />,
@@ -394,7 +419,7 @@ function isoMonth(dateStr) {
 function groupBy(rows, keyFn) {
   const map = new Map();
   for (const r of rows) {
-    const k = keyFn(r['일자'] || '');
+    const k = keyFn(sanitizeDateLabel(r['일자'] || ''));
     if (!map.has(k)) map.set(k, []);
     map.get(k).push(r);
   }
@@ -408,6 +433,23 @@ function aggregateGroup(rows, metricKey) {
   return (typeof v === 'number') ? v : Number(String(v || '0').replace(/,/g, '')) || 0;
 }
 
+// Sanitize a raw 일자 value from the 이력관리 sheet into a clean "M/D" label.
+// Handles GAS-formatted "MM/dd" strings, JS Date toStrings with timezone
+// text like "(표준시)", and full ISO strings.
+function sanitizeDateLabel(raw) {
+  const s = String(raw || '').trim();
+  // Already in MM/dd or M/d format
+  const mSlash = s.match(/^(\d{1,2})\/(\d{1,2})$/);
+  if (mSlash) return `${+mSlash[1]}/${+mSlash[2]}`;
+  // ISO date: 2025-04-07T...
+  const mIso = s.match(/(\d{4})-(\d{2})-(\d{2})/);
+  if (mIso) return `${+mIso[2]}/${+mIso[3]}`;
+  // Fallback: find any NN/NN pattern anywhere in the string
+  const mAny = s.match(/(\d{1,2})\/(\d{1,2})/);
+  if (mAny) return `${+mAny[1]}/${+mAny[2]}`;
+  return s;
+}
+
 function TrendChart({ historyData }) {
   const [period, setPeriod] = useState('일별');
   const [metric, setMetric] = useState(0); // index into CHART_METRICS
@@ -416,26 +458,26 @@ function TrendChart({ historyData }) {
     const sorted = [...historyData].sort((a, b) => String(a['일자']).localeCompare(String(b['일자'])));
     let grouped;
     if (period === '일별') {
-      grouped = groupBy(sorted, (d) => d);
+      grouped = groupBy(sorted, (d) => d); // groupBy already calls sanitizeDateLabel
     } else if (period === '주별') {
-      grouped = groupBy(sorted, isoWeek);
+      grouped = groupBy(sorted, (d) => isoWeek(d));
     } else {
-      grouped = groupBy(sorted, isoMonth);
+      grouped = groupBy(sorted, (d) => isoMonth(d));
     }
     const mk = CHART_METRICS[metric].key;
     const points = [];
     for (const [label, rows] of grouped) {
-      points.push({ label: period === '일별' ? label : label, value: aggregateGroup(rows, mk) });
+      points.push({ label, value: aggregateGroup(rows, mk) });
     }
     return points;
   }, [historyData, period, metric]);
 
   const maxVal = Math.max(...chartData.map((p) => p.value), 1);
   const m = CHART_METRICS[metric];
-  const W = 320; const H = 120; const PAD = { t: 8, r: 8, b: 28, l: 44 };
+  const W = 480; const H = 180; const PAD = { t: 10, r: 10, b: 32, l: 52 };
   const innerW = W - PAD.l - PAD.r;
   const innerH = H - PAD.t - PAD.b;
-  const barW = Math.max(4, Math.min(24, innerW / Math.max(chartData.length, 1) - 4));
+  const barW = Math.max(6, Math.min(32, innerW / Math.max(chartData.length, 1) - 6));
 
   return (
     <div style={{
@@ -476,7 +518,7 @@ function TrendChart({ historyData }) {
         ))}
       </div>
 
-      <div style={{ padding: '8px 14px 12px', overflowX: 'auto' }}>
+      <div style={{ padding: '8px 14px 12px' }}>
         {chartData.length < 2 ? (
           <p style={{ margin: '12px 0 4px', fontSize: 12, color: C.muted, textAlign: 'center' }}>
             데이터 없음 — 이력관리 기록을 2회 이상 실행하면 추이가 표시됩니다
@@ -484,13 +526,16 @@ function TrendChart({ historyData }) {
         ) : (
           <svg
             viewBox={`0 0 ${W} ${H}`}
-            style={{ width: '100%', height: H, display: 'block', overflow: 'visible' }}
+            style={{ width: '100%', height: 'auto', minHeight: H, display: 'block', overflow: 'visible' }}
+            preserveAspectRatio="xMidYMid meet"
           >
             {/* Y grid lines */}
             {[0, 0.25, 0.5, 0.75, 1].map((t) => {
               const y = PAD.t + innerH * (1 - t);
               const val = maxVal * t;
-              const labelText = val >= 1_000_000
+              const labelText = val >= 100_000_000
+                ? (val / 100_000_000).toFixed(1) + '억'
+                : val >= 1_000_000
                 ? (val / 1_000_000).toFixed(1) + 'M'
                 : val >= 1_000
                 ? (val / 1_000).toFixed(0) + 'K'
@@ -498,7 +543,7 @@ function TrendChart({ historyData }) {
               return (
                 <g key={t}>
                   <line x1={PAD.l} y1={y} x2={W - PAD.r} y2={y} stroke={C.border} strokeWidth={0.8} />
-                  <text x={PAD.l - 4} y={y + 3.5} textAnchor="end" fontSize={8} fill={C.muted}>{labelText}</text>
+                  <text x={PAD.l - 4} y={y + 3.5} textAnchor="end" fontSize={9} fill={C.muted}>{labelText}</text>
                 </g>
               );
             })}
@@ -513,8 +558,8 @@ function TrendChart({ historyData }) {
                 <g key={i}>
                   <rect x={bx} y={by} width={barW} height={barH} rx={2}
                     fill={m.color} fillOpacity={0.82} />
-                  <text x={cx} y={H - PAD.b + 11} textAnchor="middle" fontSize={7.5} fill={C.muted}>
-                    {String(pt.label).length > 5 ? String(pt.label).slice(-5) : pt.label}
+                  <text x={cx} y={H - PAD.b + 13} textAnchor="middle" fontSize={8.5} fill={C.muted}>
+                    {pt.label}
                   </text>
                 </g>
               );

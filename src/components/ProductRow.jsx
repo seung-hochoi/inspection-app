@@ -47,14 +47,14 @@ const ProductRow = React.memo(function ProductRow({
   const cleanCode    = normalizeProductCode(row['상품코드']) || '';
   const productKey   = `${jobKey}||${cleanCode}||${row['협력사명'] || ''}`;
   const inspQty      = draft.inspQty !== undefined ? draft.inspQty : '';
-  // defectReason is kept in draft/payload but editing moved to return/exchange modal
   const defectReason = draft.defectReason || '';
-  // Photo ID arrays per category
-  const inspPhotoIds   = draft.inspPhotoIds   || draft.photoFileIds || [];
-  const defectPhotoIds = draft.defectPhotoIds ||
-    [...(draft.returnPhotoIds || []), ...(draft.exchangePhotoIds || [])];
-  const weightPhotoIds = draft.weightPhotoIds || [];
-  const brixPhotoIds   = draft.brixPhotoIds   || [];
+  // Photo ID arrays per category — each type is strictly independent.
+  // Do NOT fall back to draft.photoFileIds (combined list) for inspPhotoIds;
+  // that would show all categories mixed into the inspection slot.
+  const inspPhotoIds   = draft.inspPhotoIds   || [];
+  const defectPhotoIds = draft.defectPhotoIds  || [];
+  const weightPhotoIds = draft.weightPhotoIds  || [];
+  const brixPhotoIds   = draft.brixPhotoIds    || [];
 
   // Representative thumbnail for this product (separate from inspection photos)
   const thumbItem = productImageMap[cleanCode];
@@ -352,16 +352,41 @@ const ProductRow = React.memo(function ProductRow({
                     {row['상품명'] || '—'}
                   </p>
                 </div>
-                <p style={{
-                  margin: 0, fontSize: 11, color: C.muted, lineHeight: 1.3,
-                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                }}>
-                  <span style={{ fontFamily: "'Menlo','Consolas',monospace", letterSpacing: '-0.01em' }}>
-                    {cleanCode}
-                  </span>
-                  {row['협력사명'] && <span style={{ color: C.muted2 }}> · {row['협력사명']}</span>}
-                  {orderedQty > 0 && <span style={{ color: C.muted2 }}> · 발주 {orderedQty}</span>}
-                </p>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <p style={{
+                    margin: 0, fontSize: 11, color: C.muted, lineHeight: 1.3,
+                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                    flex: 1, minWidth: 0,
+                  }}>
+                    <span style={{ fontFamily: "'Menlo','Consolas',monospace", letterSpacing: '-0.01em' }}>
+                      {cleanCode}
+                    </span>
+                    {row['협력사명'] && <span style={{ color: C.muted2 }}> · {row['협력사명']}</span>}
+                    {orderedQty > 0 && <span style={{ color: C.muted2 }}> · 발주 {orderedQty}</span>}
+                  </p>
+                  {/* Criteria button — far right of the supplier/qty subtitle row */}
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); setShowCriteria(true); }}
+                    title="검품기준 보기"
+                    className="action-btn"
+                    style={{
+                      height: 22, padding: '0 7px',
+                      fontSize: 10, fontWeight: 700,
+                      color: C.primary,
+                      background: C.primaryLight,
+                      border: `1px solid ${C.primaryMid}`,
+                      borderRadius: radius.sm,
+                      cursor: 'pointer',
+                      fontFamily: font.base,
+                      whiteSpace: 'nowrap',
+                      display: 'inline-flex', alignItems: 'center',
+                      flex: '0 0 auto',
+                    }}
+                  >
+                    기준
+                  </button>
+                </div>
               </div>
               {/* Tags + animated save-status badge */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
@@ -504,28 +529,6 @@ const ProductRow = React.memo(function ProductRow({
                   }}
                 >
                   <Eye size={13} strokeWidth={2} />
-                </button>
-                {/* Criteria button — far right of the supplier/qty row */}
-                <button
-                  type="button"
-                  onClick={(e) => { e.stopPropagation(); setShowCriteria(true); }}
-                  title="검품기준 보기"
-                  className="action-btn"
-                  style={{
-                    height: 32, padding: '0 9px',
-                    fontSize: 11, fontWeight: 700,
-                    color: C.primary,
-                    background: C.primaryLight,
-                    border: `1px solid ${C.primaryMid}`,
-                    borderRadius: radius.sm,
-                    cursor: 'pointer',
-                    fontFamily: font.base,
-                    whiteSpace: 'nowrap',
-                    display: 'inline-flex', alignItems: 'center',
-                    flex: '0 0 auto',
-                  }}
-                >
-                  기준
                 </button>
               </div>
 
