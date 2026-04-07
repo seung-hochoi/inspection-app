@@ -65,7 +65,9 @@ const C = {
 // ── Style objects ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 const S = {
   app: {
-    minHeight: "100vh",
+    // 100dvh accounts for the iOS Safari address bar shrinking/growing on scroll.
+    // Falls back to 100vh on browsers that don't support dvh.
+    minHeight: "100dvh",
     background: C.bg,
     fontFamily: "'Apple SD Gothic Neo','Pretendard',system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif",
     display: "flex",

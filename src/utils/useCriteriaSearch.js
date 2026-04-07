@@ -30,6 +30,9 @@ export function normalizeCriteriaKeyword(name) {
  * decorated name returns 0 results even when a matching folder exists.
  *
  * Rules applied in order:
+ *   0. Strip leading brand/company name prefixes separated by ")" with no
+ *      matching "(", e.g. "FCS)허브먹은돼지)목살400G" → "목살400G",
+ *      "신선특별시)깐마늘100G(봉)" → "깐마늘100G(봉)"
  *   1. Strip leading bracket groups like [행사], [냉장], [특가]
  *   2. Strip leading origin/country prefixes like 미국, 칠레, 국산
  *   3. Strip trailing parenthetical groups like (국산), (수입), (벌크), (박스)
@@ -40,15 +43,23 @@ export function normalizeCriteriaKeyword(name) {
  * Mid-word parentheses (e.g. 봄동(박스)겉절이) and leading parentheses are preserved.
  *
  * Examples:
- *   "[냉장] 당근 (국산) 500g" → "당근"
- *   "[행사] 사과 1kg"         → "사과"
- *   "딸기 500g"               → "딸기"
- *   "깐마늘(벌크)"            → "깐마늘"
- *   "미국네이블오렌지"        → "오렌지"
- *   "칠레산포도"              → "포도"
+ *   "FCS)허브먹은돼지)목살400G"    → "목살"
+ *   "신선특별시)깐마늘100G(봉)"    → "깐마늘"
+ *   "[냉장] 당근 (국산) 500g"      → "당근"
+ *   "[행사] 사과 1kg"              → "사과"
+ *   "딸기 500g"                    → "딸기"
+ *   "깐마늘(벌크)"                 → "깐마늘"
+ *   "미국네이블오렌지"             → "오렌지"
+ *   "칠레산포도"                   → "포도"
  */
 export function extractCriteriaKeyword(productName) {
   let s = String(productName || '').trim();
+  // 0. Strip leading brand/company name prefixes followed by ")" with no
+  //    preceding "(". Pattern: one or more runs of [non-paren chars + ")"].
+  //    e.g. "FCS)허브먹은돼지)목살" → "목살"
+  //         "신선특별시)깐마늘"     → "깐마늘"
+  //    Stops at the first "(" so "(봉)" at the end is not stripped.
+  s = s.replace(/^(?:[^()]+\))+/, '').trim();
   // 1. Remove one or more leading [bracket] groups (with optional trailing space)
   s = s.replace(/^(?:\[[^\]]*\]\s*)+/, '').trim();
   // 2. Strip leading country/origin word-prefixes (without spaces in Korean compound names)
@@ -68,7 +79,7 @@ export function extractCriteriaKeyword(productName) {
   //    Only removes the LAST group at the end of the string.
   s = s.replace(/\s*\([^)]*\)\s*$/, '').trim();
   // 4. Remove trailing weight/unit pattern: optional space + digits + unit
-  s = s.replace(/\s*\d+\s*(g|kg|ml|l|box|개|봉|팩)$/i, '').trim();
+  s = s.replace(/\s*\d+\s*(g|kg|ml|l|box|개|봉|팩|입|ea)(\(.*\))?\s*$/i, '').trim();
   // 5. Collapse any internal whitespace runs
   s = s.replace(/\s+/g, ' ');
   return s;
@@ -141,6 +152,25 @@ const BROAD_KEYWORD_RULES = [
   { match: ['용과'],                                             search: '용과' },
   { match: ['무화과'],                                           search: '무화과' },
   { match: ['석류'],                                             search: '석류' },
+  // ── 축산 (livestock cuts & products) ────────────────────────────────────────
+  { match: ['목살'],                                             search: '목살' },
+  { match: ['항정살', '항정'],                                   search: '항정살' },
+  { match: ['삼겹살', '삼겹'],                                   search: '삼겹살' },
+  { match: ['앞다리살', '앞다리'],                               search: '앞다리' },
+  { match: ['뒷다리살', '뒷다리'],                               search: '뒷다리' },
+  { match: ['등심'],                                             search: '등심' },
+  { match: ['안심'],                                             search: '안심' },
+  { match: ['차돌박이', '차돌'],                                 search: '차돌박이' },
+  { match: ['갈비살', '갈비'],                                   search: '갈비' },
+  { match: ['불고기'],                                           search: '불고기' },
+  { match: ['부채살', '부채'],                                   search: '부채살' },
+  { match: ['다짐육', '다짐'],                                   search: '다짐육' },
+  { match: ['계란', '달걀'],                                     search: '계란' },
+  { match: ['계육', '닭가슴살', '닭다리', '닭날개', '닭볶음'],   search: '계육' },
+  { match: ['한우'],                                             search: '한우' },
+  { match: ['한돈'],                                             search: '한돈' },
+  { match: ['돼지고기'],                                         search: '한돈' },
+  { match: ['진공포장'],                                         search: '진공포장상품' },
 ];
 
 /**

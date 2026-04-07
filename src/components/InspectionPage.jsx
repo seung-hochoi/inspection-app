@@ -437,16 +437,18 @@ export default function InspectionPage({
     setOpenPartner((prev) => (prev === name ? null : name));
   }, []);
 
-  // Auto-scroll the opened partner card into view using window scroll
+  // Scroll the opened partner card into view after a short delay so React has
+  // committed the layout change and framer-motion's exit animation has started
+  // before we measure positions. scrollIntoView is more reliable on iOS Safari
+  // than window.scrollBy with behavior:'smooth'.
   useEffect(() => {
     if (!openPartner) return;
     const el = partnerCardRefs.current[openPartner];
     if (!el) return;
-    const raf = requestAnimationFrame(() => {
-      const elRect = el.getBoundingClientRect();
-      window.scrollBy({ top: elRect.top - 8, behavior: 'smooth' });
-    });
-    return () => cancelAnimationFrame(raf);
+    const id = setTimeout(() => {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 50);
+    return () => clearTimeout(id);
   }, [openPartner]);
   const { totalRows, doneRows, pct } = useMemo(() => {
     const total = deduplicatedRows.length;
@@ -509,7 +511,7 @@ export default function InspectionPage({
               ref={searchRef}
               type="text" placeholder="상품명 또는 코드 검색"
               value={searchInput} onChange={(e) => setSearchInput(e.target.value)}
-              style={{ ...inputStyle, paddingLeft: 34, height: 40, fontSize: 13 }}
+              style={{ ...inputStyle, paddingLeft: 34, height: 40 }}
             />
           </div>
           <button onClick={() => setShowScanner(true)} style={{

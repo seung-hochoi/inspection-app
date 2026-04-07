@@ -6902,11 +6902,21 @@ function buildCriteriaQueryVariants_(rawProductName, keyword) {
 
   var name = String(rawProductName || keyword || '').toLowerCase().trim();
 
-  // 2. Strip leading [bracket] groups
-  var nobrack = name.replace(/^(?:\[[^\]]*\]\s*)+/, '').trim();
+  // 2. Strip leading brand/company name prefixes separated by ")" with no
+  //    matching "(", e.g. "fcs)허브먹은돼지)목살400g" → "목살400g"
+  //    "신선특별시)깐마늘100g(봉)" → "깐마늘100g(봉)"
+  var noBrand = name.replace(/^(?:[^()]+\))+/, '').trim();
+  addVariant(noBrand);
+
+  // 3. Strip leading [bracket] groups
+  var nobrack = noBrand.replace(/^(?:\[[^\]]*\]\s*)+/, '').trim();
+  if (nobrack === noBrand) {
+    // Also try stripping brackets from the original name (no brand present)
+    nobrack = name.replace(/^(?:\[[^\]]*\]\s*)+/, '').trim();
+  }
   addVariant(nobrack);
 
-  // 3. Strip leading origin/country prefix (one level only)
+  // 4. Strip leading origin/country prefix (one level only)
   var stripped = nobrack;
   for (var pi = 0; pi < CRITERIA_ORIGIN_PREFIXES_.length; pi++) {
     var pfx = CRITERIA_ORIGIN_PREFIXES_[pi];
@@ -6917,16 +6927,20 @@ function buildCriteriaQueryVariants_(rawProductName, keyword) {
   }
   addVariant(stripped);
 
-  // 4. Strip trailing parenthetical: (국산), (수입), (벌크), (박스) …
+  // 5. Strip trailing parenthetical: (국산), (수입), (벌크), (박스) …
   var notrail = stripped.replace(/\s*\([^)]*\)\s*$/, '').trim();
   addVariant(notrail);
 
-  // 5. Remove all spaces
-  addVariant(notrail.replace(/\s+/g, ''));
+  // 6. Strip trailing weight/unit pattern
+  var nounit = notrail.replace(/\s*\d+\s*(g|kg|ml|l|box|개|봉|팩|입|ea)(\(.*\))?\s*$/i, '').trim();
+  addVariant(nounit);
 
-  // 6. Remove special characters, keep Korean + alphanumeric
-  addVariant(notrail.replace(/[^\uac00-\ud7a3a-z0-9\s]/gi, '').trim());
-  addVariant(notrail.replace(/[^\uac00-\ud7a3a-z0-9]/gi, ''));
+  // 7. Remove all spaces
+  addVariant(nounit.replace(/\s+/g, ''));
+
+  // 8. Remove special characters, keep Korean + alphanumeric
+  addVariant(nounit.replace(/[^\uac00-\ud7a3a-z0-9\s]/gi, '').trim());
+  addVariant(nounit.replace(/[^\uac00-\ud7a3a-z0-9]/gi, ''));
 
   return variants.filter(function(v) { return v.length >= 1; });
 }
@@ -7006,19 +7020,31 @@ function detectCriteriaCategory_(name) {
 // the product name, followed by the standard fallbacks.
 function getLivestockSpecialCandidates_(name) {
   var n     = String(name || '').toLowerCase();
+  // Strip brand prefixes first so "FCS)허브먹은돼지)목살" → "목살"
+  var clean = n.replace(/^(?:[^()]+\))+/, '').trim();
   var cands = [];
   function push(s) { if (cands.indexOf(s) === -1) cands.push(s); }
 
-  if (n.indexOf('한우')  >= 0) push('한우');
-  if (n.indexOf('한돈')  >= 0) push('한돈');
-  if (n.indexOf('진공')  >= 0) { push('진공포장상품'); push('진공'); }
-  if (n.indexOf('map')   >= 0) push('종합');  // MAP packaging -> 종합 criteria
-  if (n.indexOf('다짐')  >= 0) push('다짐육');
-  if (n.indexOf('삼겹')  >= 0) push('삼겹살');
-  if (n.indexOf('등심')  >= 0) push('등심');
-  if (n.indexOf('차돌')  >= 0) push('차돌박이');
-  if (n.indexOf('계란')  >= 0 || n.indexOf('달걀') >= 0) push('계란');
-  if (n.indexOf('계육')  >= 0 || n.indexOf('닭')   >= 0) push('계육');
+  if (clean.indexOf('한우')  >= 0 || n.indexOf('한우')  >= 0) push('한우');
+  if (clean.indexOf('한돈')  >= 0 || n.indexOf('한돈')  >= 0) push('한돈');
+  if (clean.indexOf('진공')  >= 0 || n.indexOf('진공')  >= 0) { push('진공포장상품'); push('진공'); }
+  if (clean.indexOf('map')   >= 0 || n.indexOf('map')   >= 0) push('종합');
+  if (clean.indexOf('다짐')  >= 0 || n.indexOf('다짐')  >= 0) push('다짐육');
+  if (clean.indexOf('삼겹')  >= 0 || n.indexOf('삼겹')  >= 0) push('삼겹살');
+  if (clean.indexOf('등심')  >= 0 || n.indexOf('등심')  >= 0) push('등심');
+  if (clean.indexOf('차돌')  >= 0 || n.indexOf('차돌')  >= 0) push('차돌박이');
+  if (clean.indexOf('계란')  >= 0 || n.indexOf('계란')  >= 0 ||
+      clean.indexOf('달걀')  >= 0 || n.indexOf('달걀')  >= 0) push('계란');
+  if (clean.indexOf('계육')  >= 0 || n.indexOf('계육')  >= 0 ||
+      clean.indexOf('닭')    >= 0 || n.indexOf('닭')    >= 0) push('계육');
+  // Additional cuts missing from prior version
+  if (clean.indexOf('목살')  >= 0 || n.indexOf('목살')  >= 0) push('목살');
+  if (clean.indexOf('항정')  >= 0 || n.indexOf('항정')  >= 0) push('항정살');
+  if (clean.indexOf('앞다리') >= 0 || n.indexOf('앞다리') >= 0) push('앞다리');
+  if (clean.indexOf('부채살') >= 0 || n.indexOf('부채살') >= 0) push('부채살');
+  if (clean.indexOf('갈비')  >= 0 || n.indexOf('갈비')  >= 0) push('갈비');
+  if (clean.indexOf('불고기') >= 0 || n.indexOf('불고기') >= 0) push('불고기');
+  if (clean.indexOf('안심')  >= 0 || n.indexOf('안심')  >= 0) push('안심');
 
   // Always add fallbacks last (lowest priority within livestock)
   for (var i = 0; i < LIVESTOCK_FALLBACK_FOLDERS_.length; i++) push(LIVESTOCK_FALLBACK_FOLDERS_[i]);
@@ -7092,15 +7118,20 @@ function searchInspectionCriteriaFolders_(keyword, productName) {
   var variants = buildCriteriaQueryVariants_(rawName, keyword);
   if (variants.length === 0) return [];
 
-  // ── Step 1: resolve category from "매핑" sheet (source of truth) ────────────
-  // Only search inside the folder that matches the mapped 대분류.
-  // If the keyword is not in the mapping sheet, return empty rather than
-  // falling back to a broad search across all category folders.
+  // ── Step 1: resolve category (매핑 sheet first, heuristic fallback) ──────────
+  // Priority: 1) keyword exact/substring match in 매핑 sheet
+  //           2) rawName match in 매핑 sheet
+  //           3) heuristic detectCriteriaCategory_ on rawName
+  // If ALL fail → no criteria search is possible for this product.
   var mappedCategory = getCriteriaCategory_(keyword);
+  if (!mappedCategory) mappedCategory = getCriteriaCategory_(rawName);
+  if (!mappedCategory) mappedCategory = detectCriteriaCategory_(rawName);
   if (!mappedCategory) {
-    console.warn('[searchInspectionCriteriaFolders_] No category mapping found for keyword: ' + keyword);
+    console.warn('[criteria] No category found: keyword=' + keyword + ' raw=' + rawName);
     return [];
   }
+  console.log('[criteria] raw=' + rawName + ' | keyword=' + keyword +
+              ' | category=' + mappedCategory + ' | variants=' + JSON.stringify(variants));
 
   // ── Step 2: open the Drive root and find the target category folder ──────────
   var rootFolder;
@@ -7167,10 +7198,13 @@ function searchInspectionCriteriaFolders_(keyword, productName) {
     }
 
     if (sc > 0) {
+      console.log('[criteria]   match: "' + pfName + '" score=' + sc);
       results.push({ id: pf.folder.getId(), name: pfName,
                      category: mappedCategory, groupName: pf.groupName, _score: sc });
     }
   }
+  console.log('[criteria] productFolders=' + productFolders.length +
+              ' matched=' + results.length + (results.length === 0 ? ' (will try fallback)' : ''));
 
   // ── Step 5: category-specific hard fallback when scoring found nothing ────────
   // For 축산: always return 종합 / 한돈 / 한우 (in that order) so the user never

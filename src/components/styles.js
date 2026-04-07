@@ -88,7 +88,8 @@ export const inputStyle = {
   padding: '0 14px',
   border: `1.5px solid ${C.border}`,
   borderRadius: radius.sm,
-  fontSize: 14,
+  // 16px minimum prevents iOS Safari from auto-zooming when the user taps an input.
+  fontSize: 16,
   fontFamily: font.base,
   color: C.text,
   background: C.card,
