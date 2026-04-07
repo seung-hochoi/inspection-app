@@ -78,9 +78,63 @@ const get = async (action) => {
   }
 };
 
+// Like get() but supports additional query parameters beyond action.
+const getWithParams = async (action, params = {}) => {
+  requireUrl();
+  const qs = new URLSearchParams({ action, ...params }).toString();
+  let text;
+  try {
+    const response = await fetch(`${SCRIPT_URL}?${qs}`);
+    text = await response.text();
+    const result = JSON.parse(text);
+    if (!response.ok || result.ok === false) {
+      throw new Error(result.message || "서버 오류");
+    }
+    return result;
+  } catch (err) {
+    if (err.message && err.message.includes("REACT_APP_GOOGLE_SCRIPT_URL")) throw err;
+    if (text && text.trim().startsWith("<")) {
+      throw new Error("백엔드가 HTML을 반환했습니다. 스크립트 URL을 확인하세요.");
+    }
+    throw err;
+  }
+};
+
 export const fetchBootstrap = () => get("bootstrap");
 export const fetchRecords = () => get("getRecords");
 export const fetchInspectionRows = () => get("getInspectionRows");
+
+// ── Split bootstrap endpoints (parallel load) ─────────────────────────────────
+// These hit the fine-grained GAS actions added alongside the monolithic
+// `bootstrap` action. Call fetchBootstrapParallel() to fire all five requests
+// simultaneously; total wall-clock time becomes max(each) instead of sum(all).
+export const fetchConfig     = () => get("getConfig");
+export const fetchCurrentJob = () => get("getCurrentJob");
+export const fetchDashboard  = () => get("getDashboard");
+
+// Fires all bootstrap requests in parallel via Promise.all and merges the
+// results into the same shape that the legacy `bootstrap` action returns,
+// so callers need no changes beyond switching to this function.
+export const fetchBootstrapParallel = async () => {
+  const [configRes, jobRes, recordsRes, inspRes, dashRes] = await Promise.all([
+    get("getConfig"),
+    get("getCurrentJob"),
+    get("getRecords"),
+    get("getInspectionRows"),
+    get("getDashboard"),
+  ]);
+  return {
+    ok: true,
+    data: {
+      config:        (configRes.data  || {}).config       || {},
+      worksheet_url: (configRes.data  || {}).worksheet_url || "",
+      current_job:   (jobRes.data     || {}).current_job  || {},
+      records:        recordsRes.records || [],
+      rows:           inspRes.rows       || [],
+      summary:       (dashRes.data    || {}).summary      || {},
+    },
+  };
+};
 
 export const cacheCsv = (payload) => post({ action: "cacheCsv", payload });
 
@@ -157,3 +211,11 @@ export const listSessions = () =>
 
 export const forceLogoutSession = (targetSessionToken) =>
   post({ action: "forceLogout", targetSessionToken });
+
+// ── Inspection criteria search (검품 기준 검색) ───────────────────────────────
+// Searches Drive folder names — no preloading, on-demand only.
+export const fetchCriteriaSearch = (keyword) =>
+  getWithParams("searchInspectionCriteria", { keyword });
+
+export const fetchCriteriaImages = (folderId) =>
+  getWithParams("getInspectionCriteriaImages", { folderId });

@@ -8,7 +8,10 @@ import ProductRow from './ProductRow';
 function PartnerGroupBase({
   partnerName, rows, jobKey,
   drafts = {}, saveStatuses = {},
-  searchQuery = '',
+  // doneCount/totalCount are precomputed by InspectionPage — no row scanning here.
+  doneCount = 0, totalCount = 0,
+  // highlightSearch: rows are already filtered; this just controls highlight UI.
+  highlightSearch = false,
   centers = [], happycallRanks = {}, eventMap = {},
   productImageMap = {}, onProductImageUploaded,
   accumulatedMovement = {},
@@ -19,22 +22,12 @@ function PartnerGroupBase({
 }) {
   const handleHeaderClick = () => onToggle?.(partnerName);
 
-  const doneCount = rows.filter((r) => {
-    const key = `${jobKey}||${normalizeCode(r['상품코드'])}||${r['협력사명'] || ''}`;
-    return parseInt((drafts[key] || {}).inspQty, 10) > 0;
-  }).length;
-  const totalCount = rows.length;
-  const allDone    = doneCount === totalCount && totalCount > 0;
-  const pct        = totalCount > 0 ? Math.round((doneCount / totalCount) * 100) : 0;
+  // doneCount and totalCount arrive as props — no filter loop needed here.
+  const allDone = doneCount === totalCount && totalCount > 0;
+  const pct     = totalCount > 0 ? Math.round((doneCount / totalCount) * 100) : 0;
 
-  const q = searchQuery.toLowerCase();
-  const visibleRows = q
-    ? rows.filter((r) =>
-        (r['상품명'] || '').toLowerCase().includes(q) ||
-        normalizeCode(r['상품코드']).toLowerCase().includes(q) ||
-        (r['상품코드'] || '').toLowerCase().includes(q)
-      )
-    : rows;
+  // rows are pre-filtered by InspectionPage when highlightSearch is true.
+  const visibleRows = rows;
 
   if (visibleRows.length === 0) return null;
 
@@ -136,23 +129,20 @@ function PartnerGroupBase({
             style={{ overflow: 'hidden', background: C.card }}
           >
             {visibleRows.map((r) => {
-              const key = `${jobKey}||${normalizeCode(r['상품코드'])}||${r['협력사명'] || ''}`;
-              const isHighlight = q
-                ? (r['상품명'] || '').toLowerCase().includes(q) ||
-                  normalizeCode(r['상품코드']).toLowerCase().includes(q) ||
-                  (r['상품코드'] || '').toLowerCase().includes(q)
-                : false;
-              const movKey = `${r['협력사명'] || ''}||${normalizeCode(r['상품코드'])}`;
+              // Use precomputed __productCode to avoid regex inside render.
+              const code = r.__productCode || normalizeCode(r['상품코드']);
+              const key  = `${jobKey}||${code}||${r['협력사명'] || ''}`;
+              const movKey = `${r['협력사명'] || ''}||${code}`;
               const mc     = movementCounts[movKey] || {};
               return (
                 <ProductRow
                   key={key} row={r} jobKey={jobKey}
                   draft={drafts[key] || {}}
                   saveStatus={saveStatuses[key] || 'idle'}
-                  highlight={isHighlight}
+                  highlight={highlightSearch}
                   centers={centers}
-                  happycallRanks={happycallRanks[`code::${normalizeCode(r['상품코드'])}`] || null}
-                  eventName={eventMap[normalizeCode(r['상품코드'])] || ''}
+                  happycallRanks={happycallRanks[`code::${code}`] || null}
+                  eventName={eventMap[code] || ''}
                   productImageMap={productImageMap}
                   accumulatedQty={accumulatedMovement[movKey] || 0}
                   returnCount={mc.returnCount || 0}
@@ -190,13 +180,13 @@ function normalizeCode(value) {
 }
 
 // Custom comparison: only re-render when a prop that affects THIS partner changes.
-// When another partner's product saves (updating `drafts`/`saveStatuses`), this
-// partner skips the re-render entirely.
 function arePartnerGroupPropsEqual(prev, next) {
   if (prev.partnerName      !== next.partnerName)      return false;
   if (prev.jobKey           !== next.jobKey)           return false;
   if (prev.rows             !== next.rows)             return false;
-  if (prev.searchQuery      !== next.searchQuery)      return false;
+  if (prev.doneCount        !== next.doneCount)        return false;
+  if (prev.totalCount       !== next.totalCount)       return false;
+  if (prev.highlightSearch  !== next.highlightSearch)  return false;
   if (prev.centers          !== next.centers)          return false;
   if (prev.happycallRanks   !== next.happycallRanks)   return false;
   if (prev.eventMap         !== next.eventMap)         return false;
@@ -213,9 +203,10 @@ function arePartnerGroupPropsEqual(prev, next) {
   if (prev.canUploadPhoto        !== next.canUploadPhoto)        return false;
   if (prev.canEditReturnExchange !== next.canEditReturnExchange) return false;
 
-  // Check drafts and saveStatuses only for this partner's own rows
+  // Check drafts and saveStatuses only for this partner's own rows.
+  // Use __productCode (precomputed in buildNormalizedRows) to avoid regex.
   for (const r of next.rows) {
-    const code = normalizeCode(r['상품코드']);
+    const code = r.__productCode || normalizeCode(r['상품코드']);
     const key  = `${next.jobKey}||${code}||${r['협력사명'] || ''}`;
     if (prev.drafts[key]       !== next.drafts[key])       return false;
     if (prev.saveStatuses[key] !== next.saveStatuses[key]) return false;
@@ -225,3 +216,4 @@ function arePartnerGroupPropsEqual(prev, next) {
 }
 
 export default React.memo(PartnerGroupBase, arePartnerGroupPropsEqual);
+

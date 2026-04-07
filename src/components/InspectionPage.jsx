@@ -42,9 +42,29 @@ export default function InspectionPage({
     return () => clearTimeout(t);
   }, [searchInput]);
 
+  const draftsRef = useRef(drafts);
+  draftsRef.current = drafts;
+
+  // Debounce localStorage writes: flush at most every 400 ms while typing,
+  // and always flush on page hide/unload so no drafts are lost.
   useEffect(() => {
-    try { localStorage.setItem(DRAFTS_KEY, JSON.stringify(drafts)); } catch (_) {}
+    const t = setTimeout(() => {
+      try { localStorage.setItem(DRAFTS_KEY, JSON.stringify(draftsRef.current)); } catch (_) {}
+    }, 400);
+    return () => clearTimeout(t);
   }, [drafts]);
+
+  useEffect(() => {
+    const flush = () => {
+      try { localStorage.setItem(DRAFTS_KEY, JSON.stringify(draftsRef.current)); } catch (_) {}
+    };
+    window.addEventListener('beforeunload', flush);
+    document.addEventListener('visibilitychange', flush);
+    return () => {
+      window.removeEventListener('beforeunload', flush);
+      document.removeEventListener('visibilitychange', flush);
+    };
+  }, []);
 
   // Merge backend inspection rows into drafts when job loads (photo persistence + qty restore)
   useEffect(() => {
@@ -355,6 +375,22 @@ export default function InspectionPage({
     [partners, filter, jobKey, draftSummary],
   );
 
+  // Precompute done/total counts per partner so PartnerGroup never needs to
+  // re-derive them on render. Uses stable draftSummary.doneSet, so this only
+  // recalculates when a product crosses the done boundary — not on every keystroke.
+  const partnerDoneCounts = useMemo(() => {
+    const out = {};
+    for (const [name, pRows] of filteredPartners) {
+      let done = 0;
+      for (const r of pRows) {
+        const key = `${jobKey}||${r.__productCode || normalizeCode(r['상품코드'])}||${r['협력사명'] || ''}`;
+        if (draftSummary.doneSet.has(key)) done += 1;
+      }
+      out[name] = { done, total: pRows.length };
+    }
+    return out;
+  }, [filteredPartners, jobKey, draftSummary]);
+
   // Apply quantity sort after filtering (null = original order)
   const sortedPartners = useMemo(() => {
     if (!sortQty) return filteredPartners;
@@ -367,6 +403,23 @@ export default function InspectionPage({
       return [name, sorted];
     });
   }, [filteredPartners, sortQty]);
+
+  // Filter partners/rows by search query at the parent level so only affected
+  // groups re-render. When search is empty, `sortedPartners` is returned as-is
+  // (same reference) so PartnerGroup receives the same props and does not re-render.
+  const searchFilteredPartners = useMemo(() => {
+    if (!search) return sortedPartners;
+    const q = search.toLowerCase();
+    const result = [];
+    for (const [name, pRows] of sortedPartners) {
+      const visible = pRows.filter((r) => {
+        const key = r.__searchKey || `${(r['상품명'] || '').toLowerCase()} ${(r['상품코드'] || '').toLowerCase()}`;
+        return key.includes(q);
+      });
+      if (visible.length > 0) result.push([name, visible]);
+    }
+    return result;
+  }, [sortedPartners, search]);
 
   const toggleSort = useCallback(() => {
     setSortQty((prev) => prev === null ? 'asc' : prev === 'asc' ? 'desc' : null);
@@ -548,7 +601,9 @@ export default function InspectionPage({
       {/* ── Product list ── */}
       <div ref={scrollContainerRef} style={{ flex: 1, overflowY: 'auto', padding: '12px 12px 80px' }}>
         {activeRows.length === 0 ? <EmptyState /> : (
-          sortedPartners.map(([partnerName, partnerRows]) => (
+          searchFilteredPartners.map(([partnerName, partnerRows]) => {
+            const counts = partnerDoneCounts[partnerName] || { done: 0, total: partnerRows.length };
+            return (
             <div
               key={partnerName}
               ref={(el) => { if (el) partnerCardRefs.current[partnerName] = el; }}
@@ -559,7 +614,9 @@ export default function InspectionPage({
                 jobKey={jobKey}
                 drafts={drafts}
                 saveStatuses={saveStatuses}
-                searchQuery={search}
+                doneCount={counts.done}
+                totalCount={counts.total}
+                highlightSearch={!!search}
                 centers={centers}
                 happycallRanks={happycallRanks}
                 eventMap={eventMap}
@@ -579,7 +636,8 @@ export default function InspectionPage({
                 canEditReturnExchange={canEditReturnExchange}
               />
             </div>
-          ))
+            );
+          })
         )}
       </div>
 

@@ -27,8 +27,30 @@ const SHEET_NAMES = {
   auditLog: "audit_log",
 };
 const ADMIN_RESET_PASSWORD = "0000";
-const JOB_CACHE_MAX_DATA_ROWS = 30000;
+const JOB_CACHE_MAX_DATA_ROWS = 20000;
 const JOB_CACHE_RETENTION_DAYS = 1;
+
+// ── Drive folder IDs ────────────────────────────────────────
+// ROOT work folder (업무): 1V0Q4UN131n2srOyxz3pe-FhRSIco9-SV
+//   ├─ 검품 기준  (reference docs — never touched by reset)
+//   ├─ 검품 사진  (inspection / defect / measurement photos)
+//   │    ID: 1JC8iQJjubF3e5tAjc8-w4YMks6-ajQ5y  ← ONLY folder used for uploads
+//   └─ 대표이미지 (product representative images — never touched by reset)
+//
+// Reset logic ONLY deletes FILES inside PHOTO_UPLOAD_FOLDER_ID.
+// It never touches any other folder, including the root or its siblings.
+const PHOTO_UPLOAD_FOLDER_ID = "1JC8iQJjubF3e5tAjc8-w4YMks6-ajQ5y";
+
+// ── Inspection criteria (검품 기준) folder IDs ──────────────────────────────
+// Root work folder (업무) containing all sub-folders.
+const WORK_ROOT_FOLDER_ID    = "1V0Q4UN131n2srOyxz3pe-FhRSIco9-SV";
+// Criteria document root: contains category sub-folders (채소, 과일, 수산, 축산).
+// Each category contains either direct product folders (with PNG slides) or
+// grouped container folders (e.g. [채소]검품기준표_기타종합) whose children are
+// the actual product folders.
+const CRITERIA_ROOT_FOLDER_ID = "10D2BgogHMXaix6jSrM6RZUrEDc-QjUit";
+// Product representative image folder (대표이미지) — separate from inspection photos.
+const PRODUCT_IMAGE_FOLDER_ID = "1Mopo5eeElK2AQNrQDRjm6_ojcaUouKGs";
 var operationalReferenceCache_ = null;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -41,7 +63,7 @@ var operationalReferenceCache_ = null;
 // a "⚠ CONFLICT" flag is written so you can spot the overwrite instantly.
 // Set back to false (or delete the sheet) when diagnosis is complete.
 // ─────────────────────────────────────────────────────────────────────────────
-var DEBUG_WRITE_CONFLICTS = true;
+var DEBUG_WRITE_CONFLICTS = false;
 
 // ── Daily automation sheet lists ───────────────────────────
 // ─── Daily Backup & Reset Automation ─────────────────────────────────────────
@@ -184,9 +206,8 @@ function getSessionUser_(sessionToken) {
       if (!isNaN(expDate.getTime()) && expDate < now) return null;
     }
 
-    if (lastSeenIdx >= 0) {
-      sheet.getRange(i + 1, lastSeenIdx + 1).setValue(nowKst_());
-    }
+    // LAST_SEEN_AT write removed — it was a Sheets API write on every
+    // authenticated request with no business logic value.
 
     var role = String(row[roleIdx] || "VIEWER").trim().toUpperCase();
     return {
@@ -422,6 +443,36 @@ function forceLogout_(sessionToken, targetSessionToken) {
 // SECTION 2: ENTRY POINTS (doGet / doPost)
 // ============================================================
 
+// Reads all low-frequency config sheets and caches the result in CacheService
+// for 300 seconds (5 minutes). Config sheets (exclude, event, mapping, dangjdo)
+// change rarely, so serving cached data reduces 4-5 Sheets API reads per
+// bootstrap to zero on cache hits. worksheet_url is included in the cached
+// payload since it is constant for the lifetime of the spreadsheet.
+// Cache is per-script (shared across all users of this deployment).
+// If the payload exceeds CacheService's 100 KB limit the put() is skipped
+// and every call falls back to a live sheet read gracefully.
+function getConfigCached_() {
+  var cache = CacheService.getScriptCache();
+  var cacheKey = 'bootstrap_config_v1';
+  var hit = cache.get(cacheKey);
+  if (hit) {
+    try { return JSON.parse(hit); } catch (_) {}
+  }
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var payload = {
+    config: {
+      exclude_rows:     readObjectsSheet_(SHEET_NAMES.exclude),
+      event_rows:       readObjectsSheet_(SHEET_NAMES.event),
+      reservation_rows: readReservationRows_(),
+      mapping_rows:     readObjectsSheet_(SHEET_NAMES.mapping),
+      dangjdo_rows:     readObjectsSheet_(SHEET_NAMES.dangjdo),
+    },
+    worksheet_url: ss.getUrl(),
+  };
+  try { cache.put(cacheKey, JSON.stringify(payload), 300); } catch (_) {}
+  return payload;
+}
+
 function doGet(e) {
   try {
     const action = (e && e.parameter && e.parameter.action) || "bootstrap";
@@ -430,21 +481,20 @@ function doGet(e) {
       // Lean bootstrap: returns only what is needed for the first paint.
       // happycall analytics and product images are fetched separately by bootstrapDeferred
       // after first render so the initial loading spinner clears faster.
+      // Config sheets are served from CacheService (300 s TTL) to avoid
+      // re-reading them on every bootstrap call.
+      const ss = SpreadsheetApp.getActiveSpreadsheet();
+      const photoAssetMap = loadPhotoAssetMap_(ss);
+      const configData = getConfigCached_();
       return jsonOutput_({
         ok: true,
         data: {
-          config: {
-            exclude_rows: readObjectsSheet_(SHEET_NAMES.exclude),
-            event_rows: readObjectsSheet_(SHEET_NAMES.event),
-            reservation_rows: readReservationRows_(),
-            mapping_rows: readObjectsSheet_(SHEET_NAMES.mapping),
-            dangjdo_rows: readObjectsSheet_(SHEET_NAMES.dangjdo),
-          },
-          current_job: loadLatestJob_(),
-          records: loadRecords_(),
-          rows: loadInspectionRows_(),
-          worksheet_url: SpreadsheetApp.getActiveSpreadsheet().getUrl(),
-          summary: getDashboardSummary_(),
+          config:        configData.config,
+          current_job:   loadLatestJob_(),
+          records:       loadRecords_(ss, photoAssetMap),
+          rows:          loadInspectionRows_(ss, photoAssetMap),
+          worksheet_url: configData.worksheet_url || ss.getUrl(),
+          summary:       getDashboardSummary_(),
         },
       });
     }
@@ -471,6 +521,38 @@ function doGet(e) {
       return jsonOutput_({
         ok: true,
         rows: loadInspectionRows_(),
+      });
+    }
+
+    // ── Split bootstrap endpoints ──────────────────────────────────────────────
+    // These fine-grained actions allow the frontend to load bootstrap data in
+    // parallel (Promise.all) instead of waiting for one large sequential request.
+
+    if (action === "getConfig") {
+      // Returns cached config sheets + worksheet URL. Cache TTL: 300 s.
+      return jsonOutput_({
+        ok: true,
+        data: getConfigCached_(),
+      });
+    }
+
+    if (action === "getCurrentJob") {
+      // Returns the latest job rows from job_cache (no config sheets needed).
+      return jsonOutput_({
+        ok: true,
+        data: {
+          current_job: loadLatestJob_(),
+        },
+      });
+    }
+
+    if (action === "getDashboard") {
+      // Returns the pre-aggregated summary block (uses its own CacheService cache).
+      return jsonOutput_({
+        ok: true,
+        data: {
+          summary: getDashboardSummary_(),
+        },
       });
     }
 
@@ -514,6 +596,26 @@ function doGet(e) {
         });
       }
       return jsonOutput_(fsr);
+    }
+
+    // ── Inspection criteria search (검품 기준 검색) ───────────────────────────
+    // Searches folder names inside CRITERIA_ROOT_FOLDER_ID.
+    // No sheet reads — pure Drive API. No auth required (public reference data).
+
+    if (action === "searchInspectionCriteria") {
+      var keyword = String((e && e.parameter && e.parameter.keyword) || "").trim();
+      return jsonOutput_({
+        ok: true,
+        data: searchInspectionCriteriaFolders_(keyword),
+      });
+    }
+
+    if (action === "getInspectionCriteriaImages") {
+      var imgFolderId = String((e && e.parameter && e.parameter.folderId) || "").trim();
+      return jsonOutput_({
+        ok: true,
+        data: getInspectionCriteriaImages_(imgFolderId),
+      });
     }
 
     return jsonOutput_({
@@ -811,6 +913,7 @@ function doPost(e) {
     // Running outside the lock lets photo uploads proceed concurrently with saves.
     var _authPh0 = requirePermission_(body.sessionToken, "UPLOAD_PHOTO");
     var _phResult0 = uploadPhotos_(body.payload || {});
+    try { CacheService.getScriptCache().remove('photo_asset_map_v1'); } catch (_) {}
     var _php0 = body.payload || {};
     appendAuditLog_({ action: "UPLOAD_PHOTO", userId: _authPh0.id, userName: _authPh0.name, role: _authPh0.role,
       jobKey: _php0.jobKey || "", productCode: _php0.productCode || "",
@@ -992,6 +1095,9 @@ function doPost(e) {
       // NOTE: handled before the lock — this branch is unreachable but kept as safety fallback.
       var _authPh = requirePermission_(body.sessionToken, "UPLOAD_PHOTO");
       var _phResult = uploadPhotos_(body.payload || {});
+      // Invalidate photo asset cache so the next getRecords/getInspectionRows
+      // sees the freshly uploaded photo.
+      try { CacheService.getScriptCache().remove('photo_asset_map_v1'); } catch (_) {}
       var _php = body.payload || {};
       appendAuditLog_({ action: "UPLOAD_PHOTO", userId: _authPh.id, userName: _authPh.name, role: _authPh.role,
         jobKey: _php.jobKey || "", productCode: _php.productCode || "",
@@ -1003,10 +1109,10 @@ function doPost(e) {
 
     if (action === "savePhotoMeta") {
       var _authPm = requirePermission_(body.sessionToken, "UPLOAD_PHOTO");
-      return jsonOutput_({
-        ok: true,
-        data: savePhotoMeta_(body.payload || {}),
-      });
+      var _pmResult = savePhotoMeta_(body.payload || {});
+      // Invalidate photo asset cache after meta save.
+      try { CacheService.getScriptCache().remove('photo_asset_map_v1'); } catch (_) {}
+      return jsonOutput_({ ok: true, data: _pmResult });
     }
 
     if (action === "syncHistory") {
@@ -1511,15 +1617,66 @@ function loadLatestJob_() {
     return null;
   }
 
-  const values = jobsSheet.getRange(2, 1, jobsSheet.getLastRow() - 1, jobsSheet.getLastColumn()).getValues();
-  const last = values[values.length - 1];
+  // Read jobs sheet once here — avoids the redundant re-read that
+  // loadJobRowsByKey_ would perform when called from this path.
+  const jobValues = jobsSheet.getRange(2, 1, jobsSheet.getLastRow() - 1, jobsSheet.getLastColumn()).getValues();
+  const last = jobValues[jobValues.length - 1];
   const jobKey = String(last[1] || "").trim();
 
   if (!jobKey) {
     return null;
   }
 
-  return loadJobRowsByKey_(ss, jobKey);
+  // Extract job meta from the already-loaded values.
+  let jobMeta = null;
+  for (var i = jobValues.length - 1; i >= 0; i -= 1) {
+    if (String(jobValues[i][1] || "").trim() === jobKey) {
+      jobMeta = {
+        created_at: jobValues[i][0],
+        job_key: jobValues[i][1],
+        source_file_name: jobValues[i][2],
+        source_file_modified: jobValues[i][3],
+        row_count: jobValues[i][4],
+      };
+      break;
+    }
+  }
+
+  if (!jobMeta) {
+    return null;
+  }
+
+  if (!cacheSheet || cacheSheet.getLastRow() < 2) {
+    return {
+      job_key: jobMeta.job_key,
+      source_file_name: jobMeta.source_file_name,
+      source_file_modified: jobMeta.source_file_modified,
+      created_at: jobMeta.created_at,
+      rows: [],
+    };
+  }
+
+  // Read cache sheet once here — avoids the redundant re-read inside
+  // loadJobRowsByKey_ when this function is called from bootstrap.
+  const cacheValues = cacheSheet.getRange(2, 1, cacheSheet.getLastRow() - 1, 4).getValues();
+  const rows = cacheValues
+    .filter(function (row) {
+      return String(row[1] || "").trim() === jobKey;
+    })
+    .sort(function (a, b) {
+      return Number(a[2] || 0) - Number(b[2] || 0);
+    })
+    .map(function (row) {
+      return JSON.parse(String(row[3] || "{}"));
+    });
+
+  return {
+    job_key: jobMeta.job_key,
+    source_file_name: jobMeta.source_file_name,
+    source_file_modified: jobMeta.source_file_modified,
+    created_at: jobMeta.created_at,
+    rows: rows,
+  };
 }
 
 function loadJobRowsByKey_(ss, jobKey) {
@@ -1610,6 +1767,25 @@ function pruneJobCacheRows_(cacheSheet) {
   cacheSheet.deleteRows(2, deleteCount);
 }
 
+// Deletes an arbitrary set of row numbers from a sheet in the fewest possible
+// deleteRows() calls by collapsing contiguous row numbers into ranges.
+// Rows are processed from the bottom up so that deleting one range does not
+// shift the indices of rows still to be deleted above it.
+function batchDeleteRows_(sheet, rowNumbers) {
+  if (!sheet || !rowNumbers || rowNumbers.length === 0) return;
+  var sorted = rowNumbers.slice().sort(function (a, b) { return b - a; });
+  var i = 0;
+  while (i < sorted.length) {
+    var blockBottom = sorted[i];
+    var count = 1;
+    while (i + count < sorted.length && sorted[i + count] === blockBottom - count) {
+      count++;
+    }
+    sheet.deleteRows(blockBottom - count + 1, count);
+    i += count;
+  }
+}
+
 function pruneExpiredJobCacheRows_(jobsSheet, cacheSheet) {
   if (!jobsSheet || jobsSheet.getLastRow() < 2) return;
   var cutoff = new Date();
@@ -1628,10 +1804,7 @@ function pruneExpiredJobCacheRows_(jobsSheet, cacheSheet) {
     }
   }
 
-  rowsToDelete.sort(function (a, b) { return b - a; });
-  rowsToDelete.forEach(function (rowNumber) {
-    jobsSheet.deleteRow(rowNumber);
-  });
+  batchDeleteRows_(jobsSheet, rowsToDelete);
 
   if (!cacheSheet || cacheSheet.getLastRow() < 2 || !Object.keys(expiredJobKeys).length) return;
 
@@ -1644,10 +1817,7 @@ function pruneExpiredJobCacheRows_(jobsSheet, cacheSheet) {
     }
   }
 
-  cacheDeleteRows.sort(function (a, b) { return b - a; });
-  cacheDeleteRows.forEach(function (rowNumber) {
-    cacheSheet.deleteRow(rowNumber);
-  });
+  batchDeleteRows_(cacheSheet, cacheDeleteRows);
 }
 
 function autoResizeOperationalSheets_(ss) {
@@ -1655,7 +1825,19 @@ function autoResizeOperationalSheets_(ss) {
 }
 
 // ── Data loaders ───────────────────────────────────────────
+// photo_assets is read by both getRecords and getInspectionRows when they run
+// as separate parallel requests. CacheService deduplicates the sheet read for
+// calls that land within the same 60-second window. If the cached payload
+// exceeds CacheService's 100 KB limit, cache.put() is silently skipped and
+// every call falls back to a live sheet read.
 function loadPhotoAssetMap_(ss) {
+  var cache    = CacheService.getScriptCache();
+  var cacheKey = 'photo_asset_map_v1';
+  var hit      = cache.get(cacheKey);
+  if (hit) {
+    try { return JSON.parse(hit); } catch (_) {}
+  }
+
   var sheet = getPhotoAssetSheet_(ss);
   if (!sheet || sheet.getLastRow() < 2) return {};
 
@@ -1680,6 +1862,7 @@ function loadPhotoAssetMap_(ss) {
     };
   }
 
+  try { cache.put(cacheKey, JSON.stringify(map), 60); } catch (_) {}
   return map;
 }
 
@@ -1696,12 +1879,13 @@ function getDashboardSummary_() {
     return {};
   }
 
-  var labelsTop = sheet.getRange("A1:F1").getValues()[0];
-  var valuesTop = sheet.getRange("A2:F2").getValues()[0];
-  var labelsMid = sheet.getRange("A3:F3").getValues()[0];
-  var valuesMid = sheet.getRange("A4:F4").getValues()[0];
-  var labelsBottom = sheet.getRange("A5:F5").getValues()[0];
-  var valuesBottom = sheet.getRange("A6:F6").getValues()[0];
+  var allValues = sheet.getRange("A1:F6").getValues();
+  var labelsTop    = allValues[0];
+  var valuesTop    = allValues[1];
+  var labelsMid    = allValues[2];
+  var valuesMid    = allValues[3];
+  var labelsBottom = allValues[4];
+  var valuesBottom = allValues[5];
   var summary = {};
 
   [labelsTop, labelsMid, labelsBottom].forEach(function (labels, groupIndex) {
@@ -1717,14 +1901,14 @@ function getDashboardSummary_() {
   return summary;
 }
 
-function loadRecords_() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
+function loadRecords_(ss, photoAssetMap) {
+  if (!ss) ss = SpreadsheetApp.getActiveSpreadsheet();
   const sheet = getRecordSheet_(ss);
   if (!sheet || sheet.getLastRow() < 2) {
     return [];
   }
 
-  const photoAssetMap = loadPhotoAssetMap_(ss);
+  if (!photoAssetMap) photoAssetMap = loadPhotoAssetMap_(ss);
 
   const values = sheet.getDataRange().getValues();
   const headers = values[0].map(function (header) {
@@ -1758,14 +1942,14 @@ function loadRecords_() {
   return rows;
 }
 
-function loadInspectionRows_() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
+function loadInspectionRows_(ss, photoAssetMap) {
+  if (!ss) ss = SpreadsheetApp.getActiveSpreadsheet();
   const sheet = getInspectionSheet_(ss);
   if (!sheet || sheet.getLastRow() < 2) {
     return [];
   }
 
-  const photoAssetMap = loadPhotoAssetMap_(ss);
+  if (!photoAssetMap) photoAssetMap = loadPhotoAssetMap_(ss);
   const values = sheet.getDataRange().getValues();
   const headers = values[0].map(function (header) {
     return String(header || "").trim();
@@ -3484,7 +3668,15 @@ function resetCurrentJobInputData_(payload) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var recordsSheet = getRecordSheet_(ss);
   var inspectionSheet = getInspectionSheet_(ss);
-  var deletedPhotos = trashPhotosForJob_(recordsSheet, jobKey);
+
+  // Primary deletion: read Drive file IDs from the photo_assets sheet (the
+  // canonical source).  This covers inspection photos, defect/weight/brix photos,
+  // and movement (return/exchange) photos uploaded via savePhotoMeta_.
+  var assetResult = trashPhotosForJobFromAssetSheet_(ss, jobKey);
+
+  // Secondary deletion: also scan the records sheet for any legacy rows that
+  // stored file IDs directly in 사진파일ID목록/사진링크 columns.
+  var deletedPhotos = trashPhotosForJob_(recordsSheet, jobKey) + assetResult.trashedFiles;
   var deletedRecords = deleteRecordRowsByJobKey_(recordsSheet, jobKey);
   var resetInspectionCount = deleteInspectionRowsByJobKey_(inspectionSheet, jobKey);
   updateInspectionDashboard_(ss);
@@ -3932,14 +4124,7 @@ function deleteInspectionRowsByJobKey_(inspectionSheet, jobKey) {
     }
   }
 
-  rowNumbers.sort(function (a, b) {
-    return b - a;
-  });
-
-  rowNumbers.forEach(function (rowNumber) {
-    inspectionSheet.deleteRow(rowNumber);
-  });
-
+  batchDeleteRows_(inspectionSheet, rowNumbers);
   return rowNumbers.length;
 }
 
@@ -4755,39 +4940,20 @@ function savePhotosToDrive_(photos, baseName, existingFileIdsText) {
 }
 
 function getOrCreatePhotoFolder_() {
-  // ── Primary: always try the designated inspection-photo Drive folder first ──
-  // This folder ID is fixed and must be used for all new photo uploads.
-  var DESIGNATED_FOLDER_ID = '1q2ZCBXNACyCGtPXdl3rr-qVRKc2VHl-F';
+  // Always use the single designated folder for all inspection photos.
+  // No fallback folders, no dynamic folder creation.
   try {
-    DriveApp.getFolderById(DESIGNATED_FOLDER_ID);
-    // Keep the script property in sync so any code that reads it directly also works.
-    PropertiesService.getScriptProperties().setProperty('PHOTO_FOLDER_ID', DESIGNATED_FOLDER_ID);
-    return DESIGNATED_FOLDER_ID;
-  } catch (_) {
-    // Designated folder inaccessible (wrong account / permissions) — fall through.
-    console.warn('[getOrCreatePhotoFolder_] Designated folder inaccessible, trying property fallback.');
+    DriveApp.getFolderById(PHOTO_UPLOAD_FOLDER_ID);
+  } catch (e) {
+    throw new Error(
+      '[getOrCreatePhotoFolder_] 검품 사진 폴더에 접근할 수 없습니다. ' +
+      '폴더 ID: ' + PHOTO_UPLOAD_FOLDER_ID + ' — 권한을 확인하세요. ' + e.message
+    );
   }
-
-  // ── Fallback: property-stored folder ID (from a previous run) ──
-  var props = PropertiesService.getScriptProperties();
-  var folderId = props.getProperty('PHOTO_FOLDER_ID');
-  if (folderId && folderId !== DESIGNATED_FOLDER_ID) {
-    try {
-      DriveApp.getFolderById(folderId);
-      return folderId;
-    } catch (_) {
-      // Property folder also inaccessible — fall through to create.
-    }
-  }
-
-  // ── Last resort: create a new folder (should never happen if permissions are correct) ──
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var folderName = 'GS25검품_사진_' + ss.getId().slice(0, 8);
-  var newFolder = DriveApp.createFolder(folderName);
-  folderId = newFolder.getId();
-  props.setProperty('PHOTO_FOLDER_ID', folderId);
-  console.warn('[getOrCreatePhotoFolder_] Created fallback folder: ' + folderId);
-  return folderId;
+  // Keep ScriptProperties in sync so any legacy direct reads of PHOTO_FOLDER_ID
+  // still resolve to the correct folder without needing a Drive API call.
+  PropertiesService.getScriptProperties().setProperty('PHOTO_FOLDER_ID', PHOTO_UPLOAD_FOLDER_ID);
+  return PHOTO_UPLOAD_FOLDER_ID;
 }
 
 function savePhotoToDrive_(photo, baseName, index, preferredFileName) {
@@ -4877,13 +5043,11 @@ function getProductImageSheet_(ss) {
 }
 
 function saveProductImageAssetToDrive_(photo, baseName, index) {
-  var folderId =
-    PropertiesService.getScriptProperties().getProperty("PRODUCT_IMAGE_FOLDER_ID") ||
-    PropertiesService.getScriptProperties().getProperty("PHOTO_FOLDER_ID");
-
-  if (!folderId) {
-    throw new Error("이미지 업로드 실패: PRODUCT_IMAGE_FOLDER_ID 또는 PHOTO_FOLDER_ID가 설정되지 않았습니다.");
-  }
+  // Always use the hard-coded constant — never rely on ScriptProperties for this.
+  // The ScriptProperty "PRODUCT_IMAGE_FOLDER_ID" was never reliably set, and
+  // "PHOTO_FOLDER_ID" points to 검품 사진 (the inspection photo folder), which
+  // would be the wrong destination for representative product images.
+  var folderId = PRODUCT_IMAGE_FOLDER_ID;
 
   var folder = DriveApp.getFolderById(folderId);
   var safeBaseName = sanitizeFileName_(baseName || "product_image");
@@ -5176,8 +5340,20 @@ function autoResetOperationalData_() {
   var centerSheet = getOrCreateSheet_(ss, SHEET_NAMES.returnCenter);
   var summarySheet = getOrCreateSheet_(ss, SHEET_NAMES.returnSummary);
 
+  // Primary photo deletion: trash all files inside the designated photo folder
+  // (PHOTO_UPLOAD_FOLDER_ID = 검품 사진).  This single call covers inspection
+  // photos, defect/weight/brix photos, and ZIP archives in one pass.
+  // The folder itself and all other Drive folders are untouched.
+  deleteAllFilesInPhotoFolder_();
+
+  // Also clear the photo_assets index sheet so stale IDs don't linger.
+  trashAllPhotosFromAssetSheet_(ss);
+
+  // Legacy fallback: scan record and inspection sheets for any file IDs written
+  // before photo_assets was introduced.
   trashPhotosInSheet_(inspectionSheet);
   trashPhotosInSheet_(recordSheet);
+
   clearSheetBody_(inspectionSheet, inspectionSheet.getLastColumn());
   clearSheetBody_(recordSheet, recordSheet.getLastColumn());
   clearSheetBody_(centerSheet, centerSheet.getLastColumn());
@@ -5858,10 +6034,9 @@ function getPhotoSourcesFromRecord_(record) {
 
 // ── ZIP Drive save ─────────────────────────────────────────
 function saveZipToDrive_(zipBlob, fileName) {
-  var folderId =
-    PropertiesService.getScriptProperties().getProperty("ZIP_FOLDER_ID") ||
-    PropertiesService.getScriptProperties().getProperty("PHOTO_FOLDER_ID");
-  var folder = folderId ? DriveApp.getFolderById(folderId) : DriveApp.getRootFolder();
+  // ZIP archives are saved into the same managed inspection-photo folder so
+  // they are cleaned up together during reset.
+  var folder = DriveApp.getFolderById(PHOTO_UPLOAD_FOLDER_ID);
   var file = folder.createFile(zipBlob.setName(fileName));
   file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
 
@@ -6212,6 +6387,147 @@ function isMovementRecord_(record) {
   return parseNumber_(record["회송수량"]) > 0 || parseNumber_(record["교환수량"]) > 0;
 }
 
+// ── Photo Drive deletion helpers ───────────────────────────
+// These functions use the photo_assets sheet as the canonical source of
+// Drive file IDs, because the records/inspection sheets do not reliably
+// store photo file IDs in their own columns.
+//
+// photo_assets row layout (photoAssetHeaders_):
+//   col 0: key  (e.g. "inspection||2024-01-15||CODE||파트너")
+//   col 1: 사진파일ID목록  (newline-separated Drive file IDs)
+//   col 2: 사진개수
+//   col 3: 수정일시
+//   col 4: photoCategoriesJSON  (e.g. {"insp":["id1"],"defect":[],...})
+//
+// All photo files uploaded by this app live in PHOTO_UPLOAD_FOLDER_ID ("검품 사진").
+// ZIP archives are also saved to the same folder by saveZipToDrive_().
+
+/**
+ * Collect every Drive file ID referenced in a photo_assets values row
+ * (both from the flat fileIdsText column and from photoCategoriesJSON).
+ */
+function collectFileIdsFromAssetRow_(row) {
+  var ids = {};
+  splitPhotoSourceText_(row[1] || "").forEach(function(id) {
+    var clean = String(id || "").trim();
+    if (clean) ids[clean] = true;
+  });
+  var catRaw = String(row[4] || "").trim();
+  if (catRaw) {
+    try {
+      var cats = JSON.parse(catRaw);
+      Object.keys(cats).forEach(function(k) {
+        var arr = cats[k];
+        if (!Array.isArray(arr)) return;
+        arr.forEach(function(id) {
+          var clean = String(id || "").trim();
+          if (clean) ids[clean] = true;
+        });
+      });
+    } catch (_) {}
+  }
+  return Object.keys(ids);
+}
+
+/**
+ * Delete ALL files inside the designated inspection-photo folder.
+ * Scope: ONLY files directly inside PHOTO_UPLOAD_FOLDER_ID.
+ * The folder itself is NOT deleted.  No subfolders, no sibling folders,
+ * no other folders inside the root "업무" folder are touched.
+ *
+ * Returns the number of files trashed.
+ */
+function deleteAllFilesInPhotoFolder_() {
+  var folder;
+  try {
+    folder = DriveApp.getFolderById(PHOTO_UPLOAD_FOLDER_ID);
+  } catch (e) {
+    console.error('[deleteAllFilesInPhotoFolder_] Cannot access folder ' + PHOTO_UPLOAD_FOLDER_ID + ': ' + e.message);
+    return 0;
+  }
+  var files = folder.getFiles();
+  var count = 0;
+  while (files.hasNext()) {
+    try { files.next().setTrashed(true); count += 1; } catch (_) {}
+  }
+  console.log('[deleteAllFilesInPhotoFolder_] Trashed ' + count + ' files from folder ' + PHOTO_UPLOAD_FOLDER_ID);
+  return count;
+}
+
+/**
+ * Trash Drive files and batch-delete photo_assets rows for a specific jobKey.
+ * Matches rows whose key starts with "inspection||{jobKey}||" or
+ * "movement||{jobKey}||".  Only files referenced in this app's own
+ * photo_assets sheet are touched — scoped to PHOTO_UPLOAD_FOLDER_ID via
+ * the IDs stored there.
+ *
+ * Returns { trashedFiles: N, deletedAssetRows: M }.
+ */
+function trashPhotosForJobFromAssetSheet_(ss, jobKey) {
+  if (!jobKey) return { trashedFiles: 0, deletedAssetRows: 0 };
+  var sheet = getPhotoAssetSheet_(ss);
+  if (sheet.getLastRow() < 2) return { trashedFiles: 0, deletedAssetRows: 0 };
+
+  var values = sheet.getDataRange().getValues();
+  var inspPrefix = "inspection||" + jobKey + "||";
+  var movPrefix  = "movement||"   + jobKey + "||";
+
+  var fileIds    = {};  // unique file IDs to trash
+  var rowsToDelete = [];  // 1-based row numbers in the sheet
+
+  for (var r = 1; r < values.length; r += 1) {
+    var key = String(values[r][0] || "").trim();
+    if (key.indexOf(inspPrefix) !== 0 && key.indexOf(movPrefix) !== 0) continue;
+    rowsToDelete.push(r + 1);  // 1-based
+    collectFileIdsFromAssetRow_(values[r]).forEach(function(id) { fileIds[id] = true; });
+  }
+
+  var trashedFiles = 0;
+  Object.keys(fileIds).forEach(function(driveId) {
+    try { DriveApp.getFileById(driveId).setTrashed(true); trashedFiles += 1; } catch (_) {}
+  });
+
+  // Delete asset rows bottom-up so indices stay valid.
+  rowsToDelete.sort(function(a, b) { return b - a; });
+  rowsToDelete.forEach(function(row) {
+    try { sheet.deleteRow(row); } catch (_) {}
+  });
+
+  // Invalidate cache so next loadPhotoAssetMap_ reads fresh data.
+  try { CacheService.getScriptCache().remove('photo_asset_map_v1'); } catch (_) {}
+
+  return { trashedFiles: trashedFiles, deletedAssetRows: rowsToDelete.length };
+}
+
+/**
+ * Trash ALL Drive photo files referenced in the photo_assets sheet and then
+ * clear the sheet body.  Used by the daily full reset.
+ * Returns the number of files trashed via asset-sheet IDs.
+ */
+function trashAllPhotosFromAssetSheet_(ss) {
+  var sheet = getPhotoAssetSheet_(ss);
+  if (sheet.getLastRow() < 2) return 0;
+
+  var values = sheet.getDataRange().getValues();
+  var fileIds = {};
+  for (var r = 1; r < values.length; r += 1) {
+    collectFileIdsFromAssetRow_(values[r]).forEach(function(id) { fileIds[id] = true; });
+  }
+
+  var trashed = 0;
+  Object.keys(fileIds).forEach(function(driveId) {
+    try { DriveApp.getFileById(driveId).setTrashed(true); trashed += 1; } catch (_) {}
+  });
+
+  // Clear all data rows but keep the header.
+  if (sheet.getLastRow() > 1) {
+    sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).clearContent();
+  }
+
+  try { CacheService.getScriptCache().remove('photo_asset_map_v1'); } catch (_) {}
+  return trashed;
+}
+
 function trashPhotosForJob_(recordsSheet, jobKey) {
   if (!recordsSheet || recordsSheet.getLastRow() < 2) return 0;
 
@@ -6402,4 +6718,135 @@ function ensureHeaderRow_(sheet, headers) {
   if (sheet.getLastRow() === 0 || changed) {
     sheet.getRange(1, 1, 1, width).setValues([headers]);
   }
+}
+
+// ============================================================
+// SECTION: INSPECTION CRITERIA SEARCH (검품 기준 검색)
+// ============================================================
+// These functions search the CRITERIA_ROOT_FOLDER_ID folder tree by
+// folder name only.  No OCR, no PNG text parsing.
+//
+// Folder structure:
+//   CRITERIA_ROOT_FOLDER_ID/
+//     <category>/           e.g. 채소, 과일, 수산, 축산
+//       <product folder>    direct product folder  → contains PNG slides
+//       <grouped folder>    e.g. [채소]검품기준표_기타종합
+//         <product folder>  nested product folder  → contains PNG slides
+//
+// A "grouped container" folder is identified by the presence of sub-folders
+// inside it.  A direct product folder has no sub-folders, only image files.
+
+/**
+ * Search inspection criteria folders by keyword (folder name matching).
+ * Returns an array of matched product folder descriptors:
+ *   { id, name, category, groupName }
+ *
+ * @param {string} keyword  - The search keyword (case-insensitive, partial match).
+ * @returns {Array}
+ */
+function searchInspectionCriteriaFolders_(keyword) {
+  if (!keyword) return [];
+  var q = keyword.toLowerCase();
+  var results = [];
+
+  var rootFolder;
+  try {
+    rootFolder = DriveApp.getFolderById(CRITERIA_ROOT_FOLDER_ID);
+  } catch (e) {
+    throw new Error('검품 기준 폴더에 접근할 수 없습니다: ' + e.message);
+  }
+
+  // Level 1: category folders (채소, 과일, 수산, 축산, …)
+  var catIter = rootFolder.getFolders();
+  while (catIter.hasNext()) {
+    var catFolder = catIter.next();
+    var catName = catFolder.getName();
+
+    // Level 2: direct product folders or grouped container folders
+    var lvl2Iter = catFolder.getFolders();
+    while (lvl2Iter.hasNext()) {
+      var lvl2Folder = lvl2Iter.next();
+      var lvl2Name = lvl2Folder.getName();
+
+      // Check whether this level-2 folder is a grouped container by probing
+      // for sub-folders.  getFolders() is lazy, so hasNext() is the only call
+      // needed when there are no matches.
+      var childIter = lvl2Folder.getFolders();
+      if (childIter.hasNext()) {
+        // ── Grouped container (e.g. [채소]검품기준표_기타종합) ──────────────
+        // Search its direct children (the actual product folders).
+        do {
+          var childFolder = childIter.next();
+          var childName = childFolder.getName();
+          if (childName.toLowerCase().indexOf(q) >= 0) {
+            results.push({
+              id:        childFolder.getId(),
+              name:      childName,
+              category:  catName,
+              groupName: lvl2Name,
+            });
+          }
+        } while (childIter.hasNext());
+      } else {
+        // ── Direct product folder ─────────────────────────────────────────
+        if (lvl2Name.toLowerCase().indexOf(q) >= 0) {
+          results.push({
+            id:        lvl2Folder.getId(),
+            name:      lvl2Name,
+            category:  catName,
+            groupName: null,
+          });
+        }
+      }
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Return all image files (PNG / JPEG) inside a criteria product folder,
+ * sorted numerically by the first integer found in the file name so that
+ * 슬라이드1.PNG < 슬라이드2.PNG < … < 슬라이드10.PNG.
+ *
+ * @param {string} folderId - Drive folder ID of the product criteria folder.
+ * @returns {{ folderId, folderName, images: Array<{id,name,url}> }}
+ */
+function getInspectionCriteriaImages_(folderId) {
+  if (!folderId) throw new Error('folderId가 필요합니다.');
+
+  var folder;
+  try {
+    folder = DriveApp.getFolderById(folderId);
+  } catch (e) {
+    throw new Error('폴더를 찾을 수 없습니다 (' + folderId + '): ' + e.message);
+  }
+
+  var images = [];
+  var fileIter = folder.getFiles();
+  while (fileIter.hasNext()) {
+    var file = fileIter.next();
+    var mime = file.getMimeType();
+    if (mime !== 'image/png' && mime !== 'image/jpeg') continue;
+    images.push({
+      id:   file.getId(),
+      name: file.getName(),
+      url:  'https://drive.google.com/uc?export=view&id=' + file.getId(),
+    });
+  }
+
+  // Numeric sort: extract the first integer in the file name.
+  // 슬라이드1.PNG → 1, 슬라이드10.PNG → 10, etc.
+  images.sort(function (a, b) {
+    var numA = parseInt((a.name.match(/\d+/) || ['0'])[0], 10);
+    var numB = parseInt((b.name.match(/\d+/) || ['0'])[0], 10);
+    if (numA !== numB) return numA - numB;
+    return a.name.localeCompare(b.name, 'ko');
+  });
+
+  return {
+    folderId:   folderId,
+    folderName: folder.getName(),
+    images:     images,
+  };
 }

@@ -1,14 +1,15 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import Papa from 'papaparse';
-import { ClipboardCheck, FileText, BarChart3, RefreshCw, Database, AlertTriangle, Lock, Download, FolderDown, LogOut } from 'lucide-react';
+import { ClipboardCheck, FileText, BarChart3, RefreshCw, Database, AlertTriangle, Lock, Download, FolderDown, LogOut, BookOpen } from 'lucide-react';
 import gs25Logo from './gs25-logo.svg';
 import InspectionPage from './components/InspectionPage';
 import RecordsPage from './components/RecordsPage';
 import SummaryPage from './components/SummaryPage';
+import CriteriaPage from './components/CriteriaPage';
 import LoginPage from './components/LoginPage';
 import WorkerPanel from './components/WorkerPanel';
 import ScheduleModal from './components/ScheduleModal';
-import { manualRecalc, syncHistory, resetCurrentJobInputData, fetchHistoryData, fetchWorkSchedule, fetchFullSchedule, login as apiLogin, validateSession, logout as apiLogout, setSessionToken, listSessions, forceLogoutSession } from './api'; // eslint-disable-line no-unused-vars
+import { manualRecalc, syncHistory, resetCurrentJobInputData, fetchHistoryData, fetchWorkSchedule, fetchFullSchedule, login as apiLogin, validateSession, logout as apiLogout, setSessionToken, listSessions, forceLogoutSession, fetchBootstrapParallel } from './api'; // eslint-disable-line no-unused-vars
 import { flushSync as flushPendingSync } from './utils/syncScheduler';
 import { buildAndDownloadPhotoZips } from './utils/photoZipBuilder';
 import { LoadingScreen, LoadingBlock } from './components/Spinner';
@@ -23,9 +24,10 @@ const PENDING_KEY = "inspection_pending_v2";
 
 // ── Tab definitions ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 const TABS = [
-  { key: "inspection", label: "검품", icon: ClipboardCheck },
-  { key: "records",    label: "기록", icon: FileText },
-  { key: "summary",   label: "요약", icon: BarChart3 },
+  { key: "inspection", label: "검품",    icon: ClipboardCheck },
+  { key: "records",    label: "기록",    icon: FileText },
+  { key: "summary",    label: "요약",    icon: BarChart3 },
+  { key: "criteria",   label: "검품기준", icon: BookOpen },
 ];
 
 // ── Color palette ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -472,6 +474,9 @@ const buildNormalizedRows = (parsedRows) =>
       __qty: qty,
       __productNameNormalized: normalizeText(productName),
       __partnerNormalized: normalizeText(partner),
+      // Precomputed lowercase string for fast search filtering — avoids repeated
+      // toLowerCase() and normalizeCode() calls inside every PartnerGroup render.
+      __searchKey: `${productName.toLowerCase()} ${productCode.toLowerCase()}`,
     };
   });
 
@@ -1769,10 +1774,9 @@ function App() {
     setLoading(true);
     setLoadError("");
     try {
-      const resp = await fetch(`${SCRIPT_URL}?action=bootstrap`);
-      const result = await resp.json();
-      if (!resp.ok || result.ok === false)
-        throw new Error(result.message || "초기 데이터 로드 실패");
+      // Fire getConfig / getCurrentJob / getRecords / getInspectionRows / getDashboard
+      // in parallel. Wall-clock time is max(each request) instead of their sum.
+      const result = await fetchBootstrapParallel();
       const d = result.data || {};
       const job = d.current_job || {};
       setJobKey(job.job_key || "");
@@ -2344,6 +2348,9 @@ function App() {
             onToast={showToast}
             onRefresh={loadBootstrap}
           />
+        )}
+        {tab === "criteria" && (
+          <CriteriaPage jobRows={jobRows} />
         )}
       </main>
 
