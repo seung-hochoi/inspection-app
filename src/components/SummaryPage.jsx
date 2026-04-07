@@ -206,19 +206,20 @@ export default function SummaryPage({ summary = {}, happycall = {}, jobRows = []
   // ── Values from the latest "이력" archive row — sole source of truth for KPI cards ──
   // All 12 KPI cards read exclusively from the latest history snapshot.
   // Rates are stored as plain numbers (e.g. 87.6) after the fmtRate fix in Code.gs.
-  // fromHist() strips any stray "%" and returns a parsed number, or null if absent.
+  // fromHist() tries each alias in order; both space and no-space variants are listed
+  // because the actual sheet may have been created before HIST_HEADERS_ was standardised.
   const histTotalAmt     = fromHist('총 입고금액');
-  const histTargetAmt    = fromHist('총 입고금액 (냉동/가공/계란 제외)');
+  const histTargetAmt    = fromHist('총 입고금액(냉동/가공/계란 제외)',    '총 입고금액 (냉동/가공/계란 제외)');
   const histTotalQty     = fromHist('총 입고수량(개)');
-  const histTargetQty    = fromHist('총 입고수량(개) (냉동/가공/계란 제외)');
+  const histTargetQty    = fromHist('총 입고수량(개)(냉동/가공/계란 제외)', '총 입고수량(개) (냉동/가공/계란 제외)');
   const histInspQty      = fromHist('검품수량(개)');
-  const histInspRate     = fromHist('검품률 (전체)', '검품률');
-  const histInspRateExcl = fromHist('검품률 (냉동/가공/계란 제외)');
-  const histTotalSku     = fromHist('입고 SKU (전체)');
-  const histTargetSku    = fromHist('검품입고 SKU (검품불가 제외)', '검품대상 SKU');
-  const histInspSku      = fromHist('검품 SKU (실진행)');
-  const histSkuCovAll    = fromHist('SKU 커버리지 (전체)');
-  const histSkuCovExcl   = fromHist('SKU 커버리지 (냉동/가공/계란 제외)');
+  const histInspRate     = fromHist('검품률(전체)',                        '검품률 (전체)',                       '검품률');
+  const histInspRateExcl = fromHist('검품률(냉동/가공/계란 제외)',          '검품률 (냉동/가공/계란 제외)');
+  const histTotalSku     = fromHist('입고 SKU (전체)',                     '입고 SKU(전체)');
+  const histTargetSku    = fromHist('검품입고 SKU (검품불가 제외)',          '검품입고 SKU(검품불가 제외)',          '검품대상 SKU');
+  const histInspSku      = fromHist('검품 SKU (실진행)',                   '검품 SKU(실진행)');
+  const histSkuCovAll    = fromHist('SKU 커버리지(전체)',                   'SKU 커버리지 (전체)');
+  const histSkuCovExcl   = fromHist('SKU 커버리지(냉동/가공/계란 제외)',    'SKU 커버리지 (냉동/가공/계란 제외)');
 
   const kpis = [
     {
