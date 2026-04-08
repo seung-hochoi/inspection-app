@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { motion } from 'framer-motion';
 import { Minus, Plus, ImagePlus, Truck, ArrowLeftRight,
          CheckCircle2, AlertTriangle, Loader2, AlertCircle, Camera,
-         X as XIcon, Eye } from 'lucide-react';
+         X as XIcon, Eye, RefreshCw } from 'lucide-react';
 import { C, radius, font, shadow, trans } from './styles';
 import PhotoUploader from './PhotoUploader';
 import ReturnExchangeModal from './ReturnExchangeModal';
@@ -11,6 +11,14 @@ import CriteriaModal from './CriteriaModal';
 import { saveBatch, withRetry, saveProductImageMapping } from '../api';
 import { normalizeProductCode, fileToBase64 } from '../utils';
 import { buildInspPayload, buildMovPayload, buildDraftFingerprint } from '../savePayload';
+import {
+  markSaveFailed, markSaveSucceeded, hasPendingFailure,
+  registerRetryFn, unregisterRetryFn,
+} from '../saveQueue';
+
+// Background retry delays (ms) — applied AFTER withRetry exhausts its fast attempts.
+// Total sequence: withRetry (800ms, 2000ms, 4000ms) + bg retries (5s, 10s, 20s).
+const BG_RETRY_DELAYS = [5000, 10000, 20000];
 
 // ProductRow is memoized: all callback props are stable useCallbacks; draft and
 // saveStatus are per-key values that only change for the specific product that saved.
@@ -42,6 +50,13 @@ const ProductRow = React.memo(function ProductRow({
   // Rate limiter: track the wall-clock time of the last save attempt to prevent
   // saves firing faster than once per 2 seconds regardless of other guards.
   const lastSaveAttemptTimeRef = useRef(0);
+  // Background retry state — tracks which retry tier we're on and the retry timer.
+  const bgRetryCountRef = useRef(0);
+  const bgRetryTimerRef = useRef(null);
+  const executeBgRetry  = useRef(null); // re-assigned each render (fresh closure)
+  // Per-item retry state shown in the UI.
+  // 'idle' | 'retrying' | 'failed'
+  const [retryState, setRetryState] = useState('idle');
   latestDraftRef.current = draft;  // always up-to-date even in stale closures
 
   const cleanCode    = normalizeProductCode(row['상품코드']) || '';
@@ -93,6 +108,77 @@ const ProductRow = React.memo(function ProductRow({
     }
   }, [cleanCode, row, onProductImageUploaded, onError]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // executeBgRetry is re-assigned on every render (fresh closure) like runSaveRef.
+  // It runs the actual save call for background retries, bypassing the rate-limiter
+  // and using saveBatch directly (withRetry already exhausted its own fast attempts).
+  executeBgRetry.current = async () => {
+    bgRetryTimerRef.current = null;
+
+    // If another save is in-flight, defer until it clears.
+    if (inFlightRef.current) {
+      const delay = BG_RETRY_DELAYS[Math.min(bgRetryCountRef.current, BG_RETRY_DELAYS.length - 1)];
+      bgRetryTimerRef.current = setTimeout(() => executeBgRetry.current?.(), delay);
+      return;
+    }
+
+    const draftSnapshot = latestDraftRef.current;
+    const fingerprint   = buildDraftFingerprint(draftSnapshot);
+    inFlightRef.current = true;
+    lastSaveAttemptTimeRef.current = Date.now();
+
+    try {
+      const result = await saveBatch([buildInspPayload(row, jobKey, draftSnapshot)]);
+
+      // ── Background retry succeeded ──────────────────────────────────────────
+      lastSavedFingerprintRef.current = fingerprint;
+      markSaveSucceeded(productKey);
+      setRetryState('idle');
+      onSaved?.(productKey);
+
+      // Re-hydrate per-category photo IDs (same as runSaveRef success path)
+      const savedRow = result?.data?.inspectionRows?.[0];
+      if (savedRow) {
+        const deletedSet = new Set(latestDraftRef.current.deletedPhotoIds || []);
+        const hydrateIds = (field) => {
+          const serverIds = String(savedRow[field] || '').split('\n').filter(Boolean);
+          const localIds  = latestDraftRef.current[field] || [];
+          if (!serverIds.length) return localIds.length ? localIds : undefined;
+          return [...new Set([...localIds, ...serverIds])].filter((id) => !deletedSet.has(id));
+        };
+        const pInsp   = hydrateIds('inspPhotoIds');
+        const pDefect = hydrateIds('defectPhotoIds');
+        const pWeight = hydrateIds('weightPhotoIds');
+        const pBrix   = hydrateIds('brixPhotoIds');
+        const nextDraft = { ...latestDraftRef.current };
+        if (pInsp)   nextDraft.inspPhotoIds   = pInsp;
+        if (pDefect) nextDraft.defectPhotoIds = pDefect;
+        if (pWeight) nextDraft.weightPhotoIds = pWeight;
+        if (pBrix)   nextDraft.brixPhotoIds   = pBrix;
+        nextDraft.deletedPhotoIds = latestDraftRef.current.deletedPhotoIds || [];
+        onDraftChange?.(productKey, nextDraft, { silent: true });
+      }
+    } catch (err) {
+      const nextCount = bgRetryCountRef.current + 1;
+      bgRetryCountRef.current = nextCount;
+
+      if (!err.isLogicalError && nextCount < BG_RETRY_DELAYS.length) {
+        // More bg retry slots remain — keep retrying
+        bgRetryTimerRef.current = setTimeout(() => executeBgRetry.current?.(), BG_RETRY_DELAYS[nextCount]);
+      } else {
+        // All retries exhausted — surface the retry button
+        markSaveFailed(productKey);
+        setRetryState('failed');
+        onSaveError?.(productKey);
+      }
+    } finally {
+      inFlightRef.current = false;
+      if (pendingSaveRef.current) {
+        pendingSaveRef.current = false;
+        saveTimerRef.current = setTimeout(() => runSaveRef.current?.(), 300);
+      }
+    }
+  };
+
   // runSaveRef is re-assigned on every render so the closure is always fresh —
   // this avoids stale-closure bugs without listing every variable in useCallback deps.
   runSaveRef.current = async () => {
@@ -138,6 +224,11 @@ const ProductRow = React.memo(function ProductRow({
       // Set the fingerprint FIRST so any pending follow-up save that fires
       // before the React state update propagates will hit the duplicate guard.
       lastSavedFingerprintRef.current = fingerprint;
+      markSaveSucceeded(productKey);
+      // Cancel any running bg retry sequence — the normal save path succeeded.
+      clearTimeout(bgRetryTimerRef.current);
+      bgRetryTimerRef.current = null;
+      if (retryState !== 'idle') setRetryState('idle');
 
       // Re-hydrate per-category photo IDs from the save response
       // so the action-button counts stay correct after save.
@@ -180,6 +271,15 @@ const ProductRow = React.memo(function ProductRow({
     } catch (err) {
       onError?.(err.message || '저장 실패');
       onSaveError?.(productKey);
+
+      // For transient (non-logical) failures, start the background retry sequence
+      // with longer backoff rather than leaving the user with a dead-end error.
+      if (!err.isLogicalError) {
+        clearTimeout(bgRetryTimerRef.current);
+        bgRetryCountRef.current = 0;
+        setRetryState('retrying');
+        bgRetryTimerRef.current = setTimeout(() => executeBgRetry.current?.(), BG_RETRY_DELAYS[0]);
+      }
     } finally {
       inFlightRef.current = false;
       // Fire one follow-up save if the draft changed while this request was in-flight.
@@ -198,7 +298,37 @@ const ProductRow = React.memo(function ProductRow({
     saveTimerRef.current = setTimeout(() => runSaveRef.current?.(), 500);
   }, []);
 
-  useEffect(() => () => clearTimeout(saveTimerRef.current), []);
+  // Cancel save timer and bg retry timer on unmount
+  useEffect(() => () => {
+    clearTimeout(saveTimerRef.current);
+    clearTimeout(bgRetryTimerRef.current);
+  }, []);
+
+  // On mount: restore 'failed' retryState if this item had a failed save before refresh.
+  // Register this item's retry function in the module-level registry for "Retry All".
+  useEffect(() => {
+    if (hasPendingFailure(productKey)) {
+      setRetryState('failed');
+    }
+    registerRetryFn(productKey, () => {
+      clearTimeout(bgRetryTimerRef.current);
+      bgRetryTimerRef.current = null;
+      bgRetryCountRef.current = 0;
+      setRetryState('retrying');
+      bgRetryTimerRef.current = setTimeout(() => executeBgRetry.current?.(), 100);
+    });
+    return () => unregisterRetryFn(productKey);
+  }, [productKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Manual retry handler — resets bg retry count so the user gets fresh attempts.
+  const handleRetry = useCallback(() => {
+    clearTimeout(bgRetryTimerRef.current);
+    bgRetryTimerRef.current = null;
+    bgRetryCountRef.current = 0;
+    setRetryState('retrying');
+    // Short delay so the UI shows 'retrying' before the request fires.
+    bgRetryTimerRef.current = setTimeout(() => executeBgRetry.current?.(), 100);
+  }, []);
 
   const updateDraft = useCallback((patch) => {
     const next = { ...latestDraftRef.current, ...patch };
@@ -261,9 +391,11 @@ const ProductRow = React.memo(function ProductRow({
   const hasDefect = hasMovement;
 
   const accentColor =
-    saveStatus === 'saving' ? C.yellow :
-    saveStatus === 'error'  ? C.red    :
-    saveStatus === 'saved'  ? C.green  :
+    retryState === 'failed'   ? C.red    :
+    retryState === 'retrying' ? C.yellow :
+    saveStatus === 'saving'   ? C.yellow :
+    saveStatus === 'error'    ? C.red    :
+    saveStatus === 'saved'    ? C.green  :
     isDone    ? C.green  :
     hasDefect ? C.orange : C.border;
 
@@ -375,6 +507,8 @@ const ProductRow = React.memo(function ProductRow({
                   saveStatus={saveStatus}
                   isDone={isDone}
                   hasDefect={hasDefect}
+                  retryState={retryState}
+                  onRetry={handleRetry}
                 />
               </div>
             </div>
@@ -672,24 +806,55 @@ export default ProductRow;
 // ─── Sub-components ──────────────────────────────────────────────────────────
 
 // Animated chip showing save state, completion, or defect quality result.
-function SaveStatusBadge({ saveStatus, isDone, hasDefect }) {
+// retryState overrides saveStatus for more granular retry display.
+function SaveStatusBadge({ saveStatus, isDone, hasDefect, retryState, onRetry }) {
+  // retryState takes priority over the parent-managed saveStatus
   const state =
-    saveStatus === 'saving' ? 'saving'   :
-    saveStatus === 'saved'  ? 'saved'    :
-    saveStatus === 'error'  ? 'error'    :
-    isDone                  ? 'done'     :
-    hasDefect               ? 'defect'   : null;
+    retryState === 'retrying' ? 'retrying' :
+    retryState === 'failed'   ? 'failed'   :
+    saveStatus === 'saving'   ? 'saving'   :
+    saveStatus === 'saved'    ? 'saved'    :
+    saveStatus === 'error'    ? 'retrying' : // parent error while bg retry may still be running
+    isDone                    ? 'done'     :
+    hasDefect                 ? 'defect'   : null;
 
   if (!state) return null;
 
+  // 'failed' state: show an actionable retry button instead of a passive chip
+  if (state === 'failed') {
+    return (
+      <motion.button
+        key="failed"
+        initial={{ opacity: 0, scale: 0.85 }}
+        animate={{ opacity: 1, scale: 1 }}
+        transition={{ duration: 0.15 }}
+        onClick={(e) => { e.stopPropagation(); onRetry?.(); }}
+        title="저장 실패 — 클릭하여 재시도"
+        style={{
+          fontSize: 10, fontWeight: 700, padding: '3px 8px',
+          borderRadius: radius.full,
+          background: C.redLight, color: C.red, border: `1px solid ${C.redMid}`,
+          letterSpacing: '0.02em', whiteSpace: 'nowrap',
+          display: 'inline-flex', alignItems: 'center', gap: 3,
+          cursor: 'pointer', fontFamily: font.base,
+          WebkitTapHighlightColor: 'transparent',
+        }}
+      >
+        <RefreshCw size={9} strokeWidth={2.5} />
+        재시도
+      </motion.button>
+    );
+  }
+
   const MAP = {
-    saving:   { text: '저장 중', icon: <Loader2      size={10} strokeWidth={2.5} style={{ animation: 'spin 1s linear infinite' }} />, bg: C.yellowLight, color: C.yellow,  border: C.yellowMid },
-    saved:    { text: '저장됨',  icon: <CheckCircle2  size={10} strokeWidth={2.5} />, bg: C.greenLight,  color: C.green,   border: C.greenMid  },
-    error:    { text: '실패',    icon: <AlertCircle   size={10} strokeWidth={2.5} />, bg: C.redLight,    color: C.red,     border: C.redMid    },
-    done:     { text: '검품',    icon: <CheckCircle2  size={10} strokeWidth={2.5} />, bg: C.greenLight,  color: C.green,   border: C.greenMid  },
-    defect:   { text: '불량',    icon: <AlertTriangle size={10} strokeWidth={2.5} />, bg: C.orangeLight, color: C.orange,  border: C.orangeMid },
+    saving:   { text: '저장 중',   icon: <Loader2       size={10} strokeWidth={2.5} style={{ animation: 'spin 1s linear infinite' }} />, bg: C.yellowLight, color: C.yellow,  border: C.yellowMid },
+    retrying: { text: '재시도 중', icon: <Loader2       size={10} strokeWidth={2.5} style={{ animation: 'spin 1s linear infinite' }} />, bg: C.yellowLight, color: C.yellow,  border: C.yellowMid },
+    saved:    { text: '저장됨',    icon: <CheckCircle2  size={10} strokeWidth={2.5} />, bg: C.greenLight,  color: C.green,   border: C.greenMid  },
+    done:     { text: '검품',      icon: <CheckCircle2  size={10} strokeWidth={2.5} />, bg: C.greenLight,  color: C.green,   border: C.greenMid  },
+    defect:   { text: '불량',      icon: <AlertTriangle size={10} strokeWidth={2.5} />, bg: C.orangeLight, color: C.orange,  border: C.orangeMid },
   };
   const s = MAP[state];
+  if (!s) return null;
   return (
     <motion.span
       key={state}

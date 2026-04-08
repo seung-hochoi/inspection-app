@@ -1,10 +1,11 @@
 import React, { useState, useCallback, useEffect, useRef, useMemo, lazy, Suspense } from 'react';
 import { motion } from 'framer-motion';
-import { Search, ScanLine, ClipboardList, Upload, ArrowUp, ArrowDown, ArrowUpDown, X, RotateCcw } from 'lucide-react';
+import { Search, ScanLine, ClipboardList, Upload, ArrowUp, ArrowDown, ArrowUpDown, X, RotateCcw, RefreshCw } from 'lucide-react';
 import { C, radius, font, shadow, trans, inputStyle, btnPrimary } from './styles';
 import PartnerGroup from './PartnerGroup';
 import { fetchRecords } from '../api';
 import { scheduleSync } from '../utils/syncScheduler';
+import { onFailedSavesChange, getFailedSaveCount, retryAllFailed } from '../saveQueue';
 
 // Lazy-load BarcodeScanner so @zxing/browser (~5 MB) is not in the initial bundle
 const BarcodeScanner = lazy(() => import('./BarcodeScanner'));
@@ -19,6 +20,8 @@ export default function InspectionPage({
 }) {
   const [drafts, setDrafts]             = useState(() => loadDrafts());
   const [saveStatuses, setSaveStatuses] = useState({});
+  // Track how many product rows have pending failed saves (drives "Retry All" button)
+  const [failedSaveCount, setFailedSaveCount] = useState(() => getFailedSaveCount());
   const [searchInput, setSearchInput]   = useState('');
   const [search, setSearch]             = useState('');
   const [filter, setFilter]             = useState('all');
@@ -64,6 +67,12 @@ export default function InspectionPage({
       window.removeEventListener('beforeunload', flush);
       document.removeEventListener('visibilitychange', flush);
     };
+  }, []);
+
+  // Subscribe to save-queue failed-save count changes so the "Retry All" button
+  // appears / disappears in real-time as saves fail or succeed.
+  useEffect(() => {
+    return onFailedSavesChange(setFailedSaveCount);
   }, []);
 
   // Merge backend inspection rows into drafts when job loads (photo persistence + qty restore)
@@ -560,6 +569,22 @@ export default function InspectionPage({
             }}>
               <RotateCcw size={14} strokeWidth={2} />
               새로고침
+            </button>
+          )}
+          {/* "Retry All" button — visible only when one or more saves have failed */}
+          {failedSaveCount > 0 && (
+            <button
+              onClick={retryAllFailed}
+              style={{
+                height: 40, padding: '0 14px', fontSize: 12.5, flexShrink: 0,
+                background: C.redLight, color: C.red, border: `1px solid ${C.redMid}`,
+                borderRadius: radius.sm, cursor: 'pointer', fontFamily: font.base,
+                display: 'flex', alignItems: 'center', gap: 5, fontWeight: 700,
+              }}
+              title={`저장 실패 ${failedSaveCount}건 — 클릭하여 전체 재시도`}
+            >
+              <RefreshCw size={14} strokeWidth={2} />
+              전체 재시도 ({failedSaveCount})
             </button>
           )}
         </div>
