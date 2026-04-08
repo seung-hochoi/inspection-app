@@ -1723,15 +1723,18 @@ function App() {
   const [showScheduleModal,  setShowScheduleModal]  = useState(false);
   const [scheduleMonths,     setScheduleMonths]     = useState(null); // null = not yet fetched
   const [scheduleLoading,    setScheduleLoading]    = useState(false);
-  const canManageUsers = !!(authUser && (authUser.permissions || []).includes('MANAGE_USERS'));
+  const canManageUsers  = !!(authUser && (authUser.permissions || []).includes('MANAGE_USERS'));
+  // Schedule visibility: any authenticated user with the basic VIEW permission can see
+  // the work schedule / 근무 screen. MANAGE_USERS is NOT required.
+  const canViewSchedule = !!(authUser && (authUser.permissions || []).includes('VIEW'));
 
-  // Fetch today's work schedule once when admin is confirmed
+  // Fetch today's work schedule once the user is confirmed to have VIEW access
   useEffect(() => {
-    if (!canManageUsers) return;
+    if (!canViewSchedule) return;
     fetchWorkSchedule()
       .then((res) => setWorkWorkers(computeWorkers(res.workers || [])))
       .catch(() => {});
-  }, [canManageUsers]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [canViewSchedule]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Fetch full schedule on demand when the modal is first opened
   const handleOpenSchedule = useCallback(() => {
@@ -2297,8 +2300,8 @@ function App() {
               </span>
             </div>
 
-            {/* Admin: 근무 panel button — MANAGE_USERS only */}
-            {canManageUsers && (
+            {/* 근무 panel button — visible to any user with VIEW permission */}
+            {canViewSchedule && (
               <button
                 onClick={() => setShowWorkerPanel((v) => !v)}
                 title="오늘 근무 현황"
@@ -2458,8 +2461,8 @@ function App() {
         />
       )}
 
-      {/* Admin: 근무 worker panel — MANAGE_USERS only */}
-      {canManageUsers && showWorkerPanel && (
+      {/* 근무 worker panel — visible to any user with VIEW permission */}
+      {canViewSchedule && showWorkerPanel && (
         <WorkerPanel
           workers={workWorkers}
           onClose={() => setShowWorkerPanel(false)}
@@ -2467,8 +2470,8 @@ function App() {
         />
       )}
 
-      {/* Admin: 근무 일정 modal — MANAGE_USERS only */}
-      {canManageUsers && showScheduleModal && (
+      {/* 근무 일정 modal — visible to any user with VIEW permission */}
+      {canViewSchedule && showScheduleModal && (
         <ScheduleModal
           months={scheduleLoading ? [] : (scheduleMonths || [])}
           loading={scheduleLoading}
