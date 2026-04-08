@@ -189,7 +189,9 @@ export default function SummaryPage({ summary = {}, happycall = {}, jobRows = []
   };
 
   // Format percentage: always 1 decimal place. Returns '-' only when value is truly null.
-  const fmtPct = (v) => v != null ? (v * 100).toFixed(1) + '%' : '-';
+  // History values are stored as plain percentages (e.g. 87.6), NOT as fractions (e.g. 0.876).
+  // Do NOT multiply by 100 here — fmtRate() in Code.gs already stores the human-readable number.
+  const fmtPct = (v) => v != null ? Number(v).toFixed(1) + '%' : '-';
 
   // Format quantity: comma-separated integers.
   const fmtQty = (v) => v != null ? Math.round(v).toLocaleString('ko-KR') : '-';
@@ -395,19 +397,20 @@ export default function SummaryPage({ summary = {}, happycall = {}, jobRows = []
 }
 
 // ── Trend chart sub-component ──────────────────────────────────────────────────
+// Keys must match HIST_HEADERS_ in Code.gs exactly (no extra spaces before parentheses).
 const CHART_METRICS = [
-  { key: '총 입고금액',                              label: '총 금액',          color: '#5876a4' },
-  { key: '총 입고금액 (냉동/가공/계란 제외)',          label: '검품대상 금액',     color: '#8b5cf6' },
-  { key: '총 입고수량(개)',                           label: '총 수량',           color: '#16a34a' },
-  { key: '총 입고수량(개) (냉동/가공/계란 제외)',       label: '검품대상 수량',     color: '#059669' },
-  { key: '검품수량(개)',                              label: '검품수량',           color: '#2563eb' },
-  { key: '입고 SKU (전체)',                           label: '총 SKU',            color: '#d97706' },
-  { key: '검품입고 SKU (검품불가 제외)',               label: '검품대상 SKU',      color: '#e11d48' },
-  { key: '검품 SKU (실진행)',                         label: '검품 SKU',           color: '#f59e0b' },
-  { key: '검품률 (전체)',                             label: '검품률(전체)',        color: '#06b6d4' },
-  { key: '검품률 (냉동/가공/계란 제외)',               label: '검품률(대상)',        color: '#0284c7' },
-  { key: 'SKU 커버리지 (전체)',                       label: 'SKU 커버리지(전체)', color: '#84cc16' },
-  { key: 'SKU 커버리지 (냉동/가공/계란 제외)',         label: 'SKU 커버리지(대상)', color: '#65a30d' },
+  { key: '총 입고금액',                             label: '총 금액',          color: '#5876a4' },
+  { key: '총 입고금액(냉동/가공/계란 제외)',          label: '검품대상 금액',     color: '#8b5cf6' },
+  { key: '총 입고수량(개)',                          label: '총 수량',           color: '#16a34a' },
+  { key: '총 입고수량(개)(냉동/가공/계란 제외)',      label: '검품대상 수량',     color: '#059669' },
+  { key: '검품수량(개)',                             label: '검품수량',           color: '#2563eb' },
+  { key: '입고 SKU (전체)',                          label: '총 SKU',            color: '#d97706' },
+  { key: '검품입고 SKU (검품불가 제외)',              label: '검품대상 SKU',      color: '#e11d48' },
+  { key: '검품 SKU (실진행)',                        label: '검품 SKU',           color: '#f59e0b' },
+  { key: '검품률(전체)',                             label: '검품률(전체)',        color: '#06b6d4' },
+  { key: '검품률(냉동/가공/계란 제외)',              label: '검품률(대상)',        color: '#0284c7' },
+  { key: 'SKU 커버리지(전체)',                       label: 'SKU 커버리지(전체)', color: '#84cc16' },
+  { key: 'SKU 커버리지(냉동/가공/계란 제외)',        label: 'SKU 커버리지(대상)', color: '#65a30d' },
 ];
 
 const PERIODS = ['일별', '주별', '월별'];

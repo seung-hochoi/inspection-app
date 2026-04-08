@@ -342,6 +342,9 @@ function RecordEditModal({ record, inspectionRows, jobKey, onClose, onToast }) {
         productName: record['상품명'] || '',
         '상품코드': code,
         '협력사명': record['협력사명'] || '',
+        // Pass photoType so the backend routes to the correct subfolder and filename prefix.
+        // 'defect' → "불량_" prefix / 불량 subfolder; 'insp' → "검품_" prefix / 검품 subfolder.
+        photoType: type,
         photos,
       });
       const photosArr = Array.isArray(result.data?.photos) ? result.data.photos

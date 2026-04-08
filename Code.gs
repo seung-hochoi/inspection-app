@@ -3214,6 +3214,16 @@ function saveBatch_(rows) {
       .getValues();
   }
 
+  // Pre-load the entire records sheet once for all movement row lookups.
+  // Mirrors the inspection sheet preload above — reduces Sheets API calls and
+  // lock hold time when multiple movement rows are saved in one batch.
+  var recSheetValues = null;
+  if (recordsSheet && recordsSheet.getLastRow() >= 2) {
+    recSheetValues = recordsSheet
+      .getRange(2, 1, recordsSheet.getLastRow() - 1, recordsSheet.getLastColumn())
+      .getValues();
+  }
+
   const list = Array.isArray(rows) ? rows : [];
   const inspectionRows = [];
   const movementRows = [];
@@ -3266,9 +3276,25 @@ function saveBatch_(rows) {
     }
 
     if (type === "movement" || type === "return" || type === "exchange") {
-      var savedMovement = upsertMovementRow_(recordsSheet, row, photoAssetMap);
+      var savedMovement = upsertMovementRow_(recordsSheet, row, photoAssetMap, recSheetValues);
       if (savedMovement && savedMovement.__conflict) {
         conflicts.push(savedMovement);
+      } else if (savedMovement && recSheetValues !== null) {
+        // Keep the preloaded records array in sync so later rows in the same batch
+        // find the updated state without re-reading the sheet.
+        var rHeaders = recordHeaders_();
+        var updatedRecData = rHeaders.map(function(h) {
+          return (savedMovement[h] !== undefined ? savedMovement[h] : "");
+        });
+        var rRowNum = savedMovement.__rowNumber || 0;
+        if (rRowNum >= 2) {
+          var rRowIdx = rRowNum - 2;
+          if (rRowIdx < recSheetValues.length) {
+            recSheetValues[rRowIdx] = updatedRecData;
+          } else if (rRowIdx === recSheetValues.length) {
+            recSheetValues.push(updatedRecData);
+          }
+        }
       }
       movementRows.push(savedMovement);
     }
@@ -4309,7 +4335,7 @@ function migrateRecordSheetIfNeeded_(sheet) {
 }
 
 // ── Upsert / write ─────────────────────────────────────────
-function upsertMovementRow_(sheet, payload, photoAssetMap) {
+function upsertMovementRow_(sheet, payload, photoAssetMap, preloadedValues) {
   const rawPayload = payload || {};
   const targetRow = findMovementRow_(
     sheet,
@@ -4317,7 +4343,8 @@ function upsertMovementRow_(sheet, payload, photoAssetMap) {
     rawPayload["상품코드"] || rawPayload["productCode"] || "",
     rawPayload["협력사명"] || rawPayload["partnerName"] || "",
     rawPayload["센터명"] || rawPayload["centerName"] || "",
-    rawPayload["처리유형"] || (String(rawPayload["movementType"] || "").trim().toUpperCase() === "RETURN" ? "회송" : String(rawPayload["movementType"] || "").trim().toUpperCase() === "EXCHANGE" ? "교환" : "")
+    rawPayload["처리유형"] || (String(rawPayload["movementType"] || "").trim().toUpperCase() === "RETURN" ? "회송" : String(rawPayload["movementType"] || "").trim().toUpperCase() === "EXCHANGE" ? "교환" : ""),
+    preloadedValues
   );
   const existingRecord = targetRow > 0 ? readMovementRow_(sheet, targetRow) : null;
 
@@ -4425,10 +4452,13 @@ function writeRecordRow_(sheet, targetRow, record) {
 }
 
 // ── Find / read ────────────────────────────────────────────
-function findMovementRow_(sheet, jobKey, productCode, partnerName, centerName, typeName) {
+function findMovementRow_(sheet, jobKey, productCode, partnerName, centerName, typeName, preloadedValues) {
   if (!sheet || sheet.getLastRow() < 2) return 0;
 
-  const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues();
+  // Use preloaded values when available to avoid a redundant sheet.getRange() call.
+  const values = (preloadedValues !== undefined && preloadedValues !== null)
+    ? preloadedValues
+    : sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues();
   const normalizedJobKey = String(jobKey || "").trim();
   const normalizedCode = normalizeCode_(productCode || "");
   const normalizedCenter = String(centerName || "").trim();
@@ -4607,6 +4637,17 @@ function syncReturnSheets_(ss) {
     }
   });
 
+  // Secondary lookup index: productCode → aggregated inspection quantity.
+  // Used as a fallback when the full code+partner key doesn't match between
+  // inspection_data and return_exchange_records (e.g. slightly different supplier name).
+  var inspectionQtyByCode = {};
+  inspectionRows.forEach(function (row) {
+    var code = normalizeCode_(row["상품코드"]);
+    if (!code) return;
+    if (!inspectionQtyByCode[code]) inspectionQtyByCode[code] = 0;
+    inspectionQtyByCode[code] += parseNumber_(row["검품수량"]);
+  });
+
   ensureHeaderRow_(centerSheet, [
     "날짜",
     "협력사명",
@@ -4689,6 +4730,17 @@ function syncReturnSheets_(ss) {
         baseRow["발주수량"]
       );
       var inspectionQty = parseNumber_(inspectionRow["검품수량"]);
+
+      // Fallback: if no direct code+partner match was found in inspectionMap, aggregate
+      // by product code only. This handles cases where the supplier name is stored
+      // slightly differently between return_exchange_records and inspection_data.
+      if (inspectionQty === 0 && !inspectionMap[key]) {
+        var codeOnly = normalizeCode_(baseRow["상품코드"] || "");
+        if (codeOnly && inspectionQtyByCode[codeOnly]) {
+          inspectionQty = inspectionQtyByCode[codeOnly];
+        }
+      }
+
       var exchangeQty = parseNumber_(movementTotals.exchangeQty);
       var returnQty = parseNumber_(movementTotals.returnQty);
 
@@ -6372,7 +6424,15 @@ function formatWrittenAtKst_(value) {
 }
 
 function normalizeText_(value) {
-  return String(value == null ? "" : value).replace(/\uFEFF/g, "").trim();
+  // Remove BOM, normalize all non-standard whitespace variants (NBSP, ideographic space,
+  // zero-width spaces, etc.) to regular space, collapse multiple spaces, then trim.
+  // This prevents key mismatches when the same supplier name is stored with different
+  // whitespace in inspection_data vs return_exchange_records.
+  return String(value == null ? "" : value)
+    .replace(/\uFEFF/g, "")
+    .replace(/[\u00A0\u2000-\u200B\u202F\u205F\u3000]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function makeEntityKey_(jobKey, productCode, partnerName) {
