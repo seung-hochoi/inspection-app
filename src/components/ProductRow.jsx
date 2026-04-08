@@ -468,41 +468,66 @@ const ProductRow = React.memo(function ProductRow({
               </button>
             </div>
 
-            {/* ── Row 3: photos · movement actions ── */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
-                {/* Primary photo slots: 검품 + 불량 — higher usage, show up to 3 thumbs */}
-                {canUploadPhoto && (
-                  <>
-                    <PhotoSlot
-                      label="검품" fileIds={inspPhotoIds}
-                      color={C.primary} bg={C.primaryLight} border={C.primaryMid}
-                      onClick={() => setShowPhotoType('insp')}
-                      onDeletePhoto={(id) => deletePhoto('insp', id)}
-                    />
-                    <PhotoSlot
-                      label="불량" fileIds={defectPhotoIds}
-                      color={C.red} bg={C.redLight} border={C.redMid}
-                      onClick={() => setShowPhotoType('defect')}
-                      onDeletePhoto={(id) => deletePhoto('defect', id)}
-                    />
-                    {/* Compact photo slots: 중량 + 당도 — lower usage, 1 thumb max */}
-                    <PhotoSlot
-                      label="중량" fileIds={weightPhotoIds}
-                      color={C.muted} bg={C.bgAlt} border={C.borderMid}
-                      onClick={() => setShowPhotoType('weight')}
-                      onDeletePhoto={(id) => deletePhoto('weight', id)}
-                      compact
-                    />
-                    <PhotoSlot
-                      label="당도" fileIds={brixPhotoIds}
-                      color={C.muted} bg={C.bgAlt} border={C.borderMid}
-                      onClick={() => setShowPhotoType('brix')}
-                      onDeletePhoto={(id) => deletePhoto('brix', id)}
-                      compact
-                    />
-                    <div className="action-separator" style={{ width: 1, height: 20, background: C.border, flexShrink: 0 }} />
-                  </>
-                )}
+            {/* ── Row 3: action buttons — split into two rows for mobile readability ── */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+
+              {/* Row 3a: photo slots — 검품(1.4) · 불량(1.4) · 중량(1) · 당도(1) */}
+              {canUploadPhoto && (
+                <div style={{ display: 'flex', gap: 5 }}>
+                  <PhotoSlot
+                    label="검품" fileIds={inspPhotoIds}
+                    color={C.primary} bg={C.primaryLight} border={C.primaryMid}
+                    onClick={() => setShowPhotoType('insp')}
+                    onDeletePhoto={(id) => deletePhoto('insp', id)}
+                    flex={1.4}
+                  />
+                  <PhotoSlot
+                    label="불량" fileIds={defectPhotoIds}
+                    color={C.red} bg={C.redLight} border={C.redMid}
+                    onClick={() => setShowPhotoType('defect')}
+                    onDeletePhoto={(id) => deletePhoto('defect', id)}
+                    flex={1.4}
+                  />
+                  <PhotoSlot
+                    label="중량" fileIds={weightPhotoIds}
+                    color={C.muted} bg={C.bgAlt} border={C.borderMid}
+                    onClick={() => setShowPhotoType('weight')}
+                    onDeletePhoto={(id) => deletePhoto('weight', id)}
+                    compact flex={1}
+                  />
+                  <PhotoSlot
+                    label="당도" fileIds={brixPhotoIds}
+                    color={C.muted} bg={C.bgAlt} border={C.borderMid}
+                    onClick={() => setShowPhotoType('brix')}
+                    onDeletePhoto={(id) => deletePhoto('brix', id)}
+                    compact flex={1}
+                  />
+                </div>
+              )}
+
+              {/* Row 3b: 조회(2.6) · 회송(1) · 교환(1) */}
+              <div style={{ display: 'flex', gap: 5 }}>
+                {/* Photo preview toggle — wider, placed first */}
+                <button
+                  type="button"
+                  onClick={() => setIsExpanded((v) => !v)}
+                  className="action-btn"
+                  title={isExpanded ? '미리보기 닫기' : '사진 미리보기'}
+                  style={{
+                    flex: 2.6,
+                    height: 32, padding: '0 9px',
+                    background: isExpanded ? C.primaryLight : C.bgAlt,
+                    color: isExpanded ? C.primary : C.muted2,
+                    border: `1px solid ${isExpanded ? C.primaryMid : C.border}`,
+                    borderRadius: radius.sm, cursor: 'pointer',
+                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 5,
+                    fontSize: 12, fontWeight: 600, fontFamily: font.base,
+                    whiteSpace: 'nowrap', transition: trans,
+                  }}
+                >
+                  <Eye size={13} strokeWidth={2} />
+                  {isExpanded ? '닫기' : '조회'}
+                </button>
                 {canEditReturnExchange && (
                   <>
                     <MovBtn
@@ -510,33 +535,19 @@ const ProductRow = React.memo(function ProductRow({
                       color={C.red} bg={C.redLight} border={C.redMid}
                       count={returnCount}
                       onClick={() => { setMovementType('RETURN'); setShowMovement(true); }}
+                      flex={1}
                     />
                     <MovBtn
                       icon={<ArrowLeftRight size={11} strokeWidth={2} />} label="교환"
                       color={C.orange} bg={C.orangeLight} border={C.orangeMid}
                       count={exchangeCount}
                       onClick={() => { setMovementType('EXCHANGE'); setShowMovement(true); }}
+                      flex={1}
                     />
                   </>
                 )}
-                {/* Expand / collapse photo preview toggle */}
-                <button
-                  type="button"
-                  onClick={() => setIsExpanded((v) => !v)}
-                  className="action-btn"
-                  title={isExpanded ? '미리보기 닫기' : '사진 미리보기'}
-                  style={{
-                    height: 32, width: 32, padding: 0,
-                    background: isExpanded ? C.primaryLight : C.bgAlt,
-                    color: isExpanded ? C.primary : C.muted2,
-                    border: `1px solid ${isExpanded ? C.primaryMid : C.border}`,
-                    borderRadius: radius.sm, cursor: 'pointer',
-                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                    transition: trans, flex: '0 0 auto',
-                  }}
-                >
-                  <Eye size={13} strokeWidth={2} />
-                </button>
+              </div>
+
             </div>
 
           </div>
@@ -740,7 +751,7 @@ function StepperBtn({ onClick, children, 'aria-label': ariaLabel, primary, disab
 // All PhotoSlot buttons are the same fixed size regardless of photo category so the
 // action row fits on mobile without any button being clipped.
 // compact prop is accepted but ignored for sizing (kept for call-site compatibility).
-function PhotoSlot({ label, fileIds = [], color, bg, border, onClick, onDeletePhoto, compact = false }) { // eslint-disable-line no-unused-vars
+function PhotoSlot({ label, fileIds = [], color, bg, border, onClick, onDeletePhoto, compact = false, flex: flexProp = '0 0 auto' }) { // eslint-disable-line no-unused-vars
   // Show at most 1 thumbnail inside the button so width stays fixed.
   // The count badge communicates the total; the +N overflow badge is omitted
   // because it would widen the button. Users open the modal to see all photos.
@@ -767,7 +778,7 @@ function PhotoSlot({ label, fileIds = [], color, bg, border, onClick, onDeletePh
         borderRadius: radius.sm, fontSize: BTN_FS, fontWeight: 600,
         cursor: 'pointer', fontFamily: font.base,
         display: 'inline-flex', alignItems: 'center', gap: 4,
-        transition: trans, flex: '0 0 auto', whiteSpace: 'nowrap',
+        transition: trans, flex: flexProp, whiteSpace: 'nowrap',
       }}
     >
       <ImagePlus size={11} strokeWidth={2} style={{ flexShrink: 0 }} />
@@ -904,7 +915,7 @@ function PhotoPreviewSection({ categories, onDeletePhoto, onViewPhoto, onAddPhot
   );
 }
 
-function MovBtn({ icon, label, color, bg, border, onClick, count = 0 }) {
+function MovBtn({ icon, label, color, bg, border, onClick, count = 0, flex: flexProp = '0 0 auto' }) {
   return (
     <button
       type="button"
@@ -918,7 +929,7 @@ function MovBtn({ icon, label, color, bg, border, onClick, count = 0 }) {
         borderRadius: radius.sm, fontSize: 12, fontWeight: 600,
         cursor: 'pointer', fontFamily: font.base,
         display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 4,
-        transition: trans, flex: '0 0 auto', whiteSpace: 'nowrap',
+        transition: trans, flex: flexProp, whiteSpace: 'nowrap',
       }}
     >
       {icon}{label}
