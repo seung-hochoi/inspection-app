@@ -314,6 +314,20 @@ function CriteriaBrowser({ loadImages }) {
   );
 }
 
+// ─── helpers ──────────────────────────────────────────────────────────────────
+
+/**
+ * Derive the best search keyword from a raw product name.
+ * Products with brand/brand prefixes like "FCS)..." or "신선특별시)..." need
+ * broad extraction; plain names use the normalizer.
+ */
+function resolveSearchQuery(raw) {
+  if (!raw) return '';
+  return raw.includes(')')
+    ? (getBroadCriteriaKeyword(raw) || extractCriteriaKeyword(raw))
+    : normalizeCriteriaKeyword(raw);
+}
+
 // ─── CriteriaPage ─────────────────────────────────────────────────────────────
 
 /**
@@ -362,9 +376,7 @@ export default function CriteriaPage({ jobRows = [] }) {
     }
     // For product names that still contain brand-prefix decorators like "FCS)"
     // or "신선특별시)", apply smart extraction first; otherwise send as-is.
-    const q = raw.includes(')')
-      ? (getBroadCriteriaKeyword(raw) || extractCriteriaKeyword(raw))
-      : normalizeCriteriaKeyword(raw);
+    const q = resolveSearchQuery(raw);
     const timer = setTimeout(() => search(q, raw), 300);
     return () => clearTimeout(timer);
   }, [nameQuery, search, reset]);
@@ -428,20 +440,14 @@ export default function CriteriaPage({ jobRows = [] }) {
             onKeyDown={(e) => {
               if (e.key !== 'Enter') return;
               const raw = nameQuery.trim();
-              const q = raw.includes(')')
-                ? (getBroadCriteriaKeyword(raw) || extractCriteriaKeyword(raw))
-                : normalizeCriteriaKeyword(raw);
-              search(q, raw);
+              search(resolveSearchQuery(raw), raw);
             }}
           />
           <button
             style={{ ...scanBtnStyle, background: searching ? C.muted : C.primary }}
             onClick={() => {
               const raw = nameQuery.trim();
-              const q = raw.includes(')')
-                ? (getBroadCriteriaKeyword(raw) || extractCriteriaKeyword(raw))
-                : normalizeCriteriaKeyword(raw);
-              search(q, raw);
+              search(resolveSearchQuery(raw), raw);
             }}
             disabled={searching || !nameQuery.trim()}
           >

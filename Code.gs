@@ -7186,9 +7186,6 @@ function searchInspectionCriteriaFolders_(keyword, productName) {
     console.warn('[criteria] No category found: keyword=' + keyword + ' raw=' + rawName);
     return [];
   }
-  console.log('[criteria] raw=' + rawName + ' | keyword=' + keyword +
-              ' | category=' + mappedCategory + ' | variants=' + JSON.stringify(variants));
-
   // ── Step 2: open the Drive root and find the target category folder ──────────
   var rootFolder;
   try {
@@ -7234,13 +7231,10 @@ function searchInspectionCriteriaFolders_(keyword, productName) {
     }
 
     if (sc > 0) {
-      console.log('[criteria]   match: "' + pfName + '" score=' + sc);
       results.push({ id: pf.folder.getId(), name: pfName,
                      category: mappedCategory, groupName: pf.groupName, _score: sc });
     }
   }
-  console.log('[criteria] productFolders=' + productFolders.length +
-              ' matched=' + results.length + (results.length === 0 ? ' (will try fallback)' : ''));
 
   // ── Step 5: category-specific fallback when scoring found nothing ─────────────
   // • 축산: always show 종합/한돈/한우 so livestock users never see an empty list.
