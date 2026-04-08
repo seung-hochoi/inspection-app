@@ -630,6 +630,10 @@ function doGet(e) {
       });
     }
 
+    if (action === "getCriteriaTree") {
+      return jsonOutput_({ ok: true, data: getCriteriaTree_() });
+    }
+
     return jsonOutput_({
       ok: false,
       message: "지원하지 않는 action입니다.",
@@ -7105,6 +7109,58 @@ function getCriteriaCategory_(keyword) {
 }
 
 /**
+ * Recursively collects all LEAF folders (folders that contain no sub-folders)
+ * under a given root, at any depth.  Leaf folders are the actual product/criteria
+ * folders that contain image files.
+ *
+ * @param {Folder}      folder    - Drive Folder to start from.
+ * @param {string|null} groupName - Display group name (first-level container name).
+ * @returns {Array<{folder: Folder, groupName: string|null}>}
+ */
+function collectProductFolders_(folder, groupName) {
+  var childIter = folder.getFolders();
+  var children  = [];
+  while (childIter.hasNext()) children.push(childIter.next());
+
+  if (children.length === 0) {
+    // No sub-folders → this IS a product/criteria leaf folder.
+    return [{ folder: folder, groupName: groupName }];
+  }
+
+  // Has sub-folders → treat this as a container and recurse.
+  var result = [];
+  for (var i = 0; i < children.length; i++) {
+    var child      = children[i];
+    var childGroup = groupName !== null ? groupName : child.getName().trim();
+    var deeper     = collectProductFolders_(child, childGroup);
+    result         = result.concat(deeper);
+  }
+  return result;
+}
+
+/**
+ * Recursively builds a tree node for getCriteriaTree_.
+ * Each node: { id, name, children: [...] }
+ * Leaf nodes have children === [].
+ *
+ * @param {Folder} folder
+ * @returns {{ id: string, name: string, children: Array }}
+ */
+function buildFolderTree_(folder) {
+  var childIter = folder.getFolders();
+  var rawKids   = [];
+  while (childIter.hasNext()) rawKids.push(childIter.next());
+
+  var children = [];
+  for (var i = 0; i < rawKids.length; i++) {
+    children.push(buildFolderTree_(rawKids[i]));
+  }
+  children.sort(function(a, b) { return a.name < b.name ? -1 : a.name > b.name ? 1 : 0; });
+
+  return { id: folder.getId(), name: folder.getName().trim(), children: children };
+}
+
+/**
  * Smart criteria folder search scoped to the category derived from the "매핑" sheet.
  *
  * @param {string} keyword     - Pre-processed keyword from frontend (소분류명).
@@ -7156,30 +7212,10 @@ function searchInspectionCriteriaFolders_(keyword, productName) {
     return [];
   }
 
-  // ── Step 3: flatten all actual product folders regardless of depth ───────────
-  // Structure varies by category:
-  //   채소 / 과일 : targetCatFolder -> product folders   (1 level)
-  //   축산 / 수산 : targetCatFolder -> container folder -> product folders (2 levels)
-  //
-  // Strategy: iterate targetCatFolder children.
-  //   If a child has no sub-folders  → it IS a product folder (flat structure).
-  //   If a child has sub-folders     → it is a container; descend one level.
-  var productFolders = []; // [{ folder, groupName }]
-  var lvl2Iter = targetCatFolder.getFolders();
-  while (lvl2Iter.hasNext()) {
-    var lvl2Folder = lvl2Iter.next();
-    var childIter  = lvl2Folder.getFolders();
-    if (childIter.hasNext()) {
-      // Container level (e.g. 품질관리팀_상품검수기준표_축산) — descend into it.
-      var containerName = lvl2Folder.getName();
-      do {
-        productFolders.push({ folder: childIter.next(), groupName: containerName });
-      } while (childIter.hasNext());
-    } else {
-      // Direct product folder (채소, 과일).
-      productFolders.push({ folder: lvl2Folder, groupName: null });
-    }
-  }
+  // ── Step 3: recursively collect all leaf product folders ─────────────────────
+  // Uses collectProductFolders_() which handles any nesting depth.
+  // Leaf = a folder that contains no sub-folders (only files/images).
+  var productFolders = collectProductFolders_(targetCatFolder, null);
 
   // ── Step 4: score each product folder ────────────────────────────────────────
   var isLivestock   = (mappedCategory === '축산');
@@ -7206,15 +7242,15 @@ function searchInspectionCriteriaFolders_(keyword, productName) {
   console.log('[criteria] productFolders=' + productFolders.length +
               ' matched=' + results.length + (results.length === 0 ? ' (will try fallback)' : ''));
 
-  // ── Step 5: category-specific hard fallback when scoring found nothing ────────
-  // For 축산: always return 종합 / 한돈 / 한우 (in that order) so the user never
-  //            sees an empty list for a livestock product.
-  // For 수산: always return 종합 as a fallback.
+  // ── Step 5: category-specific fallback when scoring found nothing ─────────────
+  // • 축산: always show 종합/한돈/한우 so livestock users never see an empty list.
+  // • 수산: always show 종합 as fallback.
+  // • 채소/과일: surface ALL folders in the category so the user can pick one
+  //   manually.  Results are tagged isCategoryFallback so the frontend can show
+  //   an appropriate label instead of "검색 결과 N건".
   if (results.length === 0) {
-    var fallbackNames = isLivestock ? LIVESTOCK_FALLBACK_FOLDERS_
-                      : isSeafood  ? ['종합']
-                      : [];
-    if (fallbackNames.length > 0) {
+    if (isLivestock) {
+      var fallbackNames = LIVESTOCK_FALLBACK_FOLDERS_;
       var seenIds = {};
       for (var fbi = 0; fbi < productFolders.length; fbi++) {
         var fp     = productFolders[fbi];
@@ -7227,6 +7263,27 @@ function searchInspectionCriteriaFolders_(keyword, productName) {
           seenIds[fp.folder.getId()] = true;
         }
       }
+    } else if (isSeafood) {
+      var seenIdsS = {};
+      for (var fbs = 0; fbs < productFolders.length; fbs++) {
+        var fps     = productFolders[fbs];
+        var fpsName = fps.folder.getName().trim();
+        if (fpsName === '종합' && !seenIdsS[fps.folder.getId()]) {
+          results.push({ id: fps.folder.getId(), name: fpsName,
+                         category: mappedCategory, groupName: fps.groupName,
+                         _score: 100 });
+          seenIdsS[fps.folder.getId()] = true;
+        }
+      }
+    } else {
+      // 채소 / 과일 (and any other category): return all leaf folders so the user
+      // can browse the whole category when no direct keyword match exists.
+      for (var fbc = 0; fbc < productFolders.length; fbc++) {
+        var fpc = productFolders[fbc];
+        results.push({ id: fpc.folder.getId(), name: fpc.folder.getName().trim(),
+                       category: mappedCategory, groupName: fpc.groupName,
+                       _score: 999, isCategoryFallback: true });
+      }
     }
   }
 
@@ -7236,7 +7293,8 @@ function searchInspectionCriteriaFolders_(keyword, productName) {
   });
 
   return results.map(function(r) {
-    return { id: r.id, name: r.name, category: r.category, groupName: r.groupName };
+    return { id: r.id, name: r.name, category: r.category, groupName: r.groupName,
+             isCategoryFallback: r.isCategoryFallback || false };
   });
 }
 
@@ -7305,4 +7363,63 @@ function getInspectionCriteriaImages_(folderId) {
     folderName: folder.getName(),
     images:     images,
   };
+}
+
+/**
+ * Build and return the full criteria folder tree for category-accordion browsing.
+ *
+ * Structure matches the real Drive layout:
+ *   채소 / 과일 : CRITERIA_ROOT / category / product_folders  (1 level)
+ *   축산 / 수산 : CRITERIA_ROOT / category / container_folder / product_folders (2 levels)
+ *
+ * Uses the same container-detection heuristic as searchInspectionCriteriaFolders_:
+ * if a direct child of the category folder itself has sub-folders it is treated as
+ * a container and we descend into it.
+ *
+ * Results are cached for 10 minutes to avoid hammering the Drive API.
+ *
+ * @returns {{ categories: Array<{ name:string, id:string, children:Array }> }}
+ */
+function getCriteriaTree_() {
+  var cache    = CacheService.getScriptCache();
+  // Cache key v3: recursive full-tree structure (different shape from v1/v2).
+  var cacheKey = 'criteriaTree_v3';
+  var cached   = cache.get(cacheKey);
+  if (cached) {
+    try { return JSON.parse(cached); } catch (_) {}
+  }
+
+  var rootFolder;
+  try {
+    rootFolder = DriveApp.getFolderById(CRITERIA_ROOT_FOLDER_ID);
+  } catch (e) {
+    throw new Error('검품 기준 폴더에 접근할 수 없습니다: ' + e.message);
+  }
+
+  // Preferred display order; any unlisted categories appear last (alphabetically).
+  var CATEGORY_ORDER = ['채소', '과일', '축산', '수산'];
+
+  // Build a full recursive tree for each category folder.
+  // buildFolderTree_() handles any nesting depth without assumptions.
+  var categories = [];
+  var catIter    = rootFolder.getFolders();
+  while (catIter.hasNext()) {
+    var catFolder = catIter.next();
+    var catNode   = buildFolderTree_(catFolder);
+    categories.push(catNode);
+  }
+
+  // Sort categories in the preferred display order.
+  categories.sort(function(a, b) {
+    var ia = CATEGORY_ORDER.indexOf(a.name);
+    var ib = CATEGORY_ORDER.indexOf(b.name);
+    if (ia === -1 && ib === -1) return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+    if (ia === -1) return 1;
+    if (ib === -1) return -1;
+    return ia - ib;
+  });
+
+  var result = { categories: categories };
+  try { cache.put(cacheKey, JSON.stringify(result), 600); } catch (_) {}
+  return result;
 }

@@ -219,3 +219,7 @@ export const fetchCriteriaSearch = (keyword, productName) =>
 
 export const fetchCriteriaImages = (folderId) =>
   getWithParams("getInspectionCriteriaImages", { folderId });
+
+// Returns the full folder tree for the category accordion browser.
+// Response: { ok, data: { categories: [{name, id, children:[{name,id}]}] } }
+export const fetchCriteriaTree = () => get("getCriteriaTree");

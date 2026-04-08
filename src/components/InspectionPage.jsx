@@ -437,18 +437,32 @@ export default function InspectionPage({
     setOpenPartner((prev) => (prev === name ? null : name));
   }, []);
 
-  // Scroll the opened partner card into view after a short delay so React has
-  // committed the layout change and framer-motion's exit animation has started
-  // before we measure positions. scrollIntoView is more reliable on iOS Safari
-  // than window.scrollBy with behavior:'smooth'.
+  // Scroll the opened partner card into view once its accordion animation has
+  // fully settled.  Instead of a hardcoded timeout we use a ResizeObserver on
+  // the card wrapper: framer-motion drives height from 0 → auto, so the wrapper
+  // keeps getting taller while the animation runs.  We wait 50 ms after the
+  // LAST observed resize event — that gap means the animation has stopped and
+  // the layout is stable.
+  //
+  // behavior:'instant' is deliberate: 'smooth' conflicts with the in-progress
+  // CSS animation on iOS Safari and can land at a wrong position.
   useEffect(() => {
     if (!openPartner) return;
     const el = partnerCardRefs.current[openPartner];
     if (!el) return;
-    const id = setTimeout(() => {
-      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }, 50);
-    return () => clearTimeout(id);
+    let debounce = null;
+    const ro = new ResizeObserver(() => {
+      clearTimeout(debounce);
+      debounce = setTimeout(() => {
+        ro.disconnect();
+        el.scrollIntoView({ behavior: 'instant', block: 'start' });
+      }, 50);
+    });
+    ro.observe(el);
+    return () => {
+      clearTimeout(debounce);
+      ro.disconnect();
+    };
   }, [openPartner]);
   const { totalRows, doneRows, pct } = useMemo(() => {
     const total = deduplicatedRows.length;
