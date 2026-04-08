@@ -26,6 +26,8 @@ const SHEET_NAMES = {
   users: "USERS",
   userSessions: "user_sessions",
   auditLog: "audit_log",
+  notices: "notices",       // admin-managed announcements
+  settings: "app_settings", // system settings key-value store
 };
 const ADMIN_RESET_PASSWORD = "0000";
 const JOB_CACHE_MAX_DATA_ROWS = 20000;
@@ -101,7 +103,7 @@ var PROTECTED_SHEETS_ = [
 // ============================================================
 
 var ROLE_PERMISSIONS_ = {
-  ADMIN:     ["VIEW","EDIT_INSPECTION","EDIT_RETURN_EXCHANGE","UPLOAD_PHOTO","DOWNLOAD_ZIP","VIEW_LOG","MANAGE_USERS"],
+  ADMIN:     ["VIEW","EDIT_INSPECTION","EDIT_RETURN_EXCHANGE","UPLOAD_PHOTO","DOWNLOAD_ZIP","VIEW_LOG","MANAGE_USERS","MANAGE_NOTICES","MANAGE_SETTINGS","MANAGE_DATA","MANAGE_PRODUCT_IMAGES"],
   MANAGER:   ["VIEW","EDIT_INSPECTION","EDIT_RETURN_EXCHANGE","UPLOAD_PHOTO","DOWNLOAD_ZIP"],
   INSPECTOR: ["VIEW","EDIT_INSPECTION","UPLOAD_PHOTO"],
   VIEWER:    ["VIEW"],
@@ -123,6 +125,331 @@ function getUserSessionsSheet_() {
 
 function getAuditLogSheet_() {
   return SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_NAMES.auditLog);
+}
+
+function getNoticesSheet_() {
+  return getOrCreateAdminSheet_(SHEET_NAMES.notices,
+    ["ID","TITLE","CONTENT","ACTIVE","PINNED","CREATED_BY","CREATED_AT","UPDATED_AT"]);
+}
+
+function getSettingsSheet_() {
+  return getOrCreateAdminSheet_(SHEET_NAMES.settings, ["KEY","VALUE","UPDATED_AT","UPDATED_BY"]);
+}
+
+// Creates a sheet with header row if it does not yet exist (admin utility sheets).
+function getOrCreateAdminSheet_(name, headers) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(name);
+  if (!sheet) {
+    sheet = ss.insertSheet(name);
+    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+    sheet.setFrozenRows(1);
+    // Admin utility sheets are hidden from casual users
+    sheet.hideSheet();
+  }
+  return sheet;
+}
+
+// ── User Management (MANAGE_USERS) ───────────────────────────────────────────
+
+function listUsers_(sessionToken) {
+  requirePermission_(sessionToken, "MANAGE_USERS");
+  var sheet = getUsersSheet_();
+  if (!sheet || sheet.getLastRow() < 2) return { ok: true, users: [] };
+  var data = sheet.getDataRange().getValues();
+  var headers = data[0].map(function(h) { return String(h).trim(); });
+  var users = [];
+  for (var i = 1; i < data.length; i++) {
+    var row = data[i];
+    var obj = {};
+    headers.forEach(function(h, idx) { obj[h] = String(row[idx] || ""); });
+    // Never return PASSWORD
+    delete obj["PASSWORD"];
+    obj.__rowNumber = i + 1;
+    users.push(obj);
+  }
+  return { ok: true, users: users };
+}
+
+function createUser_(sessionToken, payload) {
+  requirePermission_(sessionToken, "MANAGE_USERS");
+  var userId = String(payload.id || "").trim();
+  var name   = String(payload.name || "").trim();
+  var role   = String(payload.role || "INSPECTOR").trim().toUpperCase();
+  var pw     = String(payload.password || "").trim();
+  if (!userId || !pw) throw new Error("ID와 비밀번호는 필수입니다.");
+  if (!ROLE_PERMISSIONS_[role]) throw new Error("유효하지 않은 역할: " + role);
+
+  var sheet = getUsersSheet_();
+  var data = sheet.getDataRange().getValues();
+  var headers = data[0].map(function(h) { return String(h).trim(); });
+  // Duplicate check
+  var idIdx = headers.indexOf("ID");
+  for (var i = 1; i < data.length; i++) {
+    if (String(data[i][idIdx] || "").trim() === userId) throw new Error("이미 존재하는 ID입니다: " + userId);
+  }
+  var now = nowKst_();
+  var row = headers.map(function(h) {
+    if (h === "ID")         return userId;
+    if (h === "PASSWORD")   return pw;
+    if (h === "NAME")       return name;
+    if (h === "ROLE")       return role;
+    if (h === "PERMISSIONS") return ROLE_PERMISSIONS_[role].join(",");
+    if (h === "ACTIVE")     return "TRUE";
+    if (h === "CREATED_AT") return now;
+    if (h === "UPDATED_AT") return now;
+    return String(payload[h] || "");
+  });
+  sheet.appendRow(row);
+  appendAuditLog_({ action: "CREATE_USER", userId: sessionToken, targetKey: userId, result: "SUCCESS" });
+  return { ok: true };
+}
+
+function updateUser_(sessionToken, payload) {
+  requirePermission_(sessionToken, "MANAGE_USERS");
+  var targetId = String(payload.id || "").trim();
+  if (!targetId) throw new Error("수정할 사용자 ID가 없습니다.");
+
+  var sheet = getUsersSheet_();
+  var data = sheet.getDataRange().getValues();
+  var headers = data[0].map(function(h) { return String(h).trim(); });
+  var idIdx = headers.indexOf("ID");
+  var targetRow = -1;
+  for (var i = 1; i < data.length; i++) {
+    if (String(data[i][idIdx] || "").trim() === targetId) { targetRow = i + 1; break; }
+  }
+  if (targetRow < 0) throw new Error("사용자를 찾을 수 없습니다: " + targetId);
+
+  var now = nowKst_();
+  var allowed = ["NAME","ROLE","ACTIVE","NOTE"];
+  if (payload.password) allowed.push("PASSWORD");
+  headers.forEach(function(h, colIdx) {
+    if (h === "UPDATED_AT") {
+      sheet.getRange(targetRow, colIdx + 1).setValue(now);
+    } else if (h === "PERMISSIONS" && payload.role) {
+      var newRole = String(payload.role || "").toUpperCase();
+      if (ROLE_PERMISSIONS_[newRole]) sheet.getRange(targetRow, colIdx + 1).setValue(ROLE_PERMISSIONS_[newRole].join(","));
+    } else if (allowed.indexOf(h) >= 0 && payload[h.toLowerCase()] !== undefined) {
+      var val = String(payload[h.toLowerCase()] || "").trim();
+      if (h === "ROLE") val = val.toUpperCase();
+      sheet.getRange(targetRow, colIdx + 1).setValue(val);
+    }
+  });
+  appendAuditLog_({ action: "UPDATE_USER", targetKey: targetId, result: "SUCCESS" });
+  return { ok: true };
+}
+
+// ── Audit Log Viewer (VIEW_LOG) ───────────────────────────────────────────────
+
+function listAuditLogs_(sessionToken, filters) {
+  requirePermission_(sessionToken, "VIEW_LOG");
+  var sheet = getAuditLogSheet_();
+  if (!sheet || sheet.getLastRow() < 2) return { ok: true, logs: [] };
+  var data = sheet.getDataRange().getValues();
+  var headers = data[0].map(function(h) { return String(h).trim(); });
+  var logs = [];
+  var limit = filters && filters.limit ? Math.min(Number(filters.limit), 500) : 200;
+  // Read from newest to oldest
+  for (var i = data.length - 1; i >= 1; i--) {
+    var row = data[i];
+    var obj = {};
+    headers.forEach(function(h, idx) { obj[h] = String(row[idx] || ""); });
+    // Apply optional filters
+    if (filters) {
+      if (filters.userId && obj["USER_ID"] && obj["USER_ID"].indexOf(filters.userId) < 0) continue;
+      if (filters.action && obj["ACTION"] && obj["ACTION"].indexOf(filters.action) < 0) continue;
+      if (filters.result && obj["RESULT"] && obj["RESULT"].indexOf(filters.result) < 0) continue;
+      if (filters.dateFrom && obj["LOGGED_AT"] && obj["LOGGED_AT"] < filters.dateFrom) continue;
+      if (filters.dateTo && obj["LOGGED_AT"] && obj["LOGGED_AT"] > filters.dateTo + " 99") continue;
+    }
+    logs.push(obj);
+    if (logs.length >= limit) break;
+  }
+  return { ok: true, logs: logs };
+}
+
+// ── Notice Management (MANAGE_NOTICES / VIEW) ─────────────────────────────────
+
+function listNotices_(sessionToken) {
+  requirePermission_(sessionToken, "VIEW"); // visible to all logged-in users
+  var sheet = getNoticesSheet_();
+  if (sheet.getLastRow() < 2) return { ok: true, notices: [] };
+  var data = sheet.getDataRange().getValues();
+  var headers = data[0].map(function(h) { return String(h).trim(); });
+  var notices = [];
+  for (var i = 1; i < data.length; i++) {
+    var obj = {};
+    headers.forEach(function(h, idx) { obj[h] = String(data[i][idx] || ""); });
+    obj.__rowNumber = i + 1;
+    notices.push(obj);
+  }
+  // Sort: pinned first, then by created_at desc
+  notices.sort(function(a, b) {
+    if (a["PINNED"] === "TRUE" && b["PINNED"] !== "TRUE") return -1;
+    if (b["PINNED"] === "TRUE" && a["PINNED"] !== "TRUE") return 1;
+    return b["CREATED_AT"].localeCompare(a["CREATED_AT"]);
+  });
+  return { ok: true, notices: notices };
+}
+
+function saveNotice_(sessionToken, payload) {
+  var user = requirePermission_(sessionToken, "MANAGE_NOTICES");
+  var sheet = getNoticesSheet_();
+  var now = nowKst_();
+  var noticeId = String(payload.id || "").trim();
+  var title   = String(payload.title   || "").trim();
+  var content = String(payload.content || "").trim();
+  var active  = payload.active  !== false ? "TRUE" : "FALSE";
+  var pinned  = payload.pinned  === true  ? "TRUE" : "FALSE";
+  if (!title) throw new Error("공지 제목은 필수입니다.");
+
+  var headers = sheet.getLastRow() > 0 ? sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(String) : [];
+
+  if (noticeId) {
+    // Update existing
+    var data = sheet.getDataRange().getValues();
+    var idIdx = headers.indexOf("ID");
+    for (var i = 1; i < data.length; i++) {
+      if (String(data[i][idIdx] || "").trim() === noticeId) {
+        var vals = headers.map(function(h) {
+          if (h === "TITLE")      return title;
+          if (h === "CONTENT")    return content;
+          if (h === "ACTIVE")     return active;
+          if (h === "PINNED")     return pinned;
+          if (h === "UPDATED_AT") return now;
+          return String(data[i][headers.indexOf(h)] || "");
+        });
+        sheet.getRange(i + 1, 1, 1, vals.length).setValues([vals]);
+        return { ok: true };
+      }
+    }
+    throw new Error("공지를 찾을 수 없습니다: " + noticeId);
+  } else {
+    // Create new
+    var newId = Utilities.getUuid().replace(/-/g, "").substring(0, 12);
+    var row = headers.map(function(h) {
+      if (h === "ID")          return newId;
+      if (h === "TITLE")       return title;
+      if (h === "CONTENT")     return content;
+      if (h === "ACTIVE")      return active;
+      if (h === "PINNED")      return pinned;
+      if (h === "CREATED_BY")  return user.id;
+      if (h === "CREATED_AT")  return now;
+      if (h === "UPDATED_AT")  return now;
+      return "";
+    });
+    sheet.appendRow(row);
+    return { ok: true, id: newId };
+  }
+}
+
+function deleteNotice_(sessionToken, noticeId) {
+  requirePermission_(sessionToken, "MANAGE_NOTICES");
+  var sheet = getNoticesSheet_();
+  if (sheet.getLastRow() < 2) throw new Error("공지를 찾을 수 없습니다.");
+  var data = sheet.getDataRange().getValues();
+  var headers = data[0].map(function(h) { return String(h).trim(); });
+  var idIdx = headers.indexOf("ID");
+  for (var i = 1; i < data.length; i++) {
+    if (String(data[i][idIdx] || "").trim() === String(noticeId || "").trim()) {
+      sheet.deleteRow(i + 1);
+      return { ok: true };
+    }
+  }
+  throw new Error("공지를 찾을 수 없습니다: " + noticeId);
+}
+
+// ── System Settings (MANAGE_SETTINGS) ────────────────────────────────────────
+
+var DEFAULT_SETTINGS_ = {
+  session_expiry_hours:  "8",
+  maintenance_mode:      "false",
+  daily_reset_hour_kst:  "6",
+  daily_backup_hour_kst: "3",
+  system_banner:         "",
+};
+
+function getSettings_(sessionToken) {
+  requirePermission_(sessionToken, "MANAGE_SETTINGS");
+  var sheet = getSettingsSheet_();
+  var result = Object.assign({}, DEFAULT_SETTINGS_);
+  if (sheet.getLastRow() < 2) return { ok: true, settings: result };
+  var data = sheet.getDataRange().getValues();
+  var headers = data[0].map(function(h) { return String(h).trim(); });
+  var keyIdx = headers.indexOf("KEY");
+  var valIdx = headers.indexOf("VALUE");
+  for (var i = 1; i < data.length; i++) {
+    var k = String(data[i][keyIdx] || "").trim();
+    var v = String(data[i][valIdx] || "").trim();
+    if (k) result[k] = v;
+  }
+  return { ok: true, settings: result };
+}
+
+function saveSettings_(sessionToken, payload) {
+  var user = requirePermission_(sessionToken, "MANAGE_SETTINGS");
+  var sheet = getSettingsSheet_();
+  var now = nowKst_();
+  var data = sheet.getLastRow() > 0 ? sheet.getDataRange().getValues() : [["KEY","VALUE","UPDATED_AT","UPDATED_BY"]];
+  var headers = data[0].map(function(h) { return String(h).trim(); });
+  var keyIdx  = headers.indexOf("KEY");
+  var valIdx  = headers.indexOf("VALUE");
+  var atIdx   = headers.indexOf("UPDATED_AT");
+  var byIdx   = headers.indexOf("UPDATED_BY");
+
+  Object.keys(payload).forEach(function(k) {
+    var v = String(payload[k] || "");
+    var found = false;
+    for (var i = 1; i < data.length; i++) {
+      if (String(data[i][keyIdx] || "").trim() === k) {
+        if (valIdx >= 0) sheet.getRange(i + 1, valIdx + 1).setValue(v);
+        if (atIdx  >= 0) sheet.getRange(i + 1, atIdx  + 1).setValue(now);
+        if (byIdx  >= 0) sheet.getRange(i + 1, byIdx  + 1).setValue(user.id);
+        data[i][valIdx] = v; // keep in-memory copy fresh for this batch
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      var row = headers.map(function(h) {
+        if (h === "KEY")        return k;
+        if (h === "VALUE")      return v;
+        if (h === "UPDATED_AT") return now;
+        if (h === "UPDATED_BY") return user.id;
+        return "";
+      });
+      sheet.appendRow(row);
+      data.push(row);
+    }
+  });
+  return { ok: true };
+}
+
+// ── Product Image Listing (admin) ─────────────────────────────────────────────
+
+function listProductImages_(sessionToken) {
+  requirePermission_(sessionToken, "MANAGE_PRODUCT_IMAGES");
+  var images = loadProductImageMappings_();
+  return { ok: true, images: images };
+}
+
+function deleteProductImage_(sessionToken, mapKey) {
+  requirePermission_(sessionToken, "MANAGE_PRODUCT_IMAGES");
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = getProductImageSheet_(ss);
+  if (!sheet || sheet.getLastRow() < 2) throw new Error("이미지를 찾을 수 없습니다.");
+  var data = sheet.getDataRange().getValues();
+  var headers = data[0].map(function(h) { return String(h).trim(); });
+  var keyIdx = headers.indexOf("맵키");
+  for (var i = 1; i < data.length; i++) {
+    if (String(data[i][keyIdx] || "").trim() === String(mapKey || "").trim()) {
+      sheet.deleteRow(i + 1);
+      try { CacheService.getScriptCache().remove('product_image_map_v1'); } catch (_) {}
+      appendAuditLog_({ action: "DELETE_PRODUCT_IMAGE", targetKey: mapKey, result: "SUCCESS" });
+      return { ok: true };
+    }
+  }
+  throw new Error("이미지를 찾을 수 없습니다: " + mapKey);
 }
 
 function createSessionToken_() {
@@ -1107,6 +1434,7 @@ function doPost(e) {
     }
 
     if (action === "saveProductImageMapping") {
+      var _authImg = requirePermission_(body.sessionToken, "MANAGE_PRODUCT_IMAGES");
       return jsonOutput_({
         ok: true,
         data: saveProductImageMapping_(body.payload || {}),
@@ -1152,6 +1480,49 @@ function doPost(e) {
 
     if (action === "forceLogout") {
       return jsonOutput_(forceLogout_(body.sessionToken || "", body.targetSessionToken || ""));
+    }
+
+    // ── Admin: User Management ────────────────────────────────────────────────
+    if (action === "listUsers") {
+      return jsonOutput_(listUsers_(body.sessionToken || ""));
+    }
+    if (action === "createUser") {
+      return jsonOutput_(createUser_(body.sessionToken || "", body.payload || {}));
+    }
+    if (action === "updateUser") {
+      return jsonOutput_(updateUser_(body.sessionToken || "", body.payload || {}));
+    }
+
+    // ── Admin: Audit Logs ─────────────────────────────────────────────────────
+    if (action === "listAuditLogs") {
+      return jsonOutput_(listAuditLogs_(body.sessionToken || "", body.filters || {}));
+    }
+
+    // ── Admin: Notice Management ──────────────────────────────────────────────
+    if (action === "listNotices") {
+      return jsonOutput_(listNotices_(body.sessionToken || ""));
+    }
+    if (action === "saveNotice") {
+      return jsonOutput_(saveNotice_(body.sessionToken || "", body.payload || {}));
+    }
+    if (action === "deleteNotice") {
+      return jsonOutput_(deleteNotice_(body.sessionToken || "", body.noticeId || ""));
+    }
+
+    // ── Admin: System Settings ────────────────────────────────────────────────
+    if (action === "getSettings") {
+      return jsonOutput_(getSettings_(body.sessionToken || ""));
+    }
+    if (action === "saveSettings") {
+      return jsonOutput_(saveSettings_(body.sessionToken || "", body.payload || {}));
+    }
+
+    // ── Admin: Product Image Management ───────────────────────────────────────
+    if (action === "listProductImages") {
+      return jsonOutput_(listProductImages_(body.sessionToken || ""));
+    }
+    if (action === "deleteProductImage") {
+      return jsonOutput_(deleteProductImage_(body.sessionToken || "", body.mapKey || ""));
     }
 
     return jsonOutput_({

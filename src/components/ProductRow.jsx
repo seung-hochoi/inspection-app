@@ -29,6 +29,7 @@ const ProductRow = React.memo(function ProductRow({
   productImageMap = {}, onProductImageUploaded, accumulatedQty = 0,
   returnCount = 0, exchangeCount = 0, returnQty = 0, exchangeQty = 0,
   canEditInspection = true, canUploadPhoto = true, canEditReturnExchange = true,
+  isAdmin = false,
 }) {
   // 'insp' = 검품사진, 'defect' = 불량사진 (return+exchange combined)
   const [showPhotoType, setShowPhotoType] = useState(null);
@@ -432,10 +433,10 @@ const ProductRow = React.memo(function ProductRow({
                   overflow: 'hidden',
                   border: `1px solid ${C.border}`,
                   background: C.bgAlt,
-                  cursor: canUploadPhoto ? 'pointer' : 'default',
+                  cursor: 'pointer',
                 }}
-                title={canUploadPhoto ? '대표 이미지 변경' : undefined}
-                onClick={canUploadPhoto ? () => thumbInputRef.current?.click() : undefined}
+                title={isAdmin ? '대표 이미지 변경' : '이미지 보기'}
+                onClick={isAdmin ? () => thumbInputRef.current?.click() : (thumbUrl ? () => setLightboxId(thumbItem?.['파일ID']) : undefined)}
               >
                 {thumbUrl ? (
                   <img
@@ -454,8 +455,8 @@ const ProductRow = React.memo(function ProductRow({
                       : <Camera size={14} color={C.muted2} strokeWidth={1.5} />}
                   </div>
                 )}
-                {/* Camera overlay button */}
-                {canUploadPhoto && !thumbUploading && (
+                {/* Camera overlay — admin only: signals image is editable */}
+                {isAdmin && !thumbUploading && (
                   <div style={{
                     position: 'absolute', bottom: 2, right: 2,
                     width: 16, height: 16, borderRadius: '50%',
@@ -465,6 +466,7 @@ const ProductRow = React.memo(function ProductRow({
                     <Camera size={9} color="#fff" strokeWidth={2} />
                   </div>
                 )}
+                {/* Hidden file input — only activated when admin clicks */}
                 <input
                   ref={thumbInputRef}
                   type="file" accept="image/*"

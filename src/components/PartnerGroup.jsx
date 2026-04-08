@@ -19,6 +19,7 @@ function PartnerGroupBase({
   onDraftChange, onSaved, onMovementSaved, onError, onSaveError,
   expanded = false, onToggle,
   canEditInspection = true, canUploadPhoto = true, canEditReturnExchange = true,
+  isAdmin = false,
 }) {
   const handleHeaderClick = () => onToggle?.(partnerName);
 
@@ -158,6 +159,7 @@ function PartnerGroupBase({
                   canEditInspection={canEditInspection}
                   canUploadPhoto={canUploadPhoto}
                   canEditReturnExchange={canEditReturnExchange}
+                  isAdmin={isAdmin}
                 />
               );
             })}

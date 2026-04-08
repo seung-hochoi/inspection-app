@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import Papa from 'papaparse';
-import { ClipboardCheck, FileText, BarChart3, RefreshCw, Database, AlertTriangle, Lock, Download, FolderDown, LogOut, BookOpen } from 'lucide-react';
+import { ClipboardCheck, FileText, BarChart3, RefreshCw, Database, AlertTriangle, Lock, Download, FolderDown, LogOut, BookOpen, Shield } from 'lucide-react';
 import gs25Logo from './gs25-logo.svg';
 import InspectionPage from './components/InspectionPage';
 import RecordsPage from './components/RecordsPage';
 import SummaryPage from './components/SummaryPage';
 import CriteriaPage from './components/CriteriaPage';
+import AdminPage from './components/AdminPage';
 import LoginPage from './components/LoginPage';
 import WorkerPanel from './components/WorkerPanel';
 import ScheduleModal from './components/ScheduleModal';
@@ -29,6 +30,8 @@ const TABS = [
   { key: "summary",    label: "요약",    icon: BarChart3 },
   { key: "criteria",   label: "검품기준", icon: BookOpen },
 ];
+// Admin tab is rendered separately in the tab bar so non-admin users never see it.
+const ADMIN_TAB = { key: "admin", label: "관리자", icon: Shield };
 
 // ── Color palette ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 const C = {
@@ -1724,6 +1727,8 @@ function App() {
   const [scheduleMonths,     setScheduleMonths]     = useState(null); // null = not yet fetched
   const [scheduleLoading,    setScheduleLoading]    = useState(false);
   const canManageUsers  = !!(authUser && (authUser.permissions || []).includes('MANAGE_USERS'));
+  // isAdmin: true only when role is exactly ADMIN — gates the Admin menu and admin-only UI.
+  const isAdmin         = !!(authUser && authUser.role === 'ADMIN');
   // Schedule visibility: any authenticated user with the basic VIEW permission can see
   // the work schedule / 근무 screen. MANAGE_USERS is NOT required.
   const canViewSchedule = !!(authUser && (authUser.permissions || []).includes('VIEW'));
@@ -2394,6 +2399,7 @@ function App() {
             onRecordsUpdate={setRecords}
             onTargetSkuChange={setInspectionTargetSkuTotal}
             authUser={authUser}
+            isAdmin={isAdmin}
           />
         )}
         {tab === "records" && (
@@ -2423,6 +2429,9 @@ function App() {
         {tab === "criteria" && (
           <CriteriaPage jobRows={jobRows} />
         )}
+        {tab === "admin" && isAdmin && (
+          <AdminPage showToast={showToast} />
+        )}
       </main>
 
       {/* Tab Bar */}
@@ -2448,6 +2457,26 @@ function App() {
             <span>{t.label}</span>
           </button>
         ))}
+        {/* Admin-only tab — hidden from all non-ADMIN users */}
+        {isAdmin && (() => {
+          const AdminIcon = ADMIN_TAB.icon;
+          return (
+            <button
+              key={ADMIN_TAB.key}
+              onClick={() => setTab(ADMIN_TAB.key)}
+              style={{
+                ...S.tabBtn,
+                ...(tab === ADMIN_TAB.key ? S.tabBtnActive : {}),
+                borderTop: tab === ADMIN_TAB.key ? `2px solid ${C.primary}` : '2px solid transparent',
+              }}
+            >
+              <span style={{ ...S.tabIcon, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <AdminIcon size={18} strokeWidth={2} />
+              </span>
+              <span>{ADMIN_TAB.label}</span>
+            </button>
+          );
+        })()}
       </nav>
 
       {/* Toast */}

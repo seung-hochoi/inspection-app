@@ -214,6 +214,27 @@ export const listSessions = () =>
 export const forceLogoutSession = (targetSessionToken) =>
   post({ action: "forceLogout", targetSessionToken });
 
+// ── Admin: User Management ────────────────────────────────────────────────────
+export const listUsers       = ()        => post({ action: "listUsers" });
+export const createUser      = (payload) => post({ action: "createUser",  payload });
+export const updateUser      = (payload) => post({ action: "updateUser",  payload });
+
+// ── Admin: Audit Log Viewer ───────────────────────────────────────────────────
+export const listAuditLogs   = (filters = {}) => post({ action: "listAuditLogs", filters });
+
+// ── Admin: Notice Management ──────────────────────────────────────────────────
+export const listNotices  = ()        => post({ action: "listNotices" });
+export const saveNotice   = (payload) => post({ action: "saveNotice",  payload });
+export const deleteNotice = (id)      => post({ action: "deleteNotice", noticeId: id });
+
+// ── Admin: System Settings ────────────────────────────────────────────────────
+export const getSystemSettings  = ()        => post({ action: "getSettings" });
+export const saveSystemSettings = (payload) => post({ action: "saveSettings", payload });
+
+// ── Admin: Product Image Management ──────────────────────────────────────────
+export const listProductImages   = ()       => post({ action: "listProductImages" });
+export const deleteProductImage  = (mapKey) => post({ action: "deleteProductImage", mapKey });
+
 // ── Inspection criteria search (검품 기준 검색) ───────────────────────────────
 // Searches Drive folder names — no preloading, on-demand only.
 export const fetchCriteriaSearch = (keyword, productName) =>

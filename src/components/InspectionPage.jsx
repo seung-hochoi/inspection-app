@@ -16,7 +16,7 @@ export default function InspectionPage({
   jobKey, rows = [], config = {}, records = [], happycall = {}, inspectionRows = [],
   productImageMap = {}, onProductImageUploaded,
   onError, onToast, onCsvUpload, onRefresh, onRecordsUpdate, onTargetSkuChange,
-  authUser,
+  authUser, isAdmin = false,
 }) {
   const [drafts, setDrafts]             = useState(() => loadDrafts());
   const [saveStatuses, setSaveStatuses] = useState({});
@@ -677,6 +677,7 @@ export default function InspectionPage({
                 canEditInspection={canEditInspection}
                 canUploadPhoto={canUploadPhoto}
                 canEditReturnExchange={canEditReturnExchange}
+                isAdmin={isAdmin}
               />
             </div>
             );
