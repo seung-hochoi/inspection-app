@@ -8,7 +8,7 @@ import { C, radius, font, shadow, trans } from './styles';
 import PhotoUploader from './PhotoUploader';
 import ReturnExchangeModal from './ReturnExchangeModal';
 import CriteriaModal from './CriteriaModal';
-import { saveBatch, saveProductImageMapping } from '../api';
+import { saveBatch, withRetry, saveProductImageMapping } from '../api';
 import { normalizeProductCode, fileToBase64 } from '../utils';
 import { buildInspPayload, buildMovPayload, buildDraftFingerprint } from '../savePayload';
 
@@ -131,7 +131,7 @@ const ProductRow = React.memo(function ProductRow({
     inFlightRef.current = true;
     lastSaveAttemptTimeRef.current = now;
     try {
-      const result = await saveBatch([buildInspPayload(row, jobKey, draftSnapshot)]);
+      const result = await withRetry(() => saveBatch([buildInspPayload(row, jobKey, draftSnapshot)]));
 
       // ── Save succeeded ────────────────────────────────────────────────────
 
@@ -239,12 +239,12 @@ const ProductRow = React.memo(function ProductRow({
   };
 
   const handleMovementSave = async ({ type, centerName, qty, note }) => {
-    const result = await saveBatch([
+    const result = await withRetry(() => saveBatch([
       buildMovPayload(row, jobKey, {
         type, centerName, qty, note,
         centerList: row.__centerList || [],
       }),
-    ]);
+    ]));
     // Pass fresh records back so InspectionPage can update records tab without a full reload.
     // freshRecords is injected by the backend when movement rows were saved successfully.
     onMovementSaved?.(result?.data?.freshRecords);

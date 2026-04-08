@@ -42,8 +42,10 @@ const post = async (body) => {
     const result = JSON.parse(text);
     if (!response.ok || result.ok === false) {
       const err = new Error(result.message || "서버 오류");
-      // Mark server-side logical rejections so withRetry skips them
-      err.isLogicalError = true;
+      // isTransient=true means a recoverable server condition (e.g. lock timeout).
+      // Only mark as logical error when it is NOT transient — logical errors
+      // (permission denied, version conflict, etc.) must not be retried.
+      if (!result.isTransient) err.isLogicalError = true;
       throw err;
     }
     return result;

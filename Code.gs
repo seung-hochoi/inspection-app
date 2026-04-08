@@ -941,7 +941,14 @@ function doPost(e) {
 
   // All write actions acquire the script lock to prevent concurrent sheet mutations.
   const lock = LockService.getScriptLock();
-  lock.waitLock(30000);
+  // Catch lock timeout explicitly so the client receives a proper JSON error response
+  // instead of an HTML exception page (which api.js misclassifies as isLogicalError=true
+  // and refuses to retry, causing "permanent failure after one timeout" symptoms).
+  try {
+    lock.waitLock(30000);
+  } catch (lockErr) {
+    return jsonOutput_({ ok: false, isTransient: true, message: "서버가 다른 요청을 처리 중입니다. 잠시 후 다시 시도하세요." });
+  }
 
   try {
     // ── Diagnostic entry-point log ──────────────────────────────────────────
@@ -4637,17 +4644,6 @@ function syncReturnSheets_(ss) {
     }
   });
 
-  // Secondary lookup index: productCode → aggregated inspection quantity.
-  // Used as a fallback when the full code+partner key doesn't match between
-  // inspection_data and return_exchange_records (e.g. slightly different supplier name).
-  var inspectionQtyByCode = {};
-  inspectionRows.forEach(function (row) {
-    var code = normalizeCode_(row["상품코드"]);
-    if (!code) return;
-    if (!inspectionQtyByCode[code]) inspectionQtyByCode[code] = 0;
-    inspectionQtyByCode[code] += parseNumber_(row["검품수량"]);
-  });
-
   ensureHeaderRow_(centerSheet, [
     "날짜",
     "협력사명",
@@ -4730,16 +4726,6 @@ function syncReturnSheets_(ss) {
         baseRow["발주수량"]
       );
       var inspectionQty = parseNumber_(inspectionRow["검품수량"]);
-
-      // Fallback: if no direct code+partner match was found in inspectionMap, aggregate
-      // by product code only. This handles cases where the supplier name is stored
-      // slightly differently between return_exchange_records and inspection_data.
-      if (inspectionQty === 0 && !inspectionMap[key]) {
-        var codeOnly = normalizeCode_(baseRow["상품코드"] || "");
-        if (codeOnly && inspectionQtyByCode[codeOnly]) {
-          inspectionQty = inspectionQtyByCode[codeOnly];
-        }
-      }
 
       var exchangeQty = parseNumber_(movementTotals.exchangeQty);
       var returnQty = parseNumber_(movementTotals.returnQty);
@@ -5712,6 +5698,39 @@ function syncVisibleSummarySheet_(ss, snapshot) {
  * Keeps one row per date: updates the row if today's date already exists,
  * or appends a new row if it does not. All previous date rows are preserved.
  */
+/**
+ * Normalises a cell value from the "일자" column of the 이력 archive sheet into the
+ * canonical "MM/dd" string used by buildHistorySnapshot_().
+ *
+ * Google Sheets silently auto-converts "04/08" string cells to Date objects.
+ * On the next getValues() call those cells come back as JS Date, NOT the original
+ * string.  This function handles both cases so the date-match never false-appends.
+ */
+function normalizeHistoryDateStr_(cellValue) {
+  if (!cellValue && cellValue !== 0) return "";
+  // Sheets returned a Date object (auto-converted from "MM/dd" string)
+  if (Object.prototype.toString.call(cellValue) === "[object Date]") {
+    return Utilities.formatDate(cellValue, "Asia/Seoul", "MM/dd");
+  }
+  var s = String(cellValue).trim();
+  // Already in M/d or MM/dd format
+  var m = s.match(/^(\d{1,2})\/(\d{1,2})$/);
+  if (m) {
+    // Re-format to zero-padded MM/dd to match the stored format
+    return String(+m[1]).padStart(2, "0") + "/" + String(+m[2]).padStart(2, "0");
+  }
+  // ISO date substring — unlikely but handle defensively
+  var mIso = s.match(/(\d{4})-(\d{2})-(\d{2})/);
+  if (mIso) return mIso[2] + "/" + mIso[3];
+  return s;
+}
+
+/**
+ * Syncs the hidden archive sheet "이력".
+ * Creates and hides the sheet if it does not exist.
+ * Keeps one row per date: updates the row if today's date already exists,
+ * or appends a new row if it does not. All previous date rows are preserved.
+ */
 function syncHiddenArchiveSheet_(ss, snapshot) {
   var sheet = getOrCreateSheet_(ss, SHEET_NAMES.historyArchive);
 
@@ -5735,7 +5754,9 @@ function syncHiddenArchiveSheet_(ss, snapshot) {
   if (lastRow >= 2) {
     var dateColValues = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
     for (var i = 0; i < dateColValues.length; i++) {
-      if (String(dateColValues[i][0]).trim() === snapshot.dateStr) {
+      // Use normalizeHistoryDateStr_ because Sheets auto-converts "MM/dd" string
+      // cells to Date objects — String(dateObj) never equals "MM/dd".
+      if (normalizeHistoryDateStr_(dateColValues[i][0]) === snapshot.dateStr) {
         todayRow = i + 2; // 1-indexed, offset past the header row
         break;
       }
@@ -5748,6 +5769,13 @@ function syncHiddenArchiveSheet_(ss, snapshot) {
   } else {
     sheet.appendRow(snapshot.rowValues);
     console.log("[syncHiddenArchiveSheet_] appended new row for date=" + snapshot.dateStr);
+  }
+
+  // Force the date column to store as plain text to prevent Sheets from
+  // auto-converting "MM/dd" strings to dates on future getValues() calls.
+  var dataLastRow = sheet.getLastRow();
+  if (dataLastRow >= 2) {
+    sheet.getRange(2, 1, dataLastRow - 1, 1).setNumberFormat("@");
   }
 }
 

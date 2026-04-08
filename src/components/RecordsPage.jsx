@@ -2,7 +2,7 @@ import React, { useState, useCallback, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Search, FileX, ChevronDown, Camera, XCircle, Pencil, ImagePlus, X as XIcon } from 'lucide-react';
 import { C, radius, font, shadow, trans } from './styles';
-import { cancelMovementEvent, saveBatch, uploadPhotos, savePhotoMeta } from '../api';
+import { cancelMovementEvent, saveBatch, withRetry, uploadPhotos, savePhotoMeta } from '../api';
 import { fileToBase64, getClientId } from '../utils';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -352,7 +352,11 @@ function RecordEditModal({ record, inspectionRows, jobKey, onClose, onToast }) {
       const newIds = photosArr.map((item) => String(item.fileId || '').trim()).filter(Boolean);
       for (const fileId of newIds) {
         await savePhotoMeta({
-          type,
+          // Always 'inspection' here — defect photos in RecordEditModal belong to the
+          // inspection row, not a movement record. Using the wrong type would send the
+          // metadata to makeMovementPhotoAssetKey_ instead of makeInspectionPhotoAssetKey_,
+          // causing the photo to be invisible when the inspection row is re-loaded.
+          type: 'inspection',
           '작업기준일또는CSV식별값': jobKey,
           '상품코드': code,
           '협력사명': record['협력사명'] || '',
@@ -372,7 +376,7 @@ function RecordEditModal({ record, inspectionRows, jobKey, onClose, onToast }) {
   const handleSave = async () => {
     setSaving(true);
     try {
-      await saveBatch([{
+      await withRetry(() => saveBatch([{
         type: 'inspection',
         clientId: getClientId(),
         operationId: uuidv4(),
@@ -384,7 +388,7 @@ function RecordEditModal({ record, inspectionRows, jobKey, onClose, onToast }) {
         '검품수량':  String(inspRow?.['검품수량'] || 0),
         '불량사유':  memo,
         defectPhotoIds: defectIds,
-      }]);
+      }]));
       onToast?.('저장되었습니다.', 'success');
       onClose();
     } catch (err) {
