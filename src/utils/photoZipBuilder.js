@@ -15,26 +15,53 @@ const CHUNK_DELAY_MS = 400; // gap between triggering each ZIP part download
  * Build a flat normalized list of photo entries from inspection rows.
  * Used for progress estimation / display before the backend responds.
  *
+ * Each mode reads from the correct per-category field to prevent photos
+ * from one category leaking into another category's ZIP.
+ *
  * @param {object[]} inspectionRows   – rows returned from loadBootstrap
  * @param {'inspection'|'movement'|'sugar'|'weight'} mode
  * @returns {{ productCode, productName, partnerName, photoType, fileId, sequence }[]}
  */
 export function collectPhotoList(inspectionRows = [], mode = 'inspection') {
+  // Map each mode to the per-category field stored in the client-side row object.
+  // Fall back to the legacy combined field only for inspection mode on old rows.
+  const modeFieldMap = {
+    inspection: 'inspPhotoIds',
+    movement:   'defectPhotoIds',
+    sugar:      'brixPhotoIds',
+    weight:     'weightPhotoIds',
+  };
+  const photoTypeMap = {
+    inspection: 'inspection',
+    movement:   'defect',
+    sugar:      'sugar',
+    weight:     'weight',
+  };
+  const fieldName = modeFieldMap[mode] || 'inspPhotoIds';
+  const photoType = photoTypeMap[mode] || 'inspection';
+
   const entries = [];
   inspectionRows.forEach((row) => {
     const productCode = String(row['상품코드'] || '').trim();
     const productName = String(row['상품명']   || '').trim();
     const partnerName = String(row['협력사명'] || '').trim();
 
-    const rawIds = String(row['사진파일ID목록'] || '');
-    const fileIds = rawIds.split(/[\n,;]+/).map((s) => s.trim()).filter(Boolean);
+    // Use per-category array when available; fall back to legacy combined string
+    // only for inspection mode so old rows without the split fields still work.
+    let fileIds = [];
+    if (Array.isArray(row[fieldName]) && row[fieldName].length > 0) {
+      fileIds = row[fieldName].filter(Boolean);
+    } else if (mode === 'inspection') {
+      const rawIds = String(row['사진파일ID목록'] || '');
+      fileIds = rawIds.split(/[\n,;]+/).map((s) => s.trim()).filter(Boolean);
+    }
 
     fileIds.forEach((fileId, i) => {
       entries.push({
         productCode,
         productName,
         partnerName,
-        photoType: mode === 'inspection' ? 'inspection' : 'defect',
+        photoType,
         fileId,
         sequence: i + 1,
       });

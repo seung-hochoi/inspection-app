@@ -476,6 +476,12 @@ function ensureSessionIpUaColumns_(sessSheet, headers) {
   };
 }
 
+// Returns current time in Korea Standard Time formatted as "MM/dd HH:mm:ss".
+// Used for 수정일시 columns to ensure all timestamps are human-readable KST.
+function modifiedAtKst_() {
+  return Utilities.formatDate(new Date(), "Asia/Seoul", "MM/dd HH:mm:ss");
+}
+
 function nowKst_() {
   return Utilities.formatDate(new Date(), "Asia/Seoul", "yyyy-MM-dd HH:mm:ss");
 }
@@ -3870,14 +3876,14 @@ function buildInspectionPayload_(payload, existingRecord) {
     "BRIX평균": payload["BRIX평균"] || payload["brixAvg"] || "",
     "사진파일ID목록": photoFileIds.join("\n"),
     "photoCategoriesJSON": photoCategoriesJSON,  // passed to upsertPhotoAsset_ below
-    "수정일시": new Date().toISOString(),
+    "수정일시": modifiedAtKst_(),
     "버전": existingRecord ? (parseNumber_(existingRecord["버전"] || 0) + 1) : 1,
     "clientId": String(payload["clientId"] || (existingRecord && existingRecord["clientId"]) || "").trim(),
   };
 }
 
 function buildRecordPayload_(payload, existingRecord) {
-  var now = new Date().toISOString();
+  var now = modifiedAtKst_();
   var version = existingRecord ? getRowVersion_(existingRecord) + 1 : 1;
   var updatedBy = getEditorLabel_(payload);
   const movementType = String(payload["movementType"] || "").trim().toUpperCase();
@@ -4160,7 +4166,7 @@ function saveProductImageMapping_(payload) {
   }
 
   var savedFile = saveProductImageAssetToDrive_(photo, partnerName + "_" + productName, 0);
-  var now = new Date().toISOString();
+  var now = modifiedAtKst_();
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = getProductImageSheet_(ss);
   var headers = productImageHeaders_();
@@ -5144,8 +5150,8 @@ function syncReturnSheets_(ss) {
           inspectionRate,
           memo,
           defectRate,
-          exchangeQty,
-          returnQty,
+          exchangeQty > 0 ? exchangeQty : "",
+          returnQty   > 0 ? returnQty   : "",
           getActionTypeByDefectRate_(defectRate),
           "",
           baseRow["작업기준일또는CSV식별값"] || currentJobKey || "", // lookup key for targeted row deletion

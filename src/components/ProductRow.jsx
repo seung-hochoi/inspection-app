@@ -493,8 +493,7 @@ const ProductRow = React.memo(function ProductRow({
                   <span style={{ fontFamily: "'Menlo','Consolas',monospace", letterSpacing: '-0.01em' }}>
                     {cleanCode}
                   </span>
-                  {row['협력사명'] && <span style={{ color: C.muted2 }}> · {row['협력사명']}</span>}
-                  {orderedQty > 0 && <span style={{ color: C.muted2 }}> · 발주 {orderedQty}</span>}
+                  {orderedQty > 0 && <span style={{ color: C.muted2 }}> · 발주 {orderedQty.toLocaleString()}</span>}
                 </p>
               </div>
               {/* Tags + animated save-status badge */}
@@ -515,16 +514,19 @@ const ProductRow = React.memo(function ProductRow({
               </div>
             </div>
 
-            {/* ── Row 2: supplier info · qty stepper · criteria button ── */}
+            {/* ── Row 2: qty stepper · criteria button ── */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 6 }}>
-              {/* supplier / orderedQty info */}
+              {/* orderedQty info — prominent so the user can easily compare */}
               <p style={{
-                margin: 0, fontSize: 11, color: C.muted, lineHeight: 1.3,
+                margin: 0, fontSize: 12, color: C.muted, lineHeight: 1.3,
                 overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                 flex: 1, minWidth: 0,
               }}>
-                {row['협력사명'] && <span>{row['협력사명']}</span>}
-                {orderedQty > 0 && <span style={{ color: C.muted2 }}>{row['협력사명'] ? ' · ' : ''}발주 {orderedQty}</span>}
+                {orderedQty > 0 && (
+                  <span style={{ color: C.muted, fontWeight: 600 }}>
+                    발주 <span style={{ color: C.text, fontWeight: 700 }}>{orderedQty.toLocaleString()}</span>
+                  </span>
+                )}
               </p>
 
               {/* 검품수량 stepper */}

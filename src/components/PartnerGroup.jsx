@@ -20,6 +20,8 @@ function PartnerGroupBase({
   expanded = false, onToggle,
   canEditInspection = true, canUploadPhoto = true, canEditReturnExchange = true,
   isAdmin = false,
+  // Map of 협력사명 → 파트너사 short names, derived from the mapping sheet.
+  partnerShortNameMap = {},
 }) {
   const handleHeaderClick = () => onToggle?.(partnerName);
 
@@ -75,7 +77,7 @@ function PartnerGroupBase({
             letterSpacing: '-0.015em',
             transition: 'color 0.2s',
           }}>
-            {partnerName}
+            {partnerShortNameMap[partnerName] || partnerName}
           </span>
           {allDone && (
             <span style={{
@@ -204,6 +206,7 @@ function arePartnerGroupPropsEqual(prev, next) {
   if (prev.canEditInspection     !== next.canEditInspection)     return false;
   if (prev.canUploadPhoto        !== next.canUploadPhoto)        return false;
   if (prev.canEditReturnExchange !== next.canEditReturnExchange) return false;
+  if (prev.partnerShortNameMap   !== next.partnerShortNameMap)   return false;
 
   // Check drafts and saveStatuses only for this partner's own rows.
   // Use __productCode (precomputed in buildNormalizedRows) to avoid regex.

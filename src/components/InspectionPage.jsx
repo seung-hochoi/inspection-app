@@ -170,26 +170,63 @@ export default function InspectionPage({
           }
         }
 
-        // Always apply non-empty server values so data stays consistent across
-        // devices. The server is the authoritative source; the local draft is only
-        // a temporary staging area until the save round-trips.  We only skip the
-        // update when local already matches the server value (nothing changed).
+        // Hydrate scalar fields from server while guarding against stale data
+        // overwriting a local edit that the user hasn't confirmed yet.
+        //
+        // Strategy: track the last server value seen per field via `_srv<Field>LastSeen`.
+        // If the local value diverges from that last-known server value, the user has
+        // an unsaved local edit → skip the server update so the edit isn't reverted.
+        // Once the server echoes back the user's saved value, the tracking resets.
+        //
+        // Inlined per-field to satisfy no-loop-func (no closures over loop vars).
         const srvInspQty = String(ir['검품수량'] || '');
-        if (srvInspQty && srvInspQty !== '0' && existing.inspQty !== srvInspQty) {
-          updates.inspQty = srvInspQty;
-          changed = true;
+        if (srvInspQty && srvInspQty !== '0') {
+          const prevSrv  = existing._srvInspQtyLastSeen;
+          const localVal = existing.inspQty ?? '';
+          const hasLocalChange = prevSrv !== undefined && localVal !== prevSrv;
+          if (!hasLocalChange && localVal !== srvInspQty) { updates.inspQty = srvInspQty; changed = true; }
+          if (prevSrv !== srvInspQty) { updates._srvInspQtyLastSeen = srvInspQty; changed = true; }
         }
-        const srvDefectReason = String(ir['불량사유'] || '').trim();
-        if (srvDefectReason && existing.defectReason !== srvDefectReason) {
-          updates.defectReason = srvDefectReason;
-          changed = true;
+        {
+          const srvVal   = String(ir['불량사유'] || '').trim();
+          const prevSrv  = existing._srvDefectReasonLastSeen;
+          const localVal = existing.defectReason ?? '';
+          const hasLocalChange = prevSrv !== undefined && localVal !== prevSrv;
+          if (srvVal) {
+            if (!hasLocalChange && localVal !== srvVal) { updates.defectReason = srvVal; changed = true; }
+            if (prevSrv !== srvVal) { updates._srvDefectReasonLastSeen = srvVal; changed = true; }
+          }
         }
-        const srvBrixMin = String(ir['BRIX최저'] || '').trim();
-        if (srvBrixMin && existing.brixMin !== srvBrixMin) { updates.brixMin = srvBrixMin; changed = true; }
-        const srvBrixMax = String(ir['BRIX최고'] || '').trim();
-        if (srvBrixMax && existing.brixMax !== srvBrixMax) { updates.brixMax = srvBrixMax; changed = true; }
-        const srvBrixAvg = String(ir['BRIX평균'] || '').trim();
-        if (srvBrixAvg && existing.brixAvg !== srvBrixAvg) { updates.brixAvg = srvBrixAvg; changed = true; }
+        {
+          const srvVal   = String(ir['BRIX최저'] || '').trim();
+          const prevSrv  = existing._srvBrixMinLastSeen;
+          const localVal = existing.brixMin ?? '';
+          const hasLocalChange = prevSrv !== undefined && localVal !== prevSrv;
+          if (srvVal) {
+            if (!hasLocalChange && localVal !== srvVal) { updates.brixMin = srvVal; changed = true; }
+            if (prevSrv !== srvVal) { updates._srvBrixMinLastSeen = srvVal; changed = true; }
+          }
+        }
+        {
+          const srvVal   = String(ir['BRIX최고'] || '').trim();
+          const prevSrv  = existing._srvBrixMaxLastSeen;
+          const localVal = existing.brixMax ?? '';
+          const hasLocalChange = prevSrv !== undefined && localVal !== prevSrv;
+          if (srvVal) {
+            if (!hasLocalChange && localVal !== srvVal) { updates.brixMax = srvVal; changed = true; }
+            if (prevSrv !== srvVal) { updates._srvBrixMaxLastSeen = srvVal; changed = true; }
+          }
+        }
+        {
+          const srvVal   = String(ir['BRIX평균'] || '').trim();
+          const prevSrv  = existing._srvBrixAvgLastSeen;
+          const localVal = existing.brixAvg ?? '';
+          const hasLocalChange = prevSrv !== undefined && localVal !== prevSrv;
+          if (srvVal) {
+            if (!hasLocalChange && localVal !== srvVal) { updates.brixAvg = srvVal; changed = true; }
+            if (prevSrv !== srvVal) { updates._srvBrixAvgLastSeen = srvVal; changed = true; }
+          }
+        }
 
         if (Object.keys(updates).length > 0) {
           next[key] = { ...existing, ...updates };
@@ -409,8 +446,14 @@ export default function InspectionPage({
   const handleScan = useCallback((code) => {
     setShowScanner(false);
     const matched = deduplicatedRows.find((r) => String(r['상품코드'] || '').trim() === code.trim());
-    if (matched) { setSearchInput(code.trim()); onToast?.(`바코드: ${code}`, 'info'); }
-    else          { onToast?.(`상품코드 없음: ${code}`, 'error'); }
+    if (matched) {
+      setSearchInput(code.trim());
+      onToast?.(`바코드: ${code}`, 'info');
+      // Auto-clear after a short moment so the item is visible but input won't persist
+      setTimeout(() => setSearchInput(''), 1800);
+    } else {
+      onToast?.(`상품코드 없음: ${code}`, 'error');
+    }
   }, [deduplicatedRows, onToast]);
 
   // ── Partner grouping with filter + search ─────────────────────────────────
@@ -478,7 +521,11 @@ export default function InspectionPage({
   const clearSort = useCallback(() => setSortQty(null), []);
 
   const handleTogglePartner = useCallback((name) => {
-    setOpenPartner((prev) => (prev === name ? null : name));
+    setOpenPartner((prev) => {
+      // Clear search whenever the user taps a partner to navigate to it
+      setSearchInput('');
+      return prev === name ? null : name;
+    });
   }, []);
 
   // Scroll the opened partner card into view once its accordion animation has
@@ -519,6 +566,35 @@ export default function InspectionPage({
     return { totalRows: total, doneRows: done, pct: total > 0 ? Math.round((done / total) * 100) : 0 };
   }, [deduplicatedRows, jobKey, draftSummary]);
 
+  // Quantity-based progress: inspected qty vs total order qty across all deduped rows.
+  // This recalculates on every draft change (users typing), but the math is a simple loop.
+  const { inspectedQty, totalOrderQty, qtyPct } = useMemo(() => {
+    let totalQ = 0;
+    let inspQ  = 0;
+    for (const r of deduplicatedRows) {
+      totalQ += parseInt(r['발주수량'], 10) || 0;
+      const key = `${jobKey}||${normalizeCode(r['상품코드'])}||${r['협력사명'] || ''}`;
+      inspQ += parseInt(drafts[key]?.inspQty, 10) || 0;
+    }
+    return {
+      totalOrderQty: totalQ,
+      inspectedQty:  inspQ,
+      qtyPct: totalQ > 0 ? Math.round((inspQ / totalQ) * 100) : 0,
+    };
+  }, [deduplicatedRows, jobKey, drafts]);
+
+  // Build partner short-name map from config.mapping_rows (협력사명 → 파트너사).
+  // Dynamically reflects any rows added to the mapping sheet.
+  const partnerShortNameMap = useMemo(() => {
+    const map = {};
+    for (const row of (config.mapping_rows || [])) {
+      const full  = String(row['협력사명'] || '').trim();
+      const short = String(row['파트너사'] || '').trim();
+      if (full && short) map[full] = short;
+    }
+    return map;
+  }, [config.mapping_rows]);
+
   return (
     <motion.div
       initial={{ opacity: 0 }}
@@ -533,29 +609,58 @@ export default function InspectionPage({
         boxShadow: shadow.sm,
         padding: '10px 14px 10px',
       }}>
-        {/* Progress row: stats left, % badge right */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
-            <span style={{ fontSize: 20, fontWeight: 800, color: C.text, letterSpacing: '-0.04em', fontVariantNumeric: 'tabular-nums' }}>{doneRows}</span>
-            <span style={{ fontSize: 12, color: C.muted }}>/ {totalRows} 완료</span>
+        {/* Progress row: dual bars — SKU (left) and Quantity (right) */}
+        <div style={{ display: 'flex', gap: 12, marginBottom: 10, alignItems: 'stretch' }}>
+          {/* SKU progress */}
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
+                <span style={{ fontSize: 17, fontWeight: 800, color: C.text, letterSpacing: '-0.04em', fontVariantNumeric: 'tabular-nums' }}>{doneRows}</span>
+                <span style={{ fontSize: 11, color: C.muted }}>/ {totalRows} SKU</span>
+              </div>
+              <span style={{
+                fontSize: 10, fontWeight: 700, letterSpacing: '0.03em',
+                color: pct === 100 ? C.green : C.primary,
+                background: pct === 100 ? C.greenLight : C.primaryLight,
+                padding: '2px 8px', borderRadius: radius.full,
+                border: `1px solid ${pct === 100 ? C.greenMid : C.primaryMid}`,
+              }}>{pct}%</span>
+            </div>
+            <div style={{ height: 3, background: C.bgAlt, borderRadius: radius.full, overflow: 'hidden' }}>
+              <motion.div
+                animate={{ width: `${pct}%` }}
+                transition={{ duration: 0.5, ease: 'easeOut' }}
+                style={{ height: '100%', borderRadius: radius.full, background: pct === 100 ? C.green : `linear-gradient(90deg, ${C.primary} 0%, #60a5fa 100%)` }}
+              />
+            </div>
           </div>
-          <span style={{
-            fontSize: 11, fontWeight: 700, letterSpacing: '0.03em',
-            color: pct === 100 ? C.green : C.primary,
-            background: pct === 100 ? C.greenLight : C.primaryLight,
-            padding: '2px 10px', borderRadius: radius.full,
-            border: `1px solid ${pct === 100 ? C.greenMid : C.primaryMid}`,
-          }}>{pct}%</span>
-        </div>
-        <div style={{ height: 3, background: C.bgAlt, borderRadius: radius.full, overflow: 'hidden', marginBottom: 10 }}>
-          <motion.div
-            animate={{ width: `${pct}%` }}
-            transition={{ duration: 0.5, ease: 'easeOut' }}
-            style={{
-              height: '100%', borderRadius: radius.full,
-              background: pct === 100 ? C.green : `linear-gradient(90deg, ${C.primary} 0%, #60a5fa 100%)`,
-            }}
-          />
+
+          {/* Divider */}
+          <div style={{ width: 1, background: C.border, flexShrink: 0 }} />
+
+          {/* Quantity progress */}
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
+                <span style={{ fontSize: 17, fontWeight: 800, color: C.text, letterSpacing: '-0.04em', fontVariantNumeric: 'tabular-nums' }}>{inspectedQty.toLocaleString()}</span>
+                <span style={{ fontSize: 11, color: C.muted }}>/ {totalOrderQty.toLocaleString()}</span>
+              </div>
+              <span style={{
+                fontSize: 10, fontWeight: 700, letterSpacing: '0.03em',
+                color: qtyPct === 100 ? C.green : C.primary,
+                background: qtyPct === 100 ? C.greenLight : C.primaryLight,
+                padding: '2px 8px', borderRadius: radius.full,
+                border: `1px solid ${qtyPct === 100 ? C.greenMid : C.primaryMid}`,
+              }}>{qtyPct}%</span>
+            </div>
+            <div style={{ height: 3, background: C.bgAlt, borderRadius: radius.full, overflow: 'hidden' }}>
+              <motion.div
+                animate={{ width: `${qtyPct}%` }}
+                transition={{ duration: 0.5, ease: 'easeOut' }}
+                style={{ height: '100%', borderRadius: radius.full, background: qtyPct === 100 ? C.green : `linear-gradient(90deg, ${C.primary} 0%, #60a5fa 100%)` }}
+              />
+            </div>
+          </div>
         </div>
 
         {/* Search + scan */}
@@ -678,7 +783,7 @@ export default function InspectionPage({
 
       {/* ── Product list ── */}
       <div ref={scrollContainerRef} style={{ padding: '12px 12px 80px' }}>
-        {activeRows.length === 0 ? <EmptyState /> : (
+        {deduplicatedRows.length === 0 ? <EmptyState /> : (
           searchFilteredPartners.map(([partnerName, partnerRows]) => {
             const counts = partnerDoneCounts[partnerName] || { done: 0, total: partnerRows.length };
             return (
@@ -713,6 +818,7 @@ export default function InspectionPage({
                 canUploadPhoto={canUploadPhoto}
                 canEditReturnExchange={canEditReturnExchange}
                 isAdmin={isAdmin}
+                partnerShortNameMap={partnerShortNameMap}
               />
             </div>
             );
