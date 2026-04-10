@@ -17,6 +17,8 @@ export default function InspectionPage({
   productImageMap = {}, onProductImageUploaded,
   onError, onToast, onCsvUpload, onRefresh, onRecordsUpdate, onTargetSkuChange,
   authUser, isAdmin = false,
+  // Optional: live summary / history for the KPI strip
+  summary = {}, historyData = [],
 }) {
   const [drafts, setDrafts]             = useState(() => loadDrafts());
   const [saveStatuses, setSaveStatuses] = useState({});
@@ -449,8 +451,7 @@ export default function InspectionPage({
     if (matched) {
       setSearchInput(code.trim());
       onToast?.(`바코드: ${code}`, 'info');
-      // Auto-clear after a short moment so the item is visible but input won't persist
-      setTimeout(() => setSearchInput(''), 1800);
+      // Keyword stays visible; cleared only when user clicks the search input again
     } else {
       onToast?.(`상품코드 없음: ${code}`, 'error');
     }
@@ -521,11 +522,7 @@ export default function InspectionPage({
   const clearSort = useCallback(() => setSortQty(null), []);
 
   const handleTogglePartner = useCallback((name) => {
-    setOpenPartner((prev) => {
-      // Clear search whenever the user taps a partner to navigate to it
-      setSearchInput('');
-      return prev === name ? null : name;
-    });
+    setOpenPartner((prev) => prev === name ? null : name);
   }, []);
 
   // Scroll the opened partner card into view once its accordion animation has
@@ -595,6 +592,89 @@ export default function InspectionPage({
     return map;
   }, [config.mapping_rows]);
 
+  // ── KPI strip — latest history snapshot merged with live counters ────────────
+  const kpiStrip = useMemo(() => {
+    // Pull the most recent history row (same logic as SummaryPage)
+    let latestHistory = null;
+    if (Array.isArray(historyData) && historyData.length > 0) {
+      const safe = (d) => {
+        const s = String(d || '');
+        const m = s.match(/(\d{1,2})\/(\d{1,2})/);
+        if (m) return String(m[1]).padStart(2, '0') + '/' + String(m[2]).padStart(2, '0');
+        const iso = s.match(/(\d{4})-(\d{2})-(\d{2})/);
+        if (iso) return iso[2] + '/' + iso[3];
+        return s;
+      };
+      latestHistory = [...historyData].sort((a, b) => safe(b['일자']).localeCompare(safe(a['일자'])))[0];
+    }
+    const fromHist = (...keys) => {
+      if (!latestHistory) return null;
+      for (const key of keys) {
+        const v = latestHistory[key];
+        if (v == null || v === '') continue;
+        const n = typeof v === 'number' ? v : Number(String(v).replace(/[%,]/g, '').trim());
+        if (isFinite(n)) return n;
+      }
+      return null;
+    };
+    const fmtPct = (v) => v != null ? Number(v).toFixed(1) + '%' : '-';
+    const fmtQty = (v) => v != null ? Math.round(v).toLocaleString('ko-KR') : '-';
+    const fmtAmt = (v) => {
+      if (v == null) return '-';
+      if (v >= 100_000_000) return (v / 100_000_000).toFixed(1) + '억';
+      return Math.round(v).toLocaleString('ko-KR');
+    };
+
+    const histTotalAmt     = fromHist('총 입고금액');
+    const histTargetAmt    = fromHist('총 입고금액(냉동/가공/계란 제외)', '총 입고금액 (냉동/가공/계란 제외)');
+    const histTotalQty     = fromHist('총 입고수량(개)');
+    const histTargetQty    = fromHist('총 입고수량(개)(냉동/가공/계란 제외)', '총 입고수량(개) (냉동/가공/계란 제외)');
+    const histInspRate     = fromHist('검품률(전체)',              '검품률 (전체)',           '검품률');
+    const histInspRateExcl = fromHist('검품률(냉동/가공/계란 제외)', '검품률 (냉동/가공/계란 제외)');
+    const histTotalSku     = fromHist('입고 SKU (전체)',           '입고 SKU(전체)');
+    const histTargetSku    = fromHist('검품입고 SKU (검품불가 제외)', '검품입고 SKU(검품불가 제외)', '검품대상 SKU');
+    const histSkuCovAll    = fromHist('SKU 커버리지(전체)',          'SKU 커버리지 (전체)');
+    const histSkuCovExcl   = fromHist('SKU 커버리지(냉동/가공/계란 제외)', 'SKU 커버리지 (냉동/가공/계란 제외)');
+
+    // Live values override history where available
+    const liveTotalSku  = histTotalSku  != null ? String(Math.round(histTotalSku))  : '-';
+    const liveTargetSku = histTargetSku != null ? String(Math.round(histTargetSku)) : String(totalRows);
+    const liveInspSku   = String(doneRows);
+    const liveInspQty   = String(inspectedQty.toLocaleString('ko-KR'));
+    const liveTargetQty = fmtQty(histTargetQty ?? totalOrderQty);
+
+    // 검품률 overrides: inspected / hist qty
+    const liveInspRateAll  = histTotalQty  != null && histTotalQty  > 0
+      ? (inspectedQty / histTotalQty  * 100).toFixed(1) + '%'
+      : fmtPct(histInspRate);
+    const liveInspRateExcl = totalOrderQty > 0
+      ? (inspectedQty / totalOrderQty * 100).toFixed(1) + '%'
+      : fmtPct(histInspRateExcl);
+
+    // SKU coverage live: doneRows / total/target
+    const liveSkuCovAll  = histTotalSku  != null && histTotalSku  > 0
+      ? (doneRows / histTotalSku  * 100).toFixed(1) + '%'
+      : fmtPct(histSkuCovAll);
+    const liveSkuCovExcl = totalRows > 0
+      ? (doneRows / totalRows * 100).toFixed(1) + '%'
+      : fmtPct(histSkuCovExcl);
+
+    return [
+      { label: '총 금액',          value: fmtAmt(histTotalAmt),  unit: '원' },
+      { label: '검품대상 금액',     value: fmtAmt(histTargetAmt), unit: '원' },
+      { label: '총 SKU',           value: liveTotalSku,           unit: 'SKU' },
+      { label: '검품 SKU',         value: liveTargetSku,          unit: 'SKU' },
+      { label: '총 수량',          value: fmtQty(histTotalQty),   unit: 'EA' },
+      { label: '검품대상 수량',     value: liveTargetQty,          unit: 'EA' },
+      { label: '검품 수량',        value: liveInspQty,            unit: 'EA' },
+      { label: '검품 SKU(실진행)', value: liveInspSku,            unit: 'SKU' },
+      { label: '검품률(전체)',      value: liveInspRateAll,        unit: '' },
+      { label: '검품률(대상기준)',  value: liveInspRateExcl,       unit: '' },
+      { label: 'SKU커버리지(전체)', value: liveSkuCovAll,          unit: '' },
+      { label: 'SKU커버리지(대상)', value: liveSkuCovExcl,         unit: '' },
+    ];
+  }, [historyData, totalRows, doneRows, inspectedQty, totalOrderQty]);
+
   return (
     <motion.div
       initial={{ opacity: 0 }}
@@ -609,6 +689,29 @@ export default function InspectionPage({
         boxShadow: shadow.sm,
         padding: '10px 14px 10px',
       }}>
+        {/* KPI strip — horizontally scrollable row of 12 summary chips */}
+        <div style={{
+          display: 'flex', gap: 6, overflowX: 'auto', marginBottom: 10,
+          paddingBottom: 2,
+          // Hide scrollbar visually on webkit while keeping scroll functionality
+          msOverflowStyle: 'none', scrollbarWidth: 'none',
+        }}>
+          {kpiStrip.map((kpi) => (
+            <div key={kpi.label} style={{
+              flexShrink: 0,
+              background: C.bgAlt, border: `1px solid ${C.border}`,
+              borderRadius: radius.sm, padding: '5px 9px',
+              minWidth: 80,
+            }}>
+              <p style={{ margin: 0, fontSize: 9, color: C.muted, fontWeight: 600, letterSpacing: '0.04em', whiteSpace: 'nowrap', fontFamily: font.base }}>{kpi.label}</p>
+              <p style={{ margin: '2px 0 0', fontSize: 13, fontWeight: 800, color: C.text, fontFamily: font.base, letterSpacing: '-0.02em', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+                {kpi.value}
+                {kpi.unit && <span style={{ fontSize: 9, fontWeight: 400, color: C.muted, marginLeft: 2 }}>{kpi.unit}</span>}
+              </p>
+            </div>
+          ))}
+        </div>
+
         {/* Progress row: dual bars — SKU (left) and Quantity (right) */}
         <div style={{ display: 'flex', gap: 12, marginBottom: 10, alignItems: 'stretch' }}>
           {/* SKU progress */}
@@ -641,9 +744,12 @@ export default function InspectionPage({
           {/* Quantity progress */}
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-              <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
-                <span style={{ fontSize: 17, fontWeight: 800, color: C.text, letterSpacing: '-0.04em', fontVariantNumeric: 'tabular-nums' }}>{inspectedQty.toLocaleString()}</span>
-                <span style={{ fontSize: 11, color: C.muted }}>/ {totalOrderQty.toLocaleString()}</span>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+                <span style={{ fontSize: 9, color: C.muted, fontWeight: 600, letterSpacing: '0.04em', fontFamily: font.base }}>검품수량</span>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
+                  <span style={{ fontSize: 17, fontWeight: 800, color: C.text, letterSpacing: '-0.04em', fontVariantNumeric: 'tabular-nums' }}>{inspectedQty.toLocaleString()}</span>
+                  <span style={{ fontSize: 11, color: C.muted }}>/ {totalOrderQty.toLocaleString()} EA</span>
+                </div>
               </div>
               <span style={{
                 fontSize: 10, fontWeight: 700, letterSpacing: '0.03em',
@@ -674,6 +780,8 @@ export default function InspectionPage({
               ref={searchRef}
               type="text" placeholder="상품명 또는 코드 검색"
               value={searchInput} onChange={(e) => setSearchInput(e.target.value)}
+              // Clear previous keyword when the user taps the input to start a new search
+              onClick={() => setSearchInput('')}
               style={{ ...inputStyle, paddingLeft: 34, height: 40 }}
             />
           </div>

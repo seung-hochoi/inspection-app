@@ -488,12 +488,30 @@ const ProductRow = React.memo(function ProductRow({
                 </div>
                 <p style={{
                   margin: 0, fontSize: 11, color: C.muted, lineHeight: 1.3,
-                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                  // Allow wrapping on narrow screens so rates don't overflow
+                  whiteSpace: 'normal', wordBreak: 'break-word',
                 }}>
                   <span style={{ fontFamily: "'Menlo','Consolas',monospace", letterSpacing: '-0.01em' }}>
                     {cleanCode}
                   </span>
                   {orderedQty > 0 && <span style={{ color: C.muted2 }}> · 발주 {orderedQty.toLocaleString()}</span>}
+                  {/* 검품률 / 불량률 — only shown when inspection has started */}
+                  {inspNum > 0 && (() => {
+                    const inspRate = orderedQty > 0
+                      ? (inspNum / orderedQty * 100).toFixed(1) + '%'
+                      : null;
+                    const defectRate = (returnQty + exchangeQty) > 0
+                      ? ((returnQty + exchangeQty) / inspNum * 100).toFixed(1) + '%'
+                      : null;
+                    if (!inspRate) return null;
+                    return (
+                      <span style={{ color: C.muted2, marginLeft: 4 }}>
+                        {'('}검품률 {inspRate}
+                        {defectRate && <> / 불량률 {defectRate}</>}
+                        {')'}
+                      </span>
+                    );
+                  })()}
                 </p>
               </div>
               {/* Tags + animated save-status badge */}

@@ -48,17 +48,13 @@ export default function PhotoUploader({ jobKey, product, photoType = 'insp', exi
     setError('');
     setUploading(true);
     try {
-      const photos = [];
-      for (const file of files) {
-        const encoded = await fileToBase64(file);
-        // Use field names matching what Code.gs savePhotosToDrive_ expects:
-        // photo.imageBase64, photo.fileName, photo.mimeType
-        if (encoded) photos.push({
-          fileName: encoded.fileName,
-          mimeType: encoded.mimeType,
-          imageBase64: encoded.imageBase64,
-        });
-      }
+      // Encode all files in parallel — no need to wait for each one sequentially
+      const encoded = (await Promise.all(files.map(fileToBase64))).filter(Boolean);
+      const photos = encoded.map((enc) => ({
+        fileName:    enc.fileName,
+        mimeType:    enc.mimeType,
+        imageBase64: enc.imageBase64,
+      }));
       const payload = {
         itemKey: `${jobKey}||${normalizeProductCode(product.productCode) || ''}||${product.partnerName || ''}`,
         productName: product.productName || '',

@@ -5116,8 +5116,8 @@ function syncReturnSheets_(ss) {
         return null;
       }
 
-      var defectRate = inspectionQty > 0 ? (exchangeQty + returnQty) / inspectionQty : 0;
-      var inspectionRate = inboundQty > 0 ? inspectionQty / inboundQty : 0;
+      var defectRate    = inspectionQty > 0 ? (exchangeQty + returnQty) / inspectionQty : "";
+      var inspectionRate = (inboundQty > 0 && inspectionQty > 0) ? inspectionQty / inboundQty : "";
       var memo = memoMap[key] || "";
 
       return {

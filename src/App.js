@@ -2402,6 +2402,8 @@ function App() {
             onTargetSkuChange={setInspectionTargetSkuTotal}
             authUser={authUser}
             isAdmin={isAdmin}
+            summary={summary}
+            historyData={historyData}
           />
         )}
         {tab === "records" && (
