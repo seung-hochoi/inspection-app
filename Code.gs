@@ -4010,10 +4010,15 @@ function uploadPhotos_(payload) {
   var productName = String(payload.productName || payload.baseName || "상품").trim();
   var partnerName = String(payload["협력사명"] || payload.partnerName || "").trim();
 
-  // Map photo type to Korean filename prefix — no fallback to "기타" for known types.
+  // Map photo type to Korean filename prefix — explicit conditionals so that
+  // both frontend naming conventions ("insp"/"inspection", "brix"/"sugar") work.
   var photoType = String(payload.photoType || "insp").trim().toLowerCase();
-  var categoryPrefixMap = { insp: "검품", defect: "불량", weight: "중량", brix: "당도" };
-  var categoryPrefix = categoryPrefixMap[photoType] || categoryPrefixMap["insp"];
+  var categoryPrefix =
+    (photoType === "insp" || photoType === "inspection") ? "검품" :
+    photoType === "defect"                               ? "불량" :
+    photoType === "weight"                               ? "중량" :
+    (photoType === "brix" || photoType === "sugar")      ? "당도" :
+    "검품";  // safe default — never "기타" for known photo types
 
   // Build baseName: {prefix}_{productName}_{supplier}
   var baseName = categoryPrefix + "_" + productName;

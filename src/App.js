@@ -706,6 +706,7 @@ function ReturnExchangeModal({ product, jobKey, onClose, onSaved, showToast }) {
             상품코드: product.productCode,
             상품명: product.productName,
             협력사명: product.partner,
+            photoType: 'defect',
             사진들: b64Photos,
           },
         }));
@@ -1140,6 +1141,7 @@ function ProductCard({ product, jobKey, savedInspection, onSaved, showToast, hap
             상품코드: product.productCode,
             상품명: product.productName,
             협력사명: product.partner,
+            photoType: type,
             사진들: b64s,
           },
         })

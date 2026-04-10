@@ -284,12 +284,47 @@ export default function InspectionPage({
     [rows, exclusionIndex],
   );
 
+  // ── Merge preorder rows from config.reservation_rows into CSV rows ────────
+  // Preorder rows arrive with raw GS-Retail center name variants that must be
+  // normalized before deduplication so they align with CSV center keys.
+  const allActiveRows = useMemo(() => {
+    const reservationRows = Array.isArray(config?.reservation_rows) ? config.reservation_rows : [];
+    const preorderRows = reservationRows.map((raw, i) => {
+      const productCode = normalizeCode(String(raw['상품코드'] || '').trim());
+      const productName = String(raw['상품명'] || '').trim();
+      const partner     = String(raw['협력사명'] || '').trim();
+      const qty         = Number(raw['발주수량']) || 0;
+      const center      = normalizeCenterName(raw['센터명'] || '');
+      // Skip incomplete or zero-qty rows to avoid polluting the product list
+      if (!productCode || !productName || !partner || !qty) return null;
+      return {
+        '상품코드': productCode,
+        '상품명':   productName,
+        '협력사명': partner,
+        '발주수량': qty,
+        '전체발주수량': qty,
+        '센터명':   center,
+        __productCode: productCode,
+        __productName: productName,
+        __partner:     partner,
+        __center:      center,
+        __qty:         qty,
+        __id:          `preorder-${productCode}-${partner}-${i}`,
+        __index:       activeRows.length + i,
+        __searchKey:   `${productName.toLowerCase()} ${productCode.toLowerCase()}`,
+        __isPreorder:  true,
+      };
+    }).filter(Boolean);
+    return [...activeRows, ...preorderRows];
+  }, [activeRows, config]);
+
   // ── Deduplicate: merge rows sharing partner + productCode into one card ──────
   // CSV may have separate rows per center for the same product; the inspection
   // tab must show exactly ONE card per partner + productCode, with total 발주수량.
+  // allActiveRows already includes preorder rows so they merge automatically.
   const deduplicatedRows = useMemo(() => {
     const map = new Map();
-    for (const r of activeRows) {
+    for (const r of allActiveRows) {
       const code    = normalizeCode(r['상품코드'] || '');
       const partner = r['협력사명'] || '';
       const key     = `${partner}||${code}`;
@@ -318,7 +353,7 @@ export default function InspectionPage({
       }
     }
     return Array.from(map.values());
-  }, [activeRows]);
+  }, [allActiveRows]);
 
   // Notify the parent of the inspection target SKU count (single source of truth).
   // The parent uses this same number for the top SKU badge.
@@ -721,6 +756,42 @@ function normalizeCode(value) {
   const num = text.replace(/,/g, '').trim();
   if (/^\d+(\.0+)?$/.test(num)) return num.replace(/\.0+$/, '');
   return text;
+}
+
+/**
+ * Strips GS Retail company prefix variants from a raw 사전예약 center name
+ * and ensures the result ends with "센터" to match CSV row center keys.
+ *
+ * Examples:
+ *   "(주)지에스리테일송파2일배"   → "송파2일배센터"
+ *   "지에스리테일경산저온"        → "경산저온센터"
+ *   "(주)지에리스테일(해인cvs도)" → "해인cvs도센터"
+ *   "(주)지에스리테일양지물류센터" → "양지물류센터"
+ */
+export function normalizeCenterName(rawCenter) {
+  let name = String(rawCenter || '').trim();
+
+  // Remove company prefix variants — longest patterns first to avoid partial matches.
+  name = name
+    .replace(/^\(주\)지에스리테일/, '')
+    .replace(/^\(주\)지에리스테일/, '')
+    .replace(/^지에스리테일/, '')
+    .replace(/^지에리스테일/, '')
+    .replace(/^GS리테일/, '');
+
+  // Strip outer wrapper parentheses when the entire remaining value is enclosed:
+  // "(해인cvs도)" → "해인cvs도"  (meaningful text, preserve it)
+  // "(양지물류센터)" → "양지물류센터"  (already has 센터 suffix)
+  const wrappedMatch = name.match(/^\(([^)]+)\)$/);
+  if (wrappedMatch) name = wrappedMatch[1];
+
+  // Normalize repeated spaces and trim
+  name = name.replace(/\s+/g, ' ').trim();
+
+  // Append "센터" when the normalized name doesn't already end with it
+  if (name && !name.endsWith('센터')) name += '센터';
+
+  return name;
 }
 
 function buildExclusionIndex(excludeRows) {
